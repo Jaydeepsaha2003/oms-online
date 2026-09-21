@@ -107,6 +107,19 @@ test('the bank filter still applies', async () => {
   assert.equal(await amountOf('REC-0900', 'ICICI BANK'), 5000);
 });
 
+test('a receipt entirely parked as advance is discoverable without invoice allocations', async () => {
+  const row = await voucher('RN/ADVANCE', null, 22109, '2026-07-22');
+  await prisma.acctLedger.update({ where: { id: row.id }, data: { advanceRefId: 'ADV-ONLY', bankName: 'AXIS BANK-8254' } });
+  assert.equal(await amountOf('ADV-ONLY'), 22109);
+});
+
+test('explicit account numbers cannot match a different account of the same bank', async () => {
+  const row = await voucher('RN/ACCOUNT', 'REC-ACCOUNT', 777, '2026-07-23');
+  await prisma.acctLedger.update({ where: { id: row.id }, data: { bankName: 'AXIS BANK-0884' } });
+  await alloc('REC-ACCOUNT', 'SSS/ACCOUNT', 777, '2026-07-23', 'RN/ACCOUNT', 'AXIS BANK-0884');
+  assert.equal(await amountOf('REC-ACCOUNT', 'AXIS BANK-8254'), undefined);
+});
+
 (async () => {
   let failures = 0;
   try {

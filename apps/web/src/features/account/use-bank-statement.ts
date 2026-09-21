@@ -149,9 +149,9 @@ export function useRecheckBankRun(runId: number | undefined) {
   const qc = useQueryClient();
   return useMutation({
     mutationFn: () => http.post<BankStatementRecheckResult>(`/bank-statement/runs/${runId}/recheck`, {}),
-    onSuccess: (res) => {
-      // Only churn the caches when something actually moved.
-      if (!res.reopened.length) return;
+    onSuccess: () => {
+      // Matching may change coverage in this working and overlapping ones,
+      // even when no posted voucher disappeared.
       qc.invalidateQueries({ queryKey: KEY });
     },
   });

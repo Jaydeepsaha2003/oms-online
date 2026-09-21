@@ -54,18 +54,78 @@ function allTags(body: string, name: string): string[] {
   return [...body.matchAll(new RegExp(`<${name}(?:\\s[^>]*)?>([\\s\\S]*?)</${name}>`, 'gi'))].map((m) => text(m[1])).filter(Boolean);
 }
 
+const GST_STATE_BY_CODE: Record<string, string> = {
+  '01': 'Jammu and Kashmir',
+  '02': 'Himachal Pradesh',
+  '03': 'Punjab',
+  '04': 'Chandigarh',
+  '05': 'Uttarakhand',
+  '06': 'Haryana',
+  '07': 'Delhi',
+  '08': 'Rajasthan',
+  '09': 'Uttar Pradesh',
+  '10': 'Bihar',
+  '11': 'Sikkim',
+  '12': 'Arunachal Pradesh',
+  '13': 'Nagaland',
+  '14': 'Manipur',
+  '15': 'Mizoram',
+  '16': 'Tripura',
+  '17': 'Meghalaya',
+  '18': 'Assam',
+  '19': 'West Bengal',
+  '20': 'Jharkhand',
+  '21': 'Odisha',
+  '22': 'Chhattisgarh',
+  '23': 'Madhya Pradesh',
+  '24': 'Gujarat',
+  '25': 'Daman and Diu',
+  '26': 'Dadra and Nagar Haveli and Daman and Diu',
+  '27': 'Maharashtra',
+  '29': 'Karnataka',
+  '30': 'Goa',
+  '31': 'Lakshadweep',
+  '32': 'Kerala',
+  '33': 'Tamil Nadu',
+  '34': 'Puducherry',
+  '35': 'Andaman and Nicobar Islands',
+  '36': 'Telangana',
+  '37': 'Andhra Pradesh',
+  '38': 'Ladakh',
+  '97': 'Other Territory',
+};
+
+function stateFromGstin(gstin: string | null): string | null {
+  if (!gstin || !/^\d{2}[A-Z0-9]{13}$/i.test(gstin)) return null;
+  return GST_STATE_BY_CODE[gstin.slice(0, 2)] ?? null;
+}
+
+function cityFromAddress(lines: string[]): string | null {
+  for (let i = lines.length - 1; i >= 0; i--) {
+    const withoutPin = lines[i]
+      .replace(/\b\d{6}\b/g, '')
+      .replace(/\bINDIA\b/gi, '')
+      .replace(/[\s,.;:/\\-]+$/g, '')
+      .trim();
+    const candidate = withoutPin.split(',').at(-1)?.trim() ?? '';
+    if (candidate && candidate.length <= 50 && !/\d/.test(candidate)) return candidate;
+  }
+  return null;
+}
+
 function detailsOf(body: string): TallyLedgerDetails {
   // BILLCREDITPERIOD also holds bill dates ("2-Mar-21") inside bill-wise openings; only "45 Days" is the ledger's own.
   const credit = allTags(body, 'BILLCREDITPERIOD').map((v) => /^(\d+)\s*days?$/i.exec(v)).find(Boolean);
   const address = allTags(body, 'ADDRESS');
-  const lastLine = address.at(-1)?.replace(/[.,]+$/, '').trim() ?? '';
+  const gstin = tag(body, 'PARTYGSTIN', 'GSTIN');
   return {
     creditPeriod: credit ? Number(credit[1]) : null,
-    state: tag(body, 'STATE', 'LEDSTATENAME', 'PRIORSTATENAME', 'OLDLEDSTATENAME'),
-    city: lastLine && lastLine.length <= 30 && !/\d/.test(lastLine) ? lastLine : null,
+    state: tag(body, 'STATE', 'LEDSTATENAME', 'PRIORSTATENAME', 'OLDLEDSTATENAME') ?? stateFromGstin(gstin),
+    city: tag(body, 'CITY', 'LEDGERCITY') ?? cityFromAddress(address),
     mobile: tag(body, 'LEDGERMOBILE', 'LEDGERPHONE'),
     email: tag(body, 'EMAIL'),
-    gstin: tag(body, 'PARTYGSTIN', 'GSTIN'),
+    gstin,
+    transportName: tag(body, 'TRANSPORTNAME', 'TRANSPORTERNAME', 'CARRIERNAME'),
   };
 }
 

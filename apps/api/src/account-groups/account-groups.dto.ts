@@ -113,6 +113,7 @@ class TallyLedgerDetailsDto {
   @IsOptional() @IsString() @MaxLength(50) mobile?: string | null;
   @IsOptional() @IsString() @MaxLength(255) email?: string | null;
   @IsOptional() @IsString() @MaxLength(20) gstin?: string | null;
+  @IsOptional() @IsString() @MaxLength(255) transportName?: string | null;
 }
 
 class AddToListItemDto {

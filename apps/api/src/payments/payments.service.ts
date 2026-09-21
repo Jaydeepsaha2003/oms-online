@@ -337,7 +337,7 @@ export class PaymentsService {
     return { receiptAmt, recDate };
   }
 
-  async save(dto: SavePaymentDto, userName?: string | null): Promise<SavePaymentResult> {
+  async save(dto: SavePaymentDto, userName?: string | null, transaction?: Db): Promise<SavePaymentResult> {
     const isAgent = dto.takeAccOn === 'AGENT';
     if (isAgent ? !dto.agentName?.trim() : dto.customerId == null) {
       throw new BadRequestException('Please select either Customer / Party Name or Agent Name.');
@@ -353,7 +353,7 @@ export class PaymentsService {
     const cashBy = dto.payMode === 'CASH' ? dto.cashRecBy?.trim().toUpperCase() || null : null;
     const remarks = dto.remarks?.trim().toUpperCase() || null;
 
-    return this.prisma.$transaction(async (tx) => {
+    const save = async (tx: Db) => {
       const customers = await this.resolveCustomers(tx, isAgent ? null : (dto.customerId ?? null), isAgent ? (dto.agentName ?? null) : null, payBucketOf(dto.payMode));
       const agentName = isAgent ? dto.agentName!.trim() : null;
       const headName = isAgent ? agentName! : customers[0].name;
@@ -384,7 +384,10 @@ export class PaymentsService {
         editedByName: null,
         createdAt: null,
       });
-    });
+    };
+    // Bank reconciliation includes its statement-row update in the same
+    // transaction. Ordinary Receive Payment retains its own transaction.
+    return transaction ? save(transaction) : this.prisma.$transaction(save);
   }
 
   /**

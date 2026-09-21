@@ -193,6 +193,28 @@ test('an aggregate candidate list does not falsely claim every receipt in it', a
   assert.equal(exact.matchedAmount, 61111);
 });
 
+test('aggregate cover is conserved across all statements', async () => {
+  await prisma.customer.create({ data: { id: 2, partyName: 'POOL PARTY', payBy: 'PARTY' } });
+  await prisma.acctLedger.create({ data: { voucherNo: 'RN/POOL', custId: 2, customerName: 'POOL PARTY', transDate: new Date('2026-08-20'), transMode: 'BANK', bankName: 'AXIS BANK', bankCredit: 100, receiptRefId: 'REC-POOL' } });
+  await prisma.acctPaymentReceipt.create({ data: { refId: 'REC-POOL', custId: 2, customerName: 'POOL PARTY', recDate: new Date('2026-08-20'), recType: 'RECEIPT', payMode: 'BANK', bankName: 'AXIS BANK', recAmt: 100, invNo: 'POOL' } });
+  const a = await run([[60, '2026-08-20']]);
+  const b = await run([[60, '2026-08-21']]);
+  await prisma.bankStatementRow.updateMany({ where: { runId: { in: [a.id, b.id] } }, data: { customerId: 2, customerName: 'POOL PARTY' } });
+  await svc.recheck(a.id);
+  await svc.recheck(b.id);
+  const both = [...await rowsOf(a.id), ...await rowsOf(b.id)];
+  assert.equal(both.reduce((s, r) => s + r.matchedAmount, 0), 100);
+  await svc.recheck(a.id);
+  assert.equal((await rowsOf(b.id))[0].matchedAmount, 40, 'recheck order cannot change allocation');
+});
+
+test('covered lines lose obsolete deletion notes', async () => {
+  const r = await run([[1, '2026-08-21']]);
+  await prisma.bankStatementRow.updateMany({ where: { runId: r.id }, data: { note: 'The receipt this line was matched against was deleted, so the line needs posting again.' } });
+  await svc.recheck(r.id);
+  assert.doesNotMatch((await rowsOf(r.id))[0].note || '', /deleted|posting again/);
+});
+
 (async () => {
   let failures = 0;
   try {

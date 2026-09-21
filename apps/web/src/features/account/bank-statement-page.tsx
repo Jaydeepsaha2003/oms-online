@@ -219,9 +219,9 @@ export function BankStatementPage() {
       .then((res) => {
         if (res.reopened.length || res.uncovered?.length) setReopenedInfo(res);
       })
-      .catch(() => {
-        /* A failed re-check must not stop the run opening — the working is
-           still readable, it simply has not been verified this time. */
+      .catch((e) => {
+        recheckedRuns.current.delete(runId);
+        toast.error(getApiErrorMessage(e, 'Could not verify receipts. Reopen this working to retry; Process also checks before posting.'));
       });
     // `recheck` is a fresh mutation object each render; keying on the run is
     // what makes this once-per-run rather than once-per-render.
@@ -667,7 +667,7 @@ export function BankStatementPage() {
   /** Ticked lines that Process could actually post. Drives the button's label,
    *  so it never offers to post a matched line just because it was ticked. */
   const selectedPostable = useMemo(
-    () => rows.filter((r) => r.status === 'UNMATCHED' && checked.has(r.id)).length,
+    () => rows.filter((r) => r.status === 'UNMATCHED' && !r.note?.startsWith('Receipt review required:') && checked.has(r.id)).length,
     [rows, checked],
   );
   const allCheckedIgnored = checkedRows.length > 0 && checkedRows.every((r) => r.status === 'IGNORED');
@@ -796,14 +796,14 @@ export function BankStatementPage() {
      * counted here so the confirmation promises what will actually happen —
      * ticking a matched line and a new one must not read as "post 2".
      */
-    const postable = rows.filter((r) => r.status === 'UNMATCHED');
+    const postable = rows.filter((r) => r.status === 'UNMATCHED' && !r.note?.startsWith('Receipt review required:'));
     const selected = postable.filter((r) => checked.has(r.id));
-    const targets = selected.length ? selected : postable;
-    const onlySelected = selected.length > 0;
+    const onlySelected = checked.size > 0;
+    const targets = onlySelected ? selected : postable;
     const n = targets.length;
     if (!n) {
       return toast.error(
-        onlySelected ? 'None of the ticked lines can be posted.' : 'Nothing to post — every line already matches a receipt or has no party.',
+        onlySelected ? 'None of the ticked lines can be posted. Check any receipt-review notes.' : 'Nothing to post — lines are covered, need a party, or require receipt review.',
       );
     }
     const total = targets.reduce((s, r) => s + (r.amount - r.matchedAmount), 0);
@@ -831,6 +831,7 @@ export function BankStatementPage() {
         // behind would silently narrow the NEXT Process to lines already done.
         setChecked(new Set());
         if (res.created.length) toast.success(`${res.created.length} receipt${res.created.length === 1 ? '' : 's'} posted`);
+        if (!res.created.length && !res.failed.length) toast.info('Receipts checked — no new receipt was needed for the selected lines.');
         if (res.failed.length) {
           toast.warning(`${res.failed.length} could not be posted — ${res.failed[0].reason}`, { duration: 12000 });
         }
@@ -869,18 +870,17 @@ export function BankStatementPage() {
               <TriangleAlert className="size-5 text-amber-600" />
               {(() => {
                 const n = (reopenedInfo?.reopened.length ?? 0) + (reopenedInfo?.uncovered?.length ?? 0);
-                return `${n} line${n === 1 ? '' : 's'} reopened`;
+                return `${n} line${n === 1 ? '' : 's'} need receipt review`;
               })()}
             </DialogTitle>
           </DialogHeader>
           <div className="space-y-3 text-[13px]">
-            {/* Lines that were MATCHED to an existing receipt which has since
-                been deleted — the other way money drops out of the books. */}
+            {/* Changed coverage is not evidence that a receipt was deleted. */}
             {!!reopenedInfo?.uncovered?.length && (
               <>
                 <p>
-                  {reopenedInfo.uncovered.length === 1 ? 'This line was' : 'These lines were'} matched against a receipt that has
-                  since been deleted in Receive Payment, so the money is no longer in the books:
+                  Existing receipts no longer fully cover these statement lines under the current matching rules.
+                  This can happen when receipt details change or another statement uses the same receipt. It does not mean a receipt was deleted.
                 </p>
                 <div className="max-h-56 overflow-y-auto rounded-[4px] border border-amber-300 dark:border-amber-400/30">
                   <table className="w-full text-[12.5px]">
@@ -899,9 +899,8 @@ export function BankStatementPage() {
             )}
             {!!reopenedInfo?.reopened.length && (
             <p>
-              The receipt{reopenedInfo?.reopened.length === 1 ? '' : 's'} this statement created for the line
-              {reopenedInfo?.reopened.length === 1 ? '' : 's'} below {reopenedInfo?.reopened.length === 1 ? 'has' : 'have'} since been
-              deleted in Receive Payment, so this money is no longer in the books.
+              The previously linked receipt references below could not be found. After checking other receipts,
+              these amounts remain uncovered. Review Receive Payments before posting a new receipt.
             </p>
             )}
             {!!reopenedInfo?.reopened.length && (
@@ -921,14 +920,14 @@ export function BankStatementPage() {
             </div>
             )}
             <p>
-              They have been put back so you can post them again — this working is a draft once more, and
-              <strong> Process</strong> will recreate just these.
+              This working is available for review. <strong>Process</strong> checks the latest receipts again
+              and posts only the remaining shortfall on eligible lines. Lines marked “Receipt review required”
+              are blocked from automatic posting. Check their references in Receive Payments first.
               {!!reopenedInfo?.stillPosted && (
                 <>
                   {' '}
-                  The other {reopenedInfo.stillPosted} posted line{reopenedInfo.stillPosted === 1 ? '' : 's'} still
-                  {reopenedInfo.stillPosted === 1 ? ' has its' : ' have their'} receipt and {reopenedInfo.stillPosted === 1 ? 'was' : 'were'} left
-                  alone, so nothing can be posted twice.
+                  {reopenedInfo.stillPosted} linked receipt{reopenedInfo.stillPosted === 1 ? '' : 's'} still exist.
+                  This check did not change any receipts.
                 </>
               )}
             </p>
@@ -1759,6 +1758,9 @@ function LineCard({
 
       <div className="space-y-1">
         <p className="text-xs font-medium leading-relaxed text-foreground break-words">{row.narration || '—'}</p>
+        {row.note?.startsWith('Receipt review required:') && (
+          <p className="text-xs font-medium leading-relaxed text-amber-800 dark:text-amber-300">{row.note}</p>
+        )}
 
         {hasRef(row.refNo) && (
           <div className="inline-flex items-center gap-1 rounded-[3px] border px-1.5 py-0.5 text-[10.5px]">
@@ -1847,6 +1849,9 @@ function LineRow({ row, checked, onToggle, selectable, vouchers, onChangeParty }
         <span className="block truncate font-medium" title={row.narration}>
           {row.narration || '—'}
         </span>
+        {row.note?.startsWith('Receipt review required:') && (
+          <p className="mt-1 whitespace-normal text-xs font-medium text-amber-800 dark:text-amber-300">{row.note}</p>
+        )}
         {/* Labelled, because a bare grey number under the narration read as part
             of the narration — nobody could tell it was the cheque number. */}
         {hasRef(row.refNo) && (

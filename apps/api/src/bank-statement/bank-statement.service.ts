@@ -65,6 +65,40 @@ function columnsOf(rows: readonly Record<string, unknown>[]): string[] {
 @Injectable()
 export class BankStatementService {
   private readonly logger = new Logger(BankStatementService.name);
+  private transaction?: Db;
+
+  private async inTransaction<T>(work: (tx: Db) => Promise<T>): Promise<T> {
+    return this.transaction ? work(this.transaction) : this.prisma.$transaction(work, { timeout: 60000 });
+  }
+
+  /**
+   * Run one of the three write paths (rematch / process / recheck) inside a
+   * transaction, re-entering it on a copy of this service bound to that
+   * transaction.
+   *
+   * A COPY, not `this`: the service is a Nest singleton, so setting
+   * `this.transaction` would hand one request's transaction to every other
+   * request running at the same time. The copy is private to this call.
+   *
+   * The `as PrismaService` is the one unchecked cast in this file and it is
+   * narrow by construction: a transaction client carries every model accessor
+   * these methods use, and the only thing it lacks — `$transaction` — is never
+   * reached, because `inTransaction` sees `this.transaction` set and runs the
+   * work inline instead of opening a second one. Keeping it in a single place
+   * is the point: three copies of it were three places to get that wrong.
+   *
+   * The no-op write to the run row first takes SQLite's write lock, so two
+   * requests for the same working queue instead of both reading the same
+   * coverage and both deciding to post it.
+   */
+  private async reenterInTransaction<T>(runId: number, work: (service: BankStatementService) => Promise<T>): Promise<T> {
+    return this.inTransaction(async (tx) => {
+      await tx.bankStatementRun.update({ where: { id: runId }, data: { id: runId } });
+      const scoped = new BankStatementService(tx as PrismaService, this.payments);
+      scoped.transaction = tx;
+      return work(scoped);
+    });
+  }
 
   constructor(
     private readonly prisma: PrismaService,
@@ -695,231 +729,154 @@ export class BankStatementService {
    * passes is a genuine shortfall, and only that is what Process would create.
    */
   private async rematch(runId: number): Promise<void> {
-    const run = await this.prisma.bankStatementRun.findUnique({ where: { id: runId } });
-    if (!run) return;
-    const rows = await this.prisma.bankStatementRow.findMany({ where: { runId }, orderBy: [{ txnDate: 'asc' }, { id: 'asc' }] });
-
-    const byParty = new Map<number, typeof rows>();
-    for (const row of rows) {
-      // RETURNED alongside IGNORED: the bank took this credit back, so there is
-      // no money here to pair a receipt with.
-      if (row.status === 'IGNORED' || row.status === 'RETURNED' || row.status === 'POSTED') continue;
-      if (row.customerId == null) continue;
-      const list = byParty.get(row.customerId) ?? [];
-      list.push(row);
-      byParty.set(row.customerId, list);
+    if (!this.transaction) return this.reenterInTransaction(runId, (s) => s.rematch(runId));
+    // Recompute all saved workings together. A receipt has ONE remaining
+    // balance, even when statement date ranges overlap.
+    const runs = await this.prisma.bankStatementRun.findMany({ orderBy: { id: 'asc' } });
+    if (!runs.some((r) => r.id === runId)) return;
+    const rows = await this.prisma.bankStatementRow.findMany({ orderBy: [{ txnDate: 'asc' }, { runId: 'asc' }, { id: 'asc' }] });
+    const pool = new Map<string, Awaited<ReturnType<BankStatementService['receiptVouchers']>>>();
+    const remaining = new Map<string, number>();
+    const ownKey = (v: { refId: string; custId: number }) => `${v.refId}:${v.custId}`;
+    for (const run of runs) {
+      const vouchers = await this.receiptVouchers(null, run.fromDate, run.toDate, run.bankName);
+      pool.set(String(run.id), vouchers);
+      for (const v of vouchers) remaining.set(ownKey(v), v.amount);
     }
-
-    /*
-     * Receipts this run already created belong to the line that created them.
-     *
-     * Posting a line writes a real receipt, and a POSTED line then drops out of
-     * the matching passes below — but its receipt stayed in the pool and became
-     * "spare" cover for the NEXT line of the same party. RAMSON's ₹53,269 of
-     * 11 Aug, posted as RN/800, was then counted again against the ₹1,29,357 of
-     * 16 Aug, which reported itself ₹76,088 short: the same money answering for
-     * two different credits, with ₹53,269 of real money left unrecorded.
-     *
-     * A posted line has spent its own voucher, so the voucher is retired here.
-     *
-     * The same holds ACROSS statements. Two uploads of one account overlap in
-     * time even when they share no line — the September file's matching window
-     * still reaches back over August's receipts — and each run matched in
-     * isolation, so a receipt that already explained an August credit was
-     * offered again to explain a September one. RANJITHAM's ₹26,460 and ₹13,268
-     * of early September read as "already covered" by June-to-August receipts
-     * that were spoken for; ₹6.7 lakh across the book sat unposted the same way.
-     *
-     * One receipt answers for one credit, whichever statement raised it.
-     */
-    const claimedRefIds = new Set<string>();
-    const claimingRows = await this.prisma.bankStatementRow.findMany({
-      where: {
-        OR: [
-          // Any run's posted line owns the receipt it created.
-          { status: 'POSTED', postedRef: { not: null } },
-          // Another run's line-level match owns the receipt that explains it.
-          // This run's own rows are left out: the passes below allocate among
-          // them. Only MATCHED counts — see why below.
-          { runId: { not: runId }, status: 'MATCHED', matchedRefs: { not: null } },
-        ],
-      },
-      select: { status: true, postedRef: true, matchedRefs: true },
+    const posted = rows.filter((r) => r.status === 'POSTED' && r.postedRef);
+    const postedNos = new Set(posted.map((r) => r.postedRef!));
+    for (const vouchers of pool.values()) {
+      for (const v of vouchers) if (postedNos.has(v.voucherNo)) remaining.set(ownKey(v), 0);
+    }
+    const active = rows.filter((r) => !['IGNORED', 'RETURNED', 'POSTED'].includes(r.status));
+    const updates = new Map<number, { status: BankRowStatus; matchedRefs: string | null; matchedAmount: number }>();
+    const candidates = (row: typeof rows[number]) => (pool.get(String(row.runId)) ?? [])
+      .filter((v) => v.custId === row.customerId && Math.abs(+v.recDate - +row.txnDate) <= BANK_DATE_TOL_DAYS * DAY)
+      .sort((a, b) => Math.abs(+a.recDate - +row.txnDate) - Math.abs(+b.recDate - +row.txnDate) || a.voucherNo.localeCompare(b.voucherNo));
+    // Exact matches across EVERY run precede aggregate allocation.
+    for (const row of active) {
+      const hit = candidates(row).find((v) => (remaining.get(ownKey(v)) ?? 0) === v.amount && Math.abs(v.amount - row.amount) <= BANK_AMOUNT_TOL);
+      if (!hit) continue;
+      remaining.set(ownKey(hit), 0);
+      updates.set(row.id, { status: 'MATCHED', matchedRefs: hit.refId, matchedAmount: row.amount });
+    }
+    // Historical partial postings may contain an over-broad candidate list.
+    // Never let that list steal an exact match and suggest posting it again.
+    // Reserve only the remaining coverage, and expose any conflict on the
+    // partially posted line without deleting or recreating its real receipt.
+    const postedLedger = await this.prisma.acctLedger.findMany({
+      where: { voucherType: 'RECEIPT', voucherNo: { in: [...postedNos] } },
+      select: { voucherNo: true, bankCredit: true },
     });
-    const postedVoucherNos = claimingRows
-      .filter((r) => r.status === 'POSTED' && r.postedRef)
-      .map((r) => r.postedRef!);
-    /*
-     * A claim binds only when it is one-to-one.
-     *
-     * Pass 1 records the single voucher that answers a line. Pass 2 records the
-     * whole spare POOL on every line it covers in aggregate — those refs are
-     * candidates, not an allocation, so a PARTIAL line can cite a dozen
-     * vouchers it never specifically used. Treating that bag as claimed retired
-     * far too much: run 3's own 16 June credit lost RN/605 — the receipt of the
-     * same amount on the same day — because a September line had listed it
-     * among its candidates, and 52 correctly matched lines came unstuck at once.
-     */
-    for (const r of claimingRows) {
-      if (r.status !== 'MATCHED') continue;
-      const refs = (r.matchedRefs ?? '').split(',').filter(Boolean);
-      if (refs.length === 1) claimedRefIds.add(refs[0]);
+    for (const row of posted) {
+      const voucher = postedLedger.find((v) => v.voucherNo === row.postedRef);
+      if (!voucher) continue; // recheck handles a missing link on opening its run.
+      const required = r2(Math.max(0, row.amount - voucher.bankCredit));
+      let need = required;
+      const refs = new Set((row.matchedRefs ?? '').split(','));
+      for (const v of pool.get(String(row.runId)) ?? []) {
+        if (v.custId !== row.customerId || !refs.has(v.refId) || need <= 0) continue;
+        const used = Math.min(need, remaining.get(ownKey(v)) ?? 0);
+        remaining.set(ownKey(v), r2((remaining.get(ownKey(v)) ?? 0) - used));
+        need = r2(need - used);
+      }
+      const note = need > BANK_AMOUNT_TOL
+        ? `Receipt review required: ${row.postedRef} still exists, but ${need.toFixed(2)} of this line's previous coverage is no longer available (references: ${row.matchedRefs || 'not recorded'}). Check Receive Payments; this posted line will not create another receipt automatically.`
+        : row.note?.startsWith('Receipt review required:') ? null : row.note;
+      await this.prisma.bankStatementRow.update({ where: { id: row.id }, data: { matchedAmount: r2(required - need), note } });
     }
-    if (postedVoucherNos.length) {
-      const led = await this.prisma.acctLedger.findMany({
-        where: { voucherNo: { in: postedVoucherNos }, voucherType: 'RECEIPT' },
-        select: { receiptRefId: true },
+    for (const row of active) {
+      if (updates.has(row.id)) continue;
+      let need = row.amount;
+      const usedRefs: string[] = [];
+      for (const v of candidates(row)) {
+        const available = remaining.get(ownKey(v)) ?? 0;
+        const use = r2(Math.min(need, available));
+        if (use <= 0) continue;
+        remaining.set(ownKey(v), r2(available - use));
+        need = r2(need - use);
+        usedRefs.push(v.refId);
+        if (need <= 0) break;
+      }
+      updates.set(row.id, {
+        status: row.customerId == null ? 'NO_PARTY' : need <= BANK_AMOUNT_TOL ? 'PARTIAL' : 'UNMATCHED',
+        matchedRefs: usedRefs.length ? [...new Set(usedRefs)].join(',') : null,
+        matchedAmount: r2(row.amount - need),
       });
-      for (const l of led) if (l.receiptRefId) claimedRefIds.add(l.receiptRefId);
     }
-
-    const updates: { id: number; status: BankRowStatus; matchedRefs: string | null; matchedAmount: number }[] = [];
-
-    for (const [customerId, partyRows] of byParty) {
-      const vouchers = (await this.receiptVouchers(customerId, run.fromDate, run.toDate, run.bankName))
-        .filter((v) => !claimedRefIds.has(v.refId))
-        .map((v) => ({ ...v, used: false }));
-
-      // Pass 1 — line level, nearest date.
-      for (const row of partyRows) {
-        const candidates = vouchers
-          .filter((v) => !v.used && Math.abs(v.amount - row.amount) <= BANK_AMOUNT_TOL && Math.abs(+v.recDate - +row.txnDate) <= BANK_DATE_TOL_DAYS * DAY)
-          .sort((a, b) => Math.abs(+a.recDate - +row.txnDate) - Math.abs(+b.recDate - +row.txnDate));
-        const hit = candidates[0];
-        if (hit) {
-          hit.used = true;
-          updates.push({ id: row.id, status: 'MATCHED', matchedRefs: hit.refId, matchedAmount: row.amount });
+    await this.inTransaction(async (tx) => {
+      for (const row of active) {
+        const update = updates.get(row.id)!;
+        const staleNote = /receipt.*(deleted|reopened)/i.test(row.note ?? '');
+        const needsReview = update.status === 'UNMATCHED' && row.matchedAmount > update.matchedAmount;
+        const oldReview = row.note?.startsWith('Receipt review required:');
+        const note = needsReview && !oldReview
+          ? `Receipt review required: previous coverage changed (references: ${row.matchedRefs || 'not recorded'}). Check these receipts in Receive Payments before recording any missing money there. Automatic posting is blocked until this line is covered.`
+          : (oldReview && update.status !== 'UNMATCHED') || staleNote ? null : row.note;
+        await tx.bankStatementRow.update({ where: { id: row.id }, data: { ...update, note } });
+      }
+      for (const run of runs) {
+        if (active.some((r) => r.runId === run.id && updates.get(r.id)?.status === 'UNMATCHED') && run.status === 'PROCESSED') {
+          await tx.bankStatementRun.update({ where: { id: run.id }, data: { status: 'DRAFT', processedAt: null } });
         }
+        await this.recount(tx, run.id);
       }
-
-      // Pass 2 — whatever is left, in total.
-      const matchedIds = new Set(updates.filter((u) => u.status === 'MATCHED').map((u) => u.id));
-      const leftoverRows = partyRows.filter((r) => !matchedIds.has(r.id));
-      const spareVouchers = vouchers.filter((v) => !v.used);
-      let spare = r2(spareVouchers.reduce((s, v) => s + v.amount, 0));
-      const spareRefs = spareVouchers.map((v) => v.refId);
-
-      for (const row of leftoverRows) {
-        if (spare >= row.amount - BANK_AMOUNT_TOL) {
-          // Covered by receipts that exist, just not one-to-one with this line.
-          spare = r2(spare - row.amount);
-          updates.push({ id: row.id, status: 'PARTIAL', matchedRefs: spareRefs.join(','), matchedAmount: row.amount });
-        } else {
-          const covered = r2(Math.max(0, spare));
-          spare = 0;
-          updates.push({
-            id: row.id,
-            status: 'UNMATCHED',
-            matchedRefs: covered > 0 ? spareRefs.join(',') : null,
-            matchedAmount: covered,
-          });
-        }
-      }
-    }
-
-    await this.prisma.$transaction(async (tx) => {
-      // Every row that has a party starts from a clean slate each time, so a
-      // reassignment cannot leave last round's verdict behind.
-      await tx.bankStatementRow.updateMany({
-        // A returned cheque must never be postable — that is the whole point.
-        where: { runId, status: { notIn: ['IGNORED', 'RETURNED', 'POSTED'] } },
-        data: { status: 'NO_PARTY', matchedRefs: null, matchedAmount: 0 },
-      });
-      for (const u of updates) {
-        await tx.bankStatementRow.update({
-          where: { id: u.id },
-          data: { status: u.status, matchedRefs: u.matchedRefs, matchedAmount: u.matchedAmount },
-        });
-      }
-      await this.recount(tx, runId);
     });
   }
 
-  /** Receipt VOUCHERS (not allocation rows) on the bank leg for the range. */
+  /** Real receipt cash, including money held on account or clearing openings. */
   private async receiptVouchers(
-    customerId: number | null,
-    from: Date,
-    to: Date,
-    bankName?: string | null,
-  ): Promise<{ refId: string; custId: number; recDate: Date; amount: number }[]> {
-    const rows = await this.prisma.acctPaymentReceipt.findMany({
-      where: {
-        ...(customerId != null ? { custId: customerId } : {}),
-        recType: 'RECEIPT',
-        payMode: { in: ['BANK', 'CHEQUE'] },
-        recDate: { gte: from, lt: new Date(to.getTime() + DAY) },
-      },
-      select: { refId: true, custId: true, recDate: true, recAmt: true, bankName: true },
+    customerId: number | null, from: Date, to: Date, bankName?: string | null,
+  ): Promise<{ refId: string; voucherNo: string; custId: number; recDate: Date; amount: number }[]> {
+    const range = { gte: new Date(+from - BANK_DATE_TOL_DAYS * DAY), lt: new Date(+to + (BANK_DATE_TOL_DAYS + 1) * DAY) };
+    const ledger = await this.prisma.acctLedger.findMany({
+      where: { voucherType: 'RECEIPT', transMode: { in: ['BANK', 'CHEQUE'] }, transDate: range, bankCredit: { gt: 0 } },
+      orderBy: [{ transDate: 'asc' }, { id: 'asc' }],
     });
-    /*
-     * Only receipts banked into the SAME bank as this statement can account for
-     * its credits.
-     *
-     * Without this a party paying into two of our accounts had its Axis credits
-     * "already accounted for" by its ICICI receipts — the reconciliation
-     * reported money as reconciled against a receipt that never touched that
-     * account, and Process then declined to create the one genuinely missing.
-     *
-     * Compared at INSTITUTION level, not on the literal string. The same
-     * account is written seven different ways in this book ("AXIS BANK",
-     * "AXIS BANK-0884", "AXIS BANK-8254", "AXIS BANK LTD"...), so an exact
-     * comparison drops 112 of 231 real matches on one run and every match on
-     * another. The institution is the part that is recorded reliably, and it is
-     * what separates Axis money from ICICI money — the distinction that was
-     * actually wrong.
-     *
-     * A receipt with no bank recorded is kept: it predates the field, and
-     * dropping it would silently unmatch history.
-     */
-    const institution = (v: string | null | undefined) =>
-      (v ?? '')
-        .toUpperCase()
-        .replace(/[^A-Z ]+.*$/, '')
-        .replace(/\b(LTD|LIMITED)\b/g, '')
-        .trim();
-    const want = institution(bankName);
-    const inScope = want ? rows.filter((r) => !r.bankName?.trim() || institution(r.bankName) === want) : rows;
-    // One Receive Payment voucher writes one row PER INVOICE it allocated to,
-    // all sharing a refId. The bank saw the voucher, not the allocations.
-    const byRef = new Map<string, { refId: string; custId: number; recDate: Date; amount: number }>();
-    for (const r of inScope) {
-      const cur = byRef.get(r.refId);
-      if (cur) cur.amount = r2(cur.amount + r.recAmt);
-      else byRef.set(r.refId, { refId: r.refId, custId: r.custId, recDate: r.recDate, amount: r2(r.recAmt) });
-    }
-
-    /*
-     * What the bank actually paid in, from the voucher's own ledger entry.
-     *
-     * Summing the allocation rows was a proxy for the voucher total, and it is
-     * wrong in both directions:
-     *
-     *  - TOO HIGH when a voucher settled an invoice out of an older ADVANCE.
-     *    That money reached the bank months earlier under its own receipt; the
-     *    allocation is a reallocation, not a second credit. RAMSON's ₹53,269 on
-     *    12 Aug was posted as ₹36,859 because a ₹16,410 advance re-applied in
-     *    June made the voucher look ₹16,410 bigger than the bank ever saw — real
-     *    money left unrecorded.
-     *  - TOO LOW when a voucher had money left over and parked it as an advance.
-     *    The bank still received the whole amount; the unallocated part was
-     *    reported as a shortfall that did not exist.
-     *
-     * The ledger row IS the voucher — one per receipt, carrying the figure that
-     * hit the account — so it answers the question directly. The allocation sum
-     * stays as the fallback for anything with no ledger entry.
-     */
-    const refIds = [...byRef.keys()];
-    if (refIds.length) {
-      const vouchers = await this.prisma.acctLedger.findMany({
-        where: { voucherType: 'RECEIPT', receiptRefId: { in: refIds } },
-        select: { receiptRefId: true, bankCredit: true },
-      });
-      for (const v of vouchers) {
-        const cur = v.receiptRefId ? byRef.get(v.receiptRefId) : undefined;
-        if (cur) cur.amount = r2(v.bankCredit ?? 0);
+    const allocations = await this.prisma.acctPaymentReceipt.findMany({
+      where: { recType: 'RECEIPT', payMode: { in: ['BANK', 'CHEQUE'] }, recDate: range },
+    });
+    const openings = await this.prisma.acctOpeningTrans.findMany({
+      where: { kind: 'CLEARANCE', transDate: range, bankAmt: { gt: 0 } },
+    });
+    const advances = await this.prisma.acctPartyAdvance.findMany({
+      where: { recDate: range, bankAmt: { gt: 0 } },
+    });
+    const bankParts = (value: string) => ({
+      institution: value.toUpperCase().replace(/[^A-Z ]+.*$/, '').replace(/\b(LTD|LIMITED)\b/g, '').trim(),
+      account: value.match(/\d{4,}/)?.[0] ?? null,
+    });
+    const bankMatches = (actual: string | null | undefined) => {
+      if (!bankName?.trim() || !actual?.trim()) return true;
+      const a = bankParts(actual), b = bankParts(bankName);
+      return a.institution === b.institution && (!a.account || !b.account || a.account === b.account);
+    };
+    const result: Awaited<ReturnType<BankStatementService['receiptVouchers']>> = [];
+    for (const v of ledger) {
+      const linked = allocations.filter((a) => a.refId === v.receiptRefId || a.refRecId === v.voucherNo);
+      const actualBank = v.bankName || linked.find((a) => a.bankName)?.bankName;
+      if (!bankMatches(actualBank)) continue;
+      const refId = v.receiptRefId || v.advanceRefId || `VOUCHER:${v.voucherNo}`;
+      if (v.custId > 0) {
+        if (customerId == null || customerId === v.custId) result.push({ refId, voucherNo: v.voucherNo, custId: v.custId, recDate: v.transDate, amount: r2(v.bankCredit) });
+      } else {
+        // Agent receipts can settle several customers. Only each customer's
+        // fresh-money allocations belong to that customer; never repeat the
+        // entire agent voucher for every invoice.
+        const portions = new Map<number, number>();
+        const add = (id: number, amount: number) => { if (id > 0) portions.set(id, r2((portions.get(id) ?? 0) + amount)); };
+        for (const a of linked) if (a.refRecId === v.voucherNo) add(a.custId, a.recAmt);
+        for (const o of openings) if (o.refRecId === v.voucherNo) add(o.custId, o.bankAmt);
+        for (const a of advances) if (a.refRecId === v.voucherNo) add(a.custId, a.bankAmt);
+        let available = v.bankCredit;
+        for (const [custId, amount] of portions) {
+          const part = r2(Math.min(available, amount));
+          available = r2(available - part);
+          if (part > 0 && (customerId == null || customerId === custId)) result.push({ refId, voucherNo: v.voucherNo, custId, recDate: v.transDate, amount: part });
+        }
       }
     }
-    return [...byRef.values()].filter((v) => v.amount > 0).sort((a, b) => +a.recDate - +b.recDate);
+    return result;
   }
 
   /* ── Assignment ────────────────────────────────────────────────────────── */
@@ -1179,11 +1136,13 @@ export class BankStatementService {
     // is exactly what Process would do.
     // Anything beyond what the party owes does not disappear — the payments
     // engine parks it as an advance, so the projection says so.
-    const spill = r2(Math.max(0, shortfall - before.pendingBank));
+    const postable = live.filter((r) => r.status === 'UNMATCHED' && !r.note?.startsWith('Receipt review required:'));
+    const postableAmount = r2(postable.reduce((sum, r) => sum + r.amount - r.matchedAmount, 0));
+    const spill = r2(Math.max(0, postableAmount - before.pendingBank));
     const after: BankPartyBalance = {
-      receiptCount: before.receiptCount + live.filter((r) => r.status === 'UNMATCHED').length,
-      receiptTotal: r2(before.receiptTotal + shortfall),
-      pendingBank: r2(Math.max(0, before.pendingBank - shortfall)),
+      receiptCount: before.receiptCount + postable.length,
+      receiptTotal: r2(before.receiptTotal + postableAmount),
+      pendingBank: r2(Math.max(0, before.pendingBank - postableAmount)),
       pendingCash: before.pendingCash,
       advance: r2(before.advance + spill),
     };
@@ -1260,7 +1219,10 @@ export class BankStatementService {
    * posting path to keep in step with the first.
    */
   async process(runId: number, userName?: string | null, rowIds?: number[]): Promise<BankStatementProcessResult> {
-    const run = await this.mustBeDraft(runId);
+    if (!this.transaction) return this.reenterInTransaction(runId, (s) => s.process(runId, userName, rowIds));
+    await this.rematch(runId);
+    const run = await this.prisma.bankStatementRun.findUniqueOrThrow({ where: { id: runId } });
+    if (run.status === 'PROCESSED') return { runId, created: [], failed: [] };
     /*
      * `rowIds` posts only the lines the user ticked; omitted, every unmatched
      * line goes, which is the usual case and stays the default.
@@ -1276,17 +1238,21 @@ export class BankStatementService {
       orderBy: [{ txnDate: 'asc' }, { id: 'asc' }],
     });
     if (!rows.length) {
-      throw new BadRequestException(
-        picked
-          ? 'None of the selected lines can be posted — each one either matches a receipt already, has no party, or is marked not required.'
-          : 'Nothing to post — every line either matches a receipt already or has no party.',
-      );
+      // Commit refreshed matches even when a receipt was entered after the
+      // screen loaded. A repeated Process request is a harmless no-op.
+      return { runId, created: [], failed: [] };
     }
 
     const created: BankStatementProcessResult['created'] = [];
     const failed: BankStatementProcessResult['failed'] = [];
 
-    for (const row of rows) {
+    for (const selected of rows) {
+      const row = await this.prisma.bankStatementRow.findUniqueOrThrow({ where: { id: selected.id } });
+      if (row.status !== 'UNMATCHED') continue;
+      if (row.note?.startsWith('Receipt review required:')) {
+        failed.push({ rowId: row.id, reason: `${row.customerName ?? 'This line'} needs receipt review. ${row.note}` });
+        continue;
+      }
       if (row.customerId == null) {
         failed.push({ rowId: row.id, reason: 'No party assigned to this line.' });
         continue;
@@ -1323,6 +1289,7 @@ export class BankStatementService {
         });
         continue;
       }
+      await this.transaction.$executeRawUnsafe('SAVEPOINT bank_statement_receipt');
       try {
         const res = await this.payments.save(
           {
@@ -1337,6 +1304,7 @@ export class BankStatementService {
             remarks: `Bank statement ${run.fileName}${row.refNo ? ` — ref ${row.refNo}` : ''}`,
           },
           userName,
+          this.transaction,
         );
         const voucherNo = res?.voucherNo ?? '';
         await this.prisma.bankStatementRow.update({
@@ -1348,10 +1316,14 @@ export class BankStatementService {
             note: `Receipt created from the bank statement${voucherNo ? ` as ${voucherNo}` : ''}.`,
           },
         });
+        await this.transaction.$executeRawUnsafe('RELEASE SAVEPOINT bank_statement_receipt');
         created.push({ rowId: row.id, voucherNo, amount, customerName: row.customerName ?? '' });
       } catch (e) {
+        await this.transaction.$executeRawUnsafe('ROLLBACK TO SAVEPOINT bank_statement_receipt');
+        await this.transaction.$executeRawUnsafe('RELEASE SAVEPOINT bank_statement_receipt');
         failed.push({ rowId: row.id, reason: e instanceof Error ? e.message : 'Could not post this receipt.' });
       }
+      await this.rematch(runId);
     }
 
     /*
@@ -1385,7 +1357,7 @@ export class BankStatementService {
         data: { status: 'PROCESSED', processedAt: new Date() },
       });
     }
-    await this.prisma.$transaction(async (tx) => this.recount(tx, runId));
+    await this.inTransaction(async (tx) => this.recount(tx, runId));
     return { runId, created, failed };
   }
 
@@ -1433,6 +1405,14 @@ export class BankStatementService {
     const refIds = [...new Set(rows.flatMap((r) => (r.matchedRefs ?? '').split(',').filter(Boolean)))];
     const receiptVouchers: Record<string, string> = {};
     if (refIds.length) {
+      const ledger = await this.prisma.acctLedger.findMany({
+        where: { voucherType: 'RECEIPT', OR: [
+          { receiptRefId: { in: refIds } }, { advanceRefId: { in: refIds } },
+          { voucherNo: { in: refIds.filter((r) => r.startsWith('VOUCHER:')).map((r) => r.slice(8)) } },
+        ] },
+        select: { voucherNo: true, receiptRefId: true, advanceRefId: true },
+      });
+      for (const v of ledger) receiptVouchers[v.receiptRefId || v.advanceRefId || `VOUCHER:${v.voucherNo}`] = v.voucherNo;
       const alloc = await this.prisma.acctPaymentReceipt.findMany({
         where: { refId: { in: refIds } },
         select: { refId: true, refRecId: true },
@@ -1464,151 +1444,42 @@ export class BankStatementService {
     await this.prisma.bankStatementRun.delete({ where: { id: runId } });
   }
 
-  /**
-   * Check a run's posted lines against the CURRENT ledger and reopen any whose
-   * receipt has been deleted since.
-   *
-   * Process records the receipt it created on each line, but nothing stopped
-   * that receipt being deleted afterwards in Receive Payment. The line went on
-   * saying POSTED for a receipt that no longer existed, `rematch` skips POSTED
-   * rows so it never noticed, and the run being PROCESSED made it read-only —
-   * so the money was missing from the books with the statement still claiming
-   * it was in, and no way back short of deleting the whole working.
-   *
-   * Safe to run at any time, including on a run with nothing wrong: a line
-   * whose receipt is still there is left exactly as it is, so this can never
-   * cause a double posting. `process` only ever posts UNMATCHED lines.
-   */
+  /** Refresh statement coverage without changing accounting. A missing old
+   * reference is not proof of missing money: look for a replacement first.
+   * Historical coverage conflicts require review, not automatic reposting. */
   async recheck(runId: number): Promise<BankStatementRecheckResult> {
-    const run = await this.prisma.bankStatementRun.findUnique({ where: { id: runId } });
-    if (!run) throw new NotFoundException('Run not found.');
-    const posted = await this.prisma.bankStatementRow.findMany({
-      where: { runId, status: 'POSTED' },
-      orderBy: [{ txnDate: 'asc' }, { id: 'asc' }],
-    });
-
-    const reopened: BankStatementRecheckResult['reopened'] = [];
+    if (!this.transaction) return this.reenterInTransaction(runId, (s) => s.recheck(runId));
+    const run = await this.prisma.bankStatementRun.findUniqueOrThrow({ where: { id: runId } });
+    const before = await this.prisma.bankStatementRow.findMany({ where: { runId } });
+    const posted = before.filter((r) => r.status === 'POSTED');
+    const missing = new Map<number, string>();
     for (const row of posted) {
-      const ref = (row.postedRef ?? '').trim();
-      /*
-       * Does the VOUCHER still exist? Asked of the ledger, which is the record
-       * of the voucher itself.
-       *
-       * Emphatically NOT asked of acct_payment_receipt. Those rows are the
-       * per-invoice ALLOCATIONS, and a receipt that was taken entirely to
-       * advance — money in with no invoice to put it against — writes none of
-       * them at all. Four live receipts in this book are exactly that shape
-       * (RN/721, RN/722, RN/734, RN/755: ledger row present, advance row
-       * present, allocation rows correctly absent). Testing the allocations
-       * read all four as deleted, which would have reopened them and had
-       * Process issue a SECOND receipt for money already banked.
-       *
-       * Deleting a receipt removes its ledger voucher, so absence here is the
-       * real signal — and it stays right whichever way the money was applied.
-       */
-      const alive = ref ? await this.prisma.acctLedger.count({ where: { voucherNo: ref } }) : 0;
-      if (alive > 0) continue;
-      reopened.push({
-        rowId: row.id,
-        rowNo: row.rowNo,
-        postedRef: ref,
-        amount: row.amount,
-        customerName: row.customerName ?? '',
+      const ref = row.postedRef?.trim() ?? '';
+      const alive = ref ? await this.prisma.acctLedger.count({ where: { voucherNo: ref, voucherType: 'RECEIPT' } }) : 0;
+      if (alive) continue;
+      missing.set(row.id, ref);
+      await this.prisma.bankStatementRow.update({
+        where: { id: row.id },
+        data: { status: 'NO_PARTY', postedRef: null, postedAt: null, matchedRefs: null, matchedAmount: 0, note: null },
       });
     }
-
-    if (reopened.length) {
-      await this.prisma.$transaction(async (tx) => {
-        await tx.bankStatementRow.updateMany({
-          where: { id: { in: reopened.map((r) => r.rowId) } },
-          // Back to the pool. `rematch` below decides the real verdict; this
-          // only has to stop the row being treated as settled.
-          data: {
-            status: 'NO_PARTY',
-            postedRef: null,
-            postedAt: null,
-            matchedRefs: null,
-            matchedAmount: 0,
-            note: 'The receipt made from this line was deleted, so the line was reopened.',
-          },
-        });
-        // A run with reopened work is a draft again, or Process would refuse it
-        // and the lines could never be posted.
-        await tx.bankStatementRun.update({
-          where: { id: runId },
-          data: { status: 'DRAFT', processedAt: null },
-        });
-      });
-    }
-
-    /*
-     * Re-score against the ledger as it stands NOW — always, not only when a
-     * line was reopened.
-     *
-     * A saved verdict is a snapshot of a moment: receipts move, get deleted,
-     * get banked elsewhere, and the matching rules themselves change. Run #3
-     * had every PNB credit reading "already accounted for" against receipts
-     * that turned out to be in a different bank; with nothing to reopen, a
-     * reopen-only rematch would have left that verdict on screen forever.
-     *
-     * Safe to repeat: `rematch` is idempotent, and it skips IGNORED and POSTED
-     * lines, so nothing settled is disturbed.
-     */
     await this.rematch(runId);
-
-    /*
-     * A PROCESSED run must not be left holding a line that still needs posting.
-     *
-     * Process only marks a run PROCESSED once nothing postable is left, so an
-     * UNMATCHED line in one can mean just one thing: it WAS covered by an
-     * existing receipt when the run was processed, and that receipt has since
-     * been deleted. The rematch above correctly finds the money uncovered — but
-     * the run stayed read-only, so the line could never be posted, and a later
-     * upload of the same period skips it as "already held". The money was in
-     * nobody's books with no way to put it back (ALLWYN's ₹2,23,112 of 11 Aug,
-     * covered by REC-2026-0295 until that receipt was deleted).
-     *
-     * Reopened the same way a deleted POSTED receipt reopens it, and reported.
-     */
-    const current = reopened.length ? null : await this.prisma.bankStatementRun.findUnique({ where: { id: runId }, select: { status: true } });
-    const uncoveredRows =
-      reopened.length || current?.status === 'PROCESSED'
-        ? await this.prisma.bankStatementRow.findMany({
-            where: { runId, status: 'UNMATCHED' },
-            orderBy: [{ txnDate: 'asc' }, { id: 'asc' }],
-          })
-        : [];
-    // Lines the reopen above already reported are not listed twice.
-    const reopenedIds = new Set(reopened.map((r) => r.rowId));
-    const uncovered = uncoveredRows
-      .filter((r) => !reopenedIds.has(r.id))
-      .map((r) => ({
-        rowId: r.id,
-        rowNo: r.rowNo,
-        amount: r.amount,
-        shortfall: r2(r.amount - r.matchedAmount),
-        customerName: r.customerName ?? '',
-      }));
-    if (uncovered.length) {
-      await this.prisma.$transaction(async (tx) => {
-        await tx.bankStatementRow.updateMany({
-          where: { id: { in: uncovered.map((u) => u.rowId) } },
-          data: { note: 'The receipt this line was matched against was deleted, so the line needs posting again.' },
-        });
-        // Already a draft when a POSTED line was reopened above.
-        if (current?.status === 'PROCESSED') {
-          await tx.bankStatementRun.update({ where: { id: runId }, data: { status: 'DRAFT', processedAt: null } });
-        }
-      });
+    const after = await this.prisma.bankStatementRow.findMany({ where: { runId, status: 'UNMATCHED' } });
+    // A missing old voucher may already have a replacement. Only unresolved
+    // shortfalls need review; changed matches are never called deletions.
+    const reopened = after.filter((r) => missing.has(r.id)).map((r) => ({
+      rowId: r.id, rowNo: r.rowNo, postedRef: missing.get(r.id)!,
+      amount: r2(r.amount - r.matchedAmount), customerName: r.customerName ?? '',
+    }));
+    const previous = new Map(before.map((r) => [r.id, r]));
+    const uncovered = after.filter((r) => !missing.has(r.id) && (r.note?.startsWith('Receipt review required:') || run.status === 'PROCESSED' || (previous.get(r.id)?.matchedAmount ?? 0) > r.matchedAmount))
+      .map((r) => ({ rowId: r.id, rowNo: r.rowNo, amount: r.amount, shortfall: r2(r.amount - r.matchedAmount), customerName: r.customerName ?? '' }));
+    const postedReview = await this.prisma.bankStatementRow.findMany({ where: { runId, status: 'POSTED', note: { startsWith: 'Receipt review required:' } } });
+    for (const row of postedReview) {
+      const receipt = await this.prisma.acctLedger.findFirst({ where: { voucherNo: row.postedRef ?? '', voucherType: 'RECEIPT' } });
+      uncovered.push({ rowId: row.id, rowNo: row.rowNo, amount: row.amount, shortfall: r2(Math.max(0, row.amount - row.matchedAmount - (receipt?.bankCredit ?? 0))), customerName: row.customerName ?? '' });
     }
-
-    return {
-      runId,
-      reopened,
-      stillPosted: posted.length - reopened.length,
-      uncovered,
-      reopenedRun: reopened.length > 0 || uncovered.length > 0,
-    };
+    return { runId, reopened, uncovered, stillPosted: posted.length - missing.size, reopenedRun: reopened.length > 0 || uncovered.length > 0 };
   }
 
   /* ── Plumbing ──────────────────────────────────────────────────────────── */

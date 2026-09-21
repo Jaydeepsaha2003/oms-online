@@ -34,6 +34,7 @@ import {
   useUpdateCustomer,
 } from './use-customers';
 import { useAddition, useMarkAdded } from './use-account-groups';
+import { customerAdditionPrefill } from './customer-addition-prefill';
 
 const EMPTY = {
   partySource: '',
@@ -141,22 +142,17 @@ export function CustomerFormPage() {
   const { data: addition } = useAddition(additionId);
   const markAdded = useMarkAdded();
   const prefilled = useRef(false);
-  const additionGroup = addition && lookups ? lookups.groups.find((g) => g.name.trim().toUpperCase() === addition.groupName.trim().toUpperCase()) : undefined;
+  const additionGroup = addition && lookups
+    ? lookups.groups.find((group) => group.name.trim().toUpperCase() === addition.groupName.trim().toUpperCase())
+    : undefined;
   useEffect(() => {
     if (!addition || !lookups || prefilled.current) return;
     prefilled.current = true;
-    const d = addition.details;
     setForm((f) => ({
       ...f,
-      partyName: addition.tallyName,
-      ...(additionGroup ? { groupId: String(additionGroup.id) } : {}),
-      ...(d.creditPeriod ? { creditPeriod: String(d.creditPeriod) } : {}),
-      ...(d.state ? { state: d.state.toUpperCase() } : {}),
-      ...(d.city ? { city: d.city.toUpperCase() } : {}),
-      ...(d.mobile ? { mobile: d.mobile } : {}),
-      ...(d.email ? { email: d.email } : {}),
+      ...customerAdditionPrefill(addition, lookups),
     }));
-  }, [addition, lookups, additionGroup]);
+  }, [addition, lookups]);
 
   // New party: Under defaults to Sundry Debtors.
   useEffect(() => {

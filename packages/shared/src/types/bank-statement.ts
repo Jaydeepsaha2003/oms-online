@@ -525,29 +525,22 @@ export interface BankStatementProcessResult {
 /**
  * What re-checking a run against the CURRENT ledger found.
  *
- * A run records the receipt it created for each line, but nothing stopped that
- * receipt being deleted afterwards in Receive Payment. When that happened the
- * line sat there saying POSTED for a receipt that no longer existed, and the
- * run — processed, therefore read-only — could not post it again. The money was
- * simply missing from the books with the statement still claiming it was in.
- *
- * `reopened` lists the lines whose receipt has gone; they are returned to the
- * pool so Process can create them again. Lines whose receipt still exists are
- * left POSTED and are NOT re-posted.
+ * `reopened` means an old reference could not be found and no replacement
+ * fully covered the line. `uncovered` means coverage needs review, not that
+ * someone deleted a payment. Checking statements never changes receipts.
  */
 export interface BankStatementRecheckResult {
   runId: number;
-  /** Lines that were POSTED but whose receipt has since been deleted. */
+  /** Unresolved lines whose previously linked voucher cannot be found. */
   reopened: { rowId: number; rowNo: number; postedRef: string; amount: number; customerName: string }[];
   /** POSTED lines whose receipt is still there — left exactly as they are. */
   stillPosted: number;
   /**
-   * Lines of an already-PROCESSED run that the re-check found owing a receipt
-   * again: they had been matched against an existing receipt which has since
-   * been deleted in Receive Payment. `shortfall` is what Process would post.
+   * Lines whose coverage needs review. This does NOT imply receipt deletion.
+   * `shortfall` is unverified coverage, not authorization to post more money.
    */
   uncovered: { rowId: number; rowNo: number; amount: number; shortfall: number; customerName: string }[];
-  /** True when the run went back to DRAFT, so Process is available again. */
+  /** True when unresolved missing references or coverage reviews were found. */
   reopenedRun: boolean;
 }
 

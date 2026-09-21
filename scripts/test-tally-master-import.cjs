@@ -34,10 +34,23 @@ const xml = `<ENVELOPE><BODY><IMPORTDATA><REQUESTDATA>
     assert.equal(p.groups.find((g) => g.name === 'Current Assets').parent, null);
     ok('UTF-16 file read; new group found; "&#4; Primary" read as Primary');
     const sumti = p.parties.find((x) => x.tallyName === 'SUMTI MARKETING NX');
-    assert.equal(sumti.match.how, 'LOOKS_LIKE');
+    /*
+     * This runs against a copy of the LIVE database, and "SUMTI MARKETING NX"
+     * is a real ledger whose link the user can make or break from the app. So
+     * the expectation is read from the data rather than written in: LINKED once
+     * a saved alias exists, LOOKS_LIKE while the name still has to be guessed.
+     * Hard-coding LOOKS_LIKE made this test fail the day the party was mapped —
+     * reporting a regression where the code had answered correctly.
+     */
+    const linked = await prisma.tallyPartyAlias.findUnique({ where: { tallyName: 'SUMTI MARKETING NX' } });
+    assert.equal(sumti.match.how, linked ? 'LINKED' : 'LOOKS_LIKE');
+    // Either way the match must resolve to a real OMS party, which is the part
+    // that would actually be broken if the matcher regressed.
+    assert.ok(sumti.match.customerId > 0);
+    if (linked) assert.equal(sumti.match.customerId, linked.customerId);
     assert.equal(p.parties.find((x) => x.tallyName === 'ZZ NOBODY & CO').match, null);
     assert.equal(p.others.find((x) => x.tallyName === 'ZZ Salary').tallyGroup, 'Indirect Expenses');
-    ok('matches: looks-like, not in OMS; non-party ledger kept with its Tally group');
+    ok(`matches: ${sumti.match.how.toLowerCase()}, not in OMS; non-party ledger kept with its Tally group`);
 
     await assert.rejects(svc.tallyApply({ groups: [], parties: [{ tallyName: sumti.tallyName, customerId: sumti.match.customerId, groupName: 'ZZ TEST PARTIES' }], ledgers: [] }), /neither in OMS/);
     ok('party under an unticked new group is refused');

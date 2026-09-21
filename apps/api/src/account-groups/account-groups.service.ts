@@ -117,12 +117,13 @@ export class AccountGroupsService {
     } catch (e) {
       throw new BadRequestException((e as Error).message);
     }
-    const [omsGroups, customers, aliases, balances, queued] = await Promise.all([
+    const [omsGroups, customers, aliases, balances, queued, savedLedgers] = await Promise.all([
       this.prisma.accountGroup.findMany({ select: { id: true, name: true, parentId: true } }),
       this.prisma.customer.findMany({ where: { partyName: { not: null } }, select: { id: true, partyName: true, active: true, groupId: true }, orderBy: { partyName: 'asc' } }),
       this.prisma.tallyPartyAlias.findMany({ select: { tallyName: true, customerId: true } }),
       this.tallyBalances(),
       this.prisma.customerAddition.findMany({ where: { status: 'PENDING' }, select: { tallyName: true } }),
+      this.prisma.tallyLedger.findMany({ select: { name: true, groupName: true } }),
     ]);
 
     const key = (s: string) => s.trim().toUpperCase();
@@ -151,6 +152,7 @@ export class AccountGroupsService {
     const idByName = new Map(customers.map((c) => [c.partyName!, c.id]));
     const names = customers.map((c) => c.partyName!);
     const DEBTORS = key(DEFAULT_LEDGER_GROUP);
+    const savedLedgerByName = new Map(savedLedgers.map((l) => [key(l.name), l]));
 
     // OMS parties that already have their own Tally ledger (same name or linked):
     // never auto-picked for a different ledger — only offered as a suggestion.
@@ -189,10 +191,13 @@ export class AccountGroupsService {
           tallyOpening: bal?.opening ?? null,
           tallyClosing: bal?.closing ?? null,
           inList: inList.has(key(l.name)),
+          previouslySkipped: match == null && savedLedgerByName.has(key(l.name)),
           details: l.details,
         });
       } else {
-        others.push({ tallyName: l.name, tallyGroup });
+        const saved = savedLedgerByName.get(key(l.name));
+        const status = !saved ? 'NEW' : key(saved.groupName) === key(tallyGroup) ? 'SAVED' : 'MOVE';
+        others.push({ tallyName: l.name, tallyGroup, status, savedGroup: saved?.groupName ?? null });
       }
     }
 

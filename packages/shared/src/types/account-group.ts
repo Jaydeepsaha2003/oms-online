@@ -122,6 +122,8 @@ export interface TallyImportParty {
   tallyClosing: number | null;
   /** Already waiting in the addition list. */
   inList: boolean;
+  /** Seen in an earlier completed master upload but deliberately left unmapped. */
+  previouslySkipped: boolean;
   /** Credit period, state, contact… as read from Tally. */
   details?: TallyLedgerDetails;
 }
@@ -130,6 +132,9 @@ export interface TallyImportParty {
 export interface TallyImportOther {
   tallyName: string;
   tallyGroup: string;
+  /** SAVED = already stored with this group; MOVE = stored under another group. */
+  status: 'SAVED' | 'MOVE' | 'NEW';
+  savedGroup: string | null;
 }
 
 export interface TallyImportPreview {
@@ -167,6 +172,8 @@ export interface TallyLedgerDetails {
   mobile?: string | null;
   email?: string | null;
   gstin?: string | null;
+  /** Only present when the exported XML contains an explicit/custom transporter name. */
+  transportName?: string | null;
 }
 
 export interface CustomerAdditionDto {

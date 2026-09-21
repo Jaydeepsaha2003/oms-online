@@ -121,6 +121,98 @@ test('a per-bucket override decides it, not the headline PAY BY', async () => {
   assert.equal(led.takeAccOn, 'AGENT');
 });
 
+test('Process refreshes a receipt entered after the screen loaded without duplicating it', async () => {
+  const p = await party('LATE RECEIPT', 'PARTY');
+  const { run, row } = await runWithRow(p, 1500);
+  await payments.save({ takeAccOn: 'PARTY', customerId: p.id, payMode: 'BANK', bankName: 'AXIS BANK', adjMode: 'AUTOMATIC', receiptAmt: 1500, recDate: '2026-08-11' }, 'Tester');
+  const before = await prisma.acctLedger.count();
+  const res = await svc.process(run.id, 'Tester');
+  assert.equal(res.created.length, 0);
+  assert.equal(await prisma.acctLedger.count(), before);
+  assert.equal((await prisma.bankStatementRow.findUnique({ where: { id: row.id } })).status, 'MATCHED');
+});
+
+test('concurrent Process requests create only one receipt', async () => {
+  const p = await party('DOUBLE CLICK', 'PARTY');
+  const { run } = await runWithRow(p, 1700);
+  const results = await Promise.all([svc.process(run.id, 'Tester'), svc.process(run.id, 'Tester')]);
+  assert.equal(results.reduce((sum, r) => sum + r.created.length, 0), 1);
+  assert.equal(await prisma.acctLedger.count({ where: { custId: p.id, voucherType: 'RECEIPT' } }), 1);
+});
+
+test('a failed statement link rolls back the receipt and allocations', async () => {
+  const p = await party('ATOMIC POST', 'PARTY');
+  await bill(p, 'SSS/ATOMIC', 2100);
+  const { run, row } = await runWithRow(p, 2100);
+  await prisma.$executeRawUnsafe(`CREATE TRIGGER reject_statement_link BEFORE UPDATE ON bank_statement_row WHEN NEW.id = ${row.id} AND NEW.status = 'POSTED' BEGIN SELECT RAISE(ABORT, 'fixture link failure'); END`);
+  try {
+    const res = await svc.process(run.id, 'Tester');
+    assert.equal(res.created.length, 0);
+    assert.equal(res.failed.length, 1);
+    assert.equal(await prisma.acctLedger.count({ where: { custId: p.id } }), 0);
+    assert.equal(await prisma.acctPaymentReceipt.count({ where: { custId: p.id } }), 0);
+    assert.equal((await prisma.bankStatementRow.findUnique({ where: { id: row.id } })).status, 'UNMATCHED');
+  } finally { await prisma.$executeRawUnsafe('DROP TRIGGER reject_statement_link'); }
+});
+
+test('a replacement receipt covers a missing old link without a reopened warning', async () => {
+  const p = await party('REPLACEMENT RECEIPT', 'PARTY');
+  const { run, row } = await runWithRow(p, 1900);
+  await prisma.bankStatementRow.update({ where: { id: row.id }, data: { status: 'POSTED', postedRef: 'RN/MISSING' } });
+  await prisma.bankStatementRun.update({ where: { id: run.id }, data: { status: 'PROCESSED' } });
+  await payments.save({ takeAccOn: 'PARTY', customerId: p.id, payMode: 'BANK', bankName: 'AXIS BANK', adjMode: 'AUTOMATIC', receiptAmt: 1900, recDate: '2026-08-11' }, 'Tester');
+  const res = await svc.recheck(run.id);
+  assert.deepEqual(res.reopened, []);
+  assert.deepEqual(res.uncovered, []);
+  assert.equal((await prisma.bankStatementRow.findUnique({ where: { id: row.id } })).status, 'MATCHED');
+});
+
+test('historical coverage changes cannot silently create another receipt', async () => {
+  const p = await party('REVIEW OLD COVER', 'PARTY');
+  const { run, row } = await runWithRow(p, 2800);
+  await prisma.bankStatementRow.update({ where: { id: row.id }, data: { status: 'MATCHED', matchedAmount: 2800, matchedRefs: 'REC-OLD-REFERENCE' } });
+  await svc.recheck(run.id);
+  await svc.recheck(run.id);
+  const res = await svc.process(run.id, 'Tester');
+  assert.equal(res.created.length, 0);
+  assert.match(res.failed[0].reason, /receipt review/i);
+  assert.match((await prisma.bankStatementRow.findUnique({ where: { id: row.id } })).note, /REC-OLD-REFERENCE/);
+  assert.equal(await prisma.acctLedger.count({ where: { custId: p.id } }), 0);
+});
+
+test('historical partial-post coverage cannot steal an earlier exact match', async () => {
+  const p = await party('HISTORICAL DOUBLE COVER', 'PARTY');
+  const earlier = await runWithRow(p, 4000);
+  const later = await runWithRow(p, 10000, '2026-08-12');
+  const old = await payments.save({ takeAccOn: 'PARTY', customerId: p.id, payMode: 'BANK', bankName: 'AXIS BANK', adjMode: 'AUTOMATIC', receiptAmt: 4000, recDate: '2026-08-11' }, 'Tester');
+  const oldLedger = await prisma.acctLedger.findFirst({ where: { voucherNo: old.voucherNo } });
+  const ref = oldLedger.receiptRefId || oldLedger.advanceRefId;
+  const posted = await payments.save({ takeAccOn: 'PARTY', customerId: p.id, payMode: 'BANK', bankName: 'AXIS BANK', adjMode: 'AUTOMATIC', receiptAmt: 6000, recDate: '2026-08-12' }, 'Tester');
+  await prisma.bankStatementRow.update({ where: { id: earlier.row.id }, data: { status: 'MATCHED', matchedAmount: 4000, matchedRefs: ref } });
+  await prisma.bankStatementRow.update({ where: { id: later.row.id }, data: { status: 'POSTED', postedRef: posted.voucherNo, matchedAmount: 4000, matchedRefs: ref } });
+  await svc.recheck(earlier.run.id);
+  assert.equal((await prisma.bankStatementRow.findUnique({ where: { id: earlier.row.id } })).status, 'MATCHED');
+  const checked = await prisma.bankStatementRow.findUnique({ where: { id: later.row.id } });
+  assert.equal(checked.status, 'POSTED');
+  assert.equal(checked.matchedAmount, 0);
+  assert.match(checked.note, /Receipt review required/);
+});
+
+test('normal Receive Payments can still save, edit and delete a receipt', async () => {
+  const p = await party('NORMAL RECEIVE PAYMENT', 'PARTY');
+  await bill(p, 'SSS/NORMAL', 5000);
+  const dto = { takeAccOn: 'PARTY', customerId: p.id, payMode: 'BANK', bankName: 'AXIS BANK', adjMode: 'AUTOMATIC', receiptAmt: 2000, recDate: '2026-08-11' };
+  const saved = await payments.save(dto, 'Tester');
+  let ledger = await prisma.acctLedger.findFirst({ where: { voucherNo: saved.voucherNo } });
+  assert.equal(ledger.bankCredit, 2000);
+  await payments.editReceipt(ledger.id, { ...dto, receiptAmt: 2500 }, 'Tester');
+  ledger = await prisma.acctLedger.findFirst({ where: { voucherNo: saved.voucherNo } });
+  assert.equal(ledger.bankCredit, 2500);
+  await payments.deleteReceipt(ledger.id);
+  assert.equal(await prisma.acctLedger.count({ where: { custId: p.id } }), 0);
+  assert.equal(await prisma.acctPaymentReceipt.count({ where: { custId: p.id } }), 0);
+});
+
 (async () => {
   let failures = 0;
   try {

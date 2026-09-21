@@ -10,11 +10,12 @@ import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Dialog, DialogContent, DialogDescription, DialogTitle } from '@/components/ui/dialog';
 import { useAccountGroups, useAddToList, useAdditions, useApplyTallyImport, useRemoveFromList } from './use-account-groups';
+import { initialTallyPartyCustomerId, tallyPartyReviewBucket } from './tally-master-import-state';
 
 type Tab = 'parties' | 'groups' | 'others';
-type PartyFilter = 'check' | 'matched' | 'missing' | 'all';
+type PartyFilter = 'check' | 'matched' | 'skipped' | 'missing' | 'all';
 
-const HOW_LABEL = { LINKED: 'Linked before', SAME_NAME: 'Same name', LOOKS_LIKE: 'Looks like' } as const;
+const HOW_LABEL = { LINKED: 'Already linked', SAME_NAME: 'Already in OMS' } as const;
 const key = (s: string) => s.trim().toUpperCase();
 const drcr = (v: number | null) =>
   v == null ? null : Math.abs(v) < 1 ? 'nil' : `₹${Math.abs(v).toLocaleString('en-IN', { maximumFractionDigits: 0 })} ${v < 0 ? 'Cr' : 'Dr'}`;
@@ -62,17 +63,13 @@ export function TallyMasterImportDialog({ preview, onClose }: { preview: TallyIm
     [preview],
   );
 
-  const [pick, setPick] = useState<Map<string, number | null>>(() => new Map(preview.parties.map((p) => [p.tallyName, p.match?.customerId ?? null])));
+  const [pick, setPick] = useState<Map<string, number | null>>(() =>
+    new Map(preview.parties.map((p) => [p.tallyName, initialTallyPartyCustomerId(p)])),
+  );
   const [editing, setEditing] = useState<Set<string>>(new Set());
   const [groupOn, setGroupOn] = useState<Set<string>>(() => new Set(preview.groups.filter((g) => g.status !== 'SAME').map((g) => g.name)));
 
-  // "Looks like" is the system's guess: held back from Upload until confirmed.
-  const [confirmed, setConfirmed] = useState<Set<string>>(new Set());
-  const isHeld = (p: TallyImportParty) => {
-    const id = pick.get(p.tallyName);
-    return id != null && p.match?.how === 'LOOKS_LIKE' && id === p.match.customerId && !confirmed.has(p.tallyName);
-  };
-  const sending = (p: TallyImportParty) => pick.get(p.tallyName) != null && !isHeld(p);
+  const sending = (p: TallyImportParty) => pick.get(p.tallyName) != null;
 
   const conflicts = useMemo(() => {
     const byCust = new Map<number, Set<string>>();
@@ -83,23 +80,26 @@ export function TallyMasterImportDialog({ preview, onClose }: { preview: TallyIm
     }
     return new Set(preview.parties.filter((p) => sending(p) && (byCust.get(pick.get(p.tallyName)!)?.size ?? 0) > 1).map((p) => p.tallyName));
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [preview, pick, confirmed]);
+  }, [preview, pick]);
 
   const groupReady = (name: string) => omsGroupKeys.has(key(name)) || [...groupOn].some((g) => key(g) === key(name));
   const missingGroup = useMemo(
     () => new Set(preview.parties.filter((p) => sending(p) && !groupReady(p.tallyGroup)).map((p) => p.tallyName)),
     // eslint-disable-next-line react-hooks/exhaustive-deps
-    [preview, pick, groupOn, omsGroupKeys, confirmed],
+    [preview, pick, groupOn, omsGroupKeys],
   );
 
-  const needsCheck = (p: TallyImportParty) => conflicts.has(p.tallyName) || missingGroup.has(p.tallyName) || isHeld(p);
-  const held = preview.parties.filter(isHeld).length;
+  const needsCheck = (p: TallyImportParty) => conflicts.has(p.tallyName) || missingGroup.has(p.tallyName);
+  const reviewBucket = (p: TallyImportParty) =>
+    tallyPartyReviewBucket({ customerId: pick.get(p.tallyName) ?? null, previouslySkipped: p.previouslySkipped });
   const counts = {
     check: preview.parties.filter(needsCheck).length,
-    matched: preview.parties.filter(sending).length,
-    missing: preview.parties.filter((p) => pick.get(p.tallyName) == null).length,
+    matched: preview.parties.filter((p) => reviewBucket(p) === 'matched').length,
+    skipped: preview.parties.filter((p) => reviewBucket(p) === 'skipped').length,
+    missing: preview.parties.filter((p) => reviewBucket(p) === 'missing').length,
   };
   const groupChanges = preview.groups.filter((g) => g.status !== 'SAME');
+  const groupSaved = preview.groups.length - groupChanges.length;
 
   const [tab, setTab] = useState<Tab>('parties');
   const [filter, setFilter] = useState<PartyFilter>(counts.check ? 'check' : 'all');
@@ -109,13 +109,14 @@ export function TallyMasterImportDialog({ preview, onClose }: { preview: TallyIm
   const [balanceOnly, setBalanceOnly] = useState(false);
   const [ticked, setTicked] = useState<Set<string>>(new Set());
   const hasBalance = (p: TallyImportParty) => Math.abs(p.tallyClosing ?? 0) >= 1;
-  const missingWithBalance = preview.parties.filter((p) => pick.get(p.tallyName) == null && hasBalance(p)).length;
+  const missingWithBalance = preview.parties.filter((p) => reviewBucket(p) === 'missing' && hasBalance(p)).length;
 
   const partyRows = preview.parties.filter((p) => {
     if (q && !p.tallyName.toLowerCase().includes(q) && !(custName.get(pick.get(p.tallyName) ?? -1) ?? '').toLowerCase().includes(q)) return false;
     if (filter === 'check') return needsCheck(p);
-    if (filter === 'matched') return sending(p);
-    if (filter === 'missing') return pick.get(p.tallyName) == null && (!balanceOnly || hasBalance(p));
+    if (filter === 'matched') return reviewBucket(p) === 'matched';
+    if (filter === 'skipped') return reviewBucket(p) === 'skipped';
+    if (filter === 'missing') return reviewBucket(p) === 'missing' && (!balanceOnly || hasBalance(p));
     return true;
   });
   if (filter === 'missing' && balanceOnly) partyRows.sort((a, b) => Math.abs(b.tallyClosing ?? 0) - Math.abs(a.tallyClosing ?? 0));
@@ -136,6 +137,9 @@ export function TallyMasterImportDialog({ preview, onClose }: { preview: TallyIm
     return [...m.entries()].sort((a, b) => a[0].localeCompare(b[0]));
   }, [otherRows]);
   const allLedgers = preview.parties.length + preview.others.length;
+  const otherSaved = preview.others.filter((o) => o.status === 'SAVED').length;
+  const otherMoved = preview.others.filter((o) => o.status === 'MOVE').length;
+  const otherNew = preview.others.filter((o) => o.status === 'NEW').length;
 
   const blocked = conflicts.size > 0 || missingGroup.size > 0;
   const partiesToSend = preview.parties.filter(sending);
@@ -143,7 +147,6 @@ export function TallyMasterImportDialog({ preview, onClose }: { preview: TallyIm
 
   const setParty = (name: string, id: number | null) => {
     setPick((m) => new Map(m).set(name, id));
-    setConfirmed((s) => new Set(s).add(name));
     setEditing((s) => {
       const n = new Set(s);
       n.delete(name);
@@ -180,7 +183,7 @@ export function TallyMasterImportDialog({ preview, onClose }: { preview: TallyIm
 
   const TABS: [Tab, string, typeof Users, number][] = [
     ['parties', 'Parties', Users, preview.parties.length],
-    ['groups', 'Groups', FolderTree, groupChanges.length],
+    ['groups', 'Groups', FolderTree, preview.groups.length],
     ['others', 'Other ledgers', Wallet, preview.others.length],
   ];
 
@@ -219,7 +222,8 @@ export function TallyMasterImportDialog({ preview, onClose }: { preview: TallyIm
                 (
                   [
                     ['check', 'Check', counts.check, 'amber'],
-                    ['matched', 'Matched', counts.matched, 'emerald'],
+                    ['matched', 'Already in OMS', counts.matched, 'emerald'],
+                    ['skipped', 'Skipped before', counts.skipped, 'slate'],
                     ['missing', 'Not in OMS', counts.missing, 'slate'],
                     ['all', 'All', preview.parties.length, 'slate'],
                   ] as const
@@ -306,12 +310,12 @@ export function TallyMasterImportDialog({ preview, onClose }: { preview: TallyIm
               {!partyRows.length && <p className="text-muted-foreground py-10 text-center text-[12.5px]">Nothing here.</p>}
               {partyRows.map((p) => {
                 const id = pick.get(p.tallyName) ?? null;
-                const auto = id != null && id === p.match?.customerId;
+                const auto = id != null && id === p.match?.customerId && p.match.how !== 'LOOKS_LIKE';
                 const nowGroup = id != null ? omsGroupName.get(custGroup.get(id) ?? -1) : undefined;
                 const same = !!nowGroup && key(nowGroup) === key(p.tallyGroup);
                 const bad = conflicts.has(p.tallyName) || missingGroup.has(p.tallyName);
-                const hold = isHeld(p);
                 const showPicker = editing.has(p.tallyName) || id == null;
+                const suggestionIds = p.match?.how === 'LOOKS_LIKE' ? [p.match.customerId, ...p.suggestions] : p.suggestions;
                 return (
                   <div
                     key={p.tallyName}
@@ -319,11 +323,9 @@ export function TallyMasterImportDialog({ preview, onClose }: { preview: TallyIm
                       'rounded-lg border px-3 py-2',
                       bad
                         ? 'border-rose-300 bg-rose-50/70 dark:border-rose-400/40 dark:bg-rose-400/10'
-                        : hold
-                          ? 'border-amber-300 bg-amber-50/60 dark:border-amber-400/40 dark:bg-amber-400/10'
-                          : id == null
-                            ? 'bg-muted/30'
-                            : 'bg-card',
+                        : id == null
+                          ? 'bg-muted/30'
+                          : 'bg-card',
                     )}
                   >
                     <div className="flex flex-col gap-2 sm:flex-row sm:items-center">
@@ -357,36 +359,33 @@ export function TallyMasterImportDialog({ preview, onClose }: { preview: TallyIm
                             title="Change OMS party"
                           >
                             <Link2 className="size-3.5 shrink-0 text-indigo-500" />
+                            <span className="shrink-0 text-[10px] font-bold tracking-wide text-muted-foreground uppercase">OMS</span>
                             <span className="truncate text-[13px] font-semibold text-indigo-700 dark:text-indigo-300">{custName.get(id!)}</span>
                           </button>
                         )}
-                        {hold ? (
-                          <>
-                            <span className="shrink-0 rounded-full bg-amber-100 px-2 py-0.5 text-[10.5px] font-bold text-amber-800 dark:bg-amber-400/15 dark:text-amber-200">
-                              On hold
-                            </span>
-                            <Button
-                              size="sm"
-                              className="h-7 shrink-0 gap-1 rounded-[4px] bg-emerald-600 px-2.5 text-[11.5px] font-bold text-white hover:bg-emerald-700"
-                              onClick={() => setConfirmed((s) => new Set(s).add(p.tallyName))}
-                              title="This is the right party — include it in the upload"
-                            >
-                              <Check className="size-3.5" /> Confirm
-                            </Button>
-                          </>
-                        ) : (
-                          id != null && (
-                            <span
-                              className={cn(
-                                'shrink-0 rounded-full px-2 py-0.5 text-[10.5px] font-bold',
-                                !auto
-                                  ? 'bg-sky-100 text-sky-800 dark:bg-sky-400/15 dark:text-sky-200'
-                                  : 'bg-emerald-100 text-emerald-800 dark:bg-emerald-400/15 dark:text-emerald-200',
-                              )}
-                            >
-                              {!auto ? 'Your pick' : p.match!.how === 'LOOKS_LIKE' ? 'Confirmed' : HOW_LABEL[p.match!.how]}
-                            </span>
-                          )
+                        {id != null && (
+                          <span
+                            className={cn(
+                              'shrink-0 rounded-full px-2 py-0.5 text-[10.5px] font-bold',
+                              !auto
+                                ? 'bg-sky-100 text-sky-800 dark:bg-sky-400/15 dark:text-sky-200'
+                                : 'bg-emerald-100 text-emerald-800 dark:bg-emerald-400/15 dark:text-emerald-200',
+                            )}
+                          >
+                            {!auto ? 'Your pick' : HOW_LABEL[p.match!.how as keyof typeof HOW_LABEL]}
+                          </span>
+                        )}
+                        {id == null && (
+                          <span
+                            className={cn(
+                              'shrink-0 rounded-full px-2 py-0.5 text-[10.5px] font-bold',
+                              p.previouslySkipped
+                                ? 'bg-slate-200 text-slate-700 dark:bg-slate-400/15 dark:text-slate-200'
+                                : 'bg-sky-100 text-sky-800 dark:bg-sky-400/15 dark:text-sky-200',
+                            )}
+                          >
+                            {p.previouslySkipped ? 'Skipped previously' : 'New in this upload'}
+                          </span>
                         )}
                       </div>
                     </div>
@@ -425,10 +424,10 @@ export function TallyMasterImportDialog({ preview, onClose }: { preview: TallyIm
                         )}
                       </div>
                     )}
-                    {id == null && p.suggestions.length > 0 && (
+                    {id == null && suggestionIds.length > 0 && (
                       <div className="mt-1.5 flex flex-wrap items-center gap-1">
                         <span className="text-muted-foreground text-[10.5px] font-semibold">Looks like:</span>
-                        {p.suggestions.map((s) => (
+                        {suggestionIds.map((s) => (
                           <button
                             key={s}
                             type="button"
@@ -440,13 +439,7 @@ export function TallyMasterImportDialog({ preview, onClose }: { preview: TallyIm
                         ))}
                       </div>
                     )}
-                    {hold && (
-                      <p className="mt-1 text-[11px] font-medium text-amber-800 dark:text-amber-200">
-                        Looks like {custName.get(id!)} — not uploaded until you press Confirm, or tap the name to pick another party.
-                        {p.tallyClosing != null && <span className="text-muted-foreground"> · Tally closing {drcr(p.tallyClosing)}</span>}
-                      </p>
-                    )}
-                    {id != null && !hold && (
+                    {id != null && (
                       <p className={cn('mt-1 text-[11px] font-medium', bad ? 'text-rose-700 dark:text-rose-300' : same ? 'text-muted-foreground' : 'text-amber-700 dark:text-amber-300')}>
                         {conflicts.has(p.tallyName)
                           ? 'Another Tally ledger points to this party with a different group — pick a different party or Skip one.'
@@ -466,40 +459,51 @@ export function TallyMasterImportDialog({ preview, onClose }: { preview: TallyIm
 
           {tab === 'groups' && (
             <div className="space-y-1.5">
-              {!groupChanges.length && (
-                <p className="text-muted-foreground flex items-center justify-center gap-1.5 py-10 text-center text-[12.5px]">
-                  <CheckCircle2 className="size-4 text-emerald-600" /> All {preview.groups.length} groups already match OMS.
-                </p>
-              )}
-              {groupChanges.map((g) => (
-                <label key={g.name} className="bg-card flex cursor-pointer items-center gap-3 rounded-lg border px-3 py-2">
-                  <Tick
-                    checked={groupOn.has(g.name)}
-                    onChange={() =>
-                      setGroupOn((s) => {
-                        const n = new Set(s);
-                        if (n.has(g.name)) n.delete(g.name);
-                        else n.add(g.name);
-                        return n;
-                      })
-                    }
-                    label={g.name}
-                  />
+              <p className="rounded-lg border border-emerald-200 bg-emerald-50/70 px-3 py-2 text-[12px] font-medium text-emerald-900 dark:border-emerald-400/30 dark:bg-emerald-400/10 dark:text-emerald-100">
+                <b>{groupSaved}</b> already saved · <b>{groupChanges.filter((g) => g.status === 'NEW').length}</b> new ·{' '}
+                <b>{groupChanges.filter((g) => g.status === 'MOVE').length}</b> will move
+              </p>
+              {preview.groups.map((g) => (
+                <div key={g.name} className="bg-card flex items-center gap-3 rounded-lg border px-3 py-2">
+                  {g.status === 'SAME' ? (
+                    <CheckCircle2 className="size-4 shrink-0 text-emerald-600" aria-hidden="true" />
+                  ) : (
+                    <Tick
+                      checked={groupOn.has(g.name)}
+                      onChange={() =>
+                        setGroupOn((s) => {
+                          const n = new Set(s);
+                          if (n.has(g.name)) n.delete(g.name);
+                          else n.add(g.name);
+                          return n;
+                        })
+                      }
+                      label={g.name}
+                    />
+                  )}
                   <div className="min-w-0 flex-1">
                     <p className="truncate text-[13px] font-bold">{g.name}</p>
                     <p className="text-muted-foreground text-[11px] font-medium">
-                      {g.status === 'NEW' ? `New group under ${g.parent ?? 'Primary'}` : `Move: ${g.omsParent ?? 'Primary'} → ${g.parent ?? 'Primary'}`}
+                      {g.status === 'SAME'
+                        ? `Already saved under ${g.parent ?? 'Primary'}`
+                        : g.status === 'NEW'
+                          ? `Will be added under ${g.parent ?? 'Primary'}`
+                          : `Will move: ${g.omsParent ?? 'Primary'} → ${g.parent ?? 'Primary'}`}
                     </p>
                   </div>
                   <span
                     className={cn(
                       'shrink-0 rounded-full px-2 py-0.5 text-[10.5px] font-bold',
-                      g.status === 'NEW' ? 'bg-emerald-100 text-emerald-800 dark:bg-emerald-400/15 dark:text-emerald-200' : 'bg-amber-100 text-amber-800 dark:bg-amber-400/15 dark:text-amber-200',
+                      g.status === 'SAME'
+                        ? 'bg-emerald-100 text-emerald-800 dark:bg-emerald-400/15 dark:text-emerald-200'
+                        : g.status === 'NEW'
+                          ? 'bg-sky-100 text-sky-800 dark:bg-sky-400/15 dark:text-sky-200'
+                          : 'bg-amber-100 text-amber-800 dark:bg-amber-400/15 dark:text-amber-200',
                     )}
                   >
-                    {g.status === 'NEW' ? 'New' : 'Move'}
+                    {g.status === 'SAME' ? 'Already saved' : g.status === 'NEW' ? 'New' : 'Will move'}
                   </span>
-                </label>
+                </div>
               ))}
             </div>
           )}
@@ -507,8 +511,8 @@ export function TallyMasterImportDialog({ preview, onClose }: { preview: TallyIm
           {tab === 'others' && (
             <div className="space-y-3">
               <p className="rounded-lg border border-sky-200 bg-sky-50/70 px-3 py-2 text-[12px] font-medium text-sky-900 dark:border-sky-400/30 dark:bg-sky-400/10 dark:text-sky-100">
-                These ledgers are not under Sundry Debtors, so they are not parties. Their Tally group is saved on Upload and Tally Reconciliation
-                uses it — nothing to choose here. To change one, change its group in Tally and upload the master again.
+                These are not customer parties. <b>{otherSaved}</b> are already saved, <b>{otherNew}</b> are new
+                {otherMoved > 0 && <>, and <b>{otherMoved}</b> will change group</>}. Upload refreshes existing records instead of duplicating them.
               </p>
               {!otherByGroup.length && <p className="text-muted-foreground py-10 text-center text-[12.5px]">Nothing here.</p>}
               {otherByGroup.map(([group, list]) => (
@@ -519,8 +523,23 @@ export function TallyMasterImportDialog({ preview, onClose }: { preview: TallyIm
                   </div>
                   <ul className="divide-y">
                     {list.map((o) => (
-                      <li key={o.tallyName} className="truncate px-3 py-1.5 text-[12.5px] font-medium" title={o.tallyName}>
-                        {o.tallyName}
+                      <li key={o.tallyName} className="flex items-center justify-between gap-3 px-3 py-1.5 text-[12.5px] font-medium" title={o.tallyName}>
+                        <span className="min-w-0 truncate">
+                          {o.tallyName}
+                          {o.status === 'MOVE' && <span className="text-muted-foreground ml-1 text-[10.5px]">({o.savedGroup} → {o.tallyGroup})</span>}
+                        </span>
+                        <span
+                          className={cn(
+                            'shrink-0 rounded-full px-2 py-0.5 text-[10px] font-bold',
+                            o.status === 'SAVED'
+                              ? 'bg-emerald-100 text-emerald-800 dark:bg-emerald-400/15 dark:text-emerald-200'
+                              : o.status === 'NEW'
+                                ? 'bg-sky-100 text-sky-800 dark:bg-sky-400/15 dark:text-sky-200'
+                                : 'bg-amber-100 text-amber-800 dark:bg-amber-400/15 dark:text-amber-200',
+                          )}
+                        >
+                          {o.status === 'SAVED' ? 'Already saved' : o.status === 'NEW' ? 'New' : 'Group update'}
+                        </span>
                       </li>
                     ))}
                   </ul>
@@ -539,13 +558,8 @@ export function TallyMasterImportDialog({ preview, onClose }: { preview: TallyIm
               </span>
             ) : (
               <>
-                <b className="text-foreground">{partiesToSend.length}</b> parties · <b className="text-foreground">{groupOn.size}</b> groups ·{' '}
-                <b className="text-foreground">{allLedgers}</b> ledgers with their group
-                {held > 0 && (
-                  <span className="text-amber-700 dark:text-amber-300">
-                    {' '}· <b>{held}</b> on hold
-                  </span>
-                )}
+                <b className="text-foreground">{partiesToSend.length}</b> parties matched · <b className="text-foreground">{groupOn.size}</b> group changes ·{' '}
+                <b className="text-foreground">{otherNew}</b> new other ledgers · <b className="text-foreground">{otherSaved}</b> already saved
               </>
             )}
           </p>
