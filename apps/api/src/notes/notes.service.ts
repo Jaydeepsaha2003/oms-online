@@ -267,6 +267,19 @@ export class NotesService {
     }
     const ch = await this.prisma.challan.findUnique({ where: { code }, include: { items: { orderBy: { id: 'asc' } } } });
     if (!ch || ch.transaction !== 'DEBIT NOTE') throw new NotFoundException('Debit Note not found.');
+    // Lines saved before refInvNo was stored: the sale invoice is the other challan
+    // holding the same dispatch line.
+    const missing = ch.items.filter((it) => !it.refInvNo && it.dispatchId).map((it) => it.dispatchId!);
+    const saleOf = new Map(
+      missing.length
+        ? (
+            await this.prisma.challanItem.findMany({
+              where: { dispatchId: { in: missing }, challan: { transaction: { not: 'DEBIT NOTE' } } },
+              select: { dispatchId: true, challan: { select: { code: true } } },
+            })
+          ).map((r) => [r.dispatchId, r.challan.code] as const)
+        : [],
+    );
     return {
       mode,
       id: ch.id,
@@ -304,7 +317,7 @@ export class NotesService {
       items: ch.items.map((it) => ({
         id: it.id,
         dispatchId: it.dispatchId ?? undefined,
-        refInvNo: it.refInvNo ?? undefined,
+        refInvNo: it.refInvNo ?? saleOf.get(it.dispatchId) ?? undefined,
         productName: it.productName ?? '',
         design: it.design ?? undefined,
         bags: it.bags ?? undefined,
