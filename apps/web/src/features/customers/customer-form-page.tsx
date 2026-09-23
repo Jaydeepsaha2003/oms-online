@@ -15,7 +15,7 @@ import {
   type LucideIcon,
 } from 'lucide-react';
 import { toast } from 'sonner';
-import { type CustomerDto, type CustomerInput, DEFAULT_LEDGER_GROUP, parsePayByModes } from '@oms/shared';
+import { customerAdditionPrefill, type CustomerDto, type CustomerInput, DEFAULT_LEDGER_GROUP, parsePayByModes } from '@oms/shared';
 import { getApiErrorMessage } from '@/lib/api';
 import { useSaveShortcut } from '@/hooks/use-save-shortcut';
 import { cn } from '@/lib/utils';
@@ -34,7 +34,6 @@ import {
   useUpdateCustomer,
 } from './use-customers';
 import { useAddition, useMarkAdded } from './use-account-groups';
-import { customerAdditionPrefill } from './customer-addition-prefill';
 
 const EMPTY = {
   partySource: '',

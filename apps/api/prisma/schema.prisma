@@ -1652,6 +1652,9 @@ model AcctLedger {
   selectedInvNos    String? // JSON array — AGST REF mode only
   takeAccOn         String? // PARTY | AGENT
   bankName          String?
+  /// Bank UTR / transaction reference. Unique when supplied, so one transfer
+  /// cannot become two receipts through different entry screens.
+  bankRef           String?   @unique
   chequeNo          String?
   cashTransLocation String?
   cashRecBy         String?
@@ -1661,6 +1664,8 @@ model AcctLedger {
   advanceRefId      String?
   editedAt          DateTime?
   editedByName      String?
+  /// Idempotency/provenance key (form request, bank row, Tally row).
+  sourceKey         String?   @unique
   createdAt         DateTime  @default(now())
 
   @@index([custId])

@@ -48,6 +48,18 @@ const iso = (d: Date | null | undefined) => (d ? d.toISOString() : null);
  *  toISOString() would shift them back a day anywhere east of UTC. */
 const ymd = (d: Date) => `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
 
+/** A bank-supplied identity such as a NEFT/RTGS/IMPS UTR. Generic prose and
+ * account suffixes are deliberately ignored: a reference must contain both
+ * letters and digits and be long enough to identify one transfer. */
+function bankTransferReference(...values: (string | null | undefined)[]): string | null {
+  for (const value of values) {
+    const tokens = (value ?? '').toUpperCase().split(/[^A-Z0-9]+/).filter(Boolean);
+    const hit = tokens.find((token) => token.length >= 10 && /[A-Z]/.test(token) && /\d/.test(token));
+    if (hit) return hit;
+  }
+  return null;
+}
+
 /**
  * Every column name present across the sheet's rows.
  *
@@ -750,9 +762,33 @@ export class BankStatementService {
     }
     const active = rows.filter((r) => !['IGNORED', 'RETURNED', 'POSTED'].includes(r.status));
     const updates = new Map<number, { status: BankRowStatus; matchedRefs: string | null; matchedAmount: number }>();
-    const candidates = (row: typeof rows[number]) => (pool.get(String(row.runId)) ?? [])
-      .filter((v) => v.custId === row.customerId && Math.abs(+v.recDate - +row.txnDate) <= BANK_DATE_TOL_DAYS * DAY)
-      .sort((a, b) => Math.abs(+a.recDate - +row.txnDate) - Math.abs(+b.recDate - +row.txnDate) || a.voucherNo.localeCompare(b.voucherNo));
+    const candidates = (row: typeof rows[number]) => {
+      const rowBankRef = bankTransferReference(row.refNo, row.narration);
+      return (pool.get(String(row.runId)) ?? [])
+        .filter((v) => v.custId === row.customerId && Math.abs(+v.recDate - +row.txnDate) <= BANK_DATE_TOL_DAYS * DAY)
+        // When both sides identify the transfer, disagreement is conclusive.
+        // Party + amount + nearby date must never override a different UTR.
+        .filter((v) => !(rowBankRef && v.bankRef && rowBankRef !== v.bankRef))
+        .sort((a, b) => {
+          const aRef = rowBankRef && a.bankRef === rowBankRef ? 0 : 1;
+          const bRef = rowBankRef && b.bankRef === rowBankRef ? 0 : 1;
+          return aRef - bRef || Math.abs(+a.recDate - +row.txnDate) - Math.abs(+b.recDate - +row.txnDate) || a.voucherNo.localeCompare(b.voucherNo);
+        });
+    };
+    /*
+     * Could these remembered receipt links ever have been a real match?
+     *
+     * The review block below exists for one danger: a receipt that genuinely
+     * covered this credit was edited or deleted, so posting a new one might
+     * record the same money twice. That only applies to links today's rules
+     * would accept — same party, within BANK_DATE_TOL_DAYS. Older versions of
+     * the matcher let ANY of a party's receipts in the statement range "cover"
+     * a credit, so lines still remember links like an April receipt against
+     * an August cheque (103 days apart). Treating the removal of such a link as
+     * "coverage changed" blocked real, unrecorded money from ever being posted:
+     * the line could never become covered, so the block could never lift.
+     */
+    const refsIn = (s: string | null | undefined) => (s ?? '').split(',').map((x) => x.trim()).filter((x) => x && x !== 'not recorded');
     // Exact matches across EVERY run precede aggregate allocation.
     for (const row of active) {
       const hit = candidates(row).find((v) => (remaining.get(ownKey(v)) ?? 0) === v.amount && Math.abs(v.amount - row.amount) <= BANK_AMOUNT_TOL);
@@ -804,15 +840,44 @@ export class BankStatementService {
         matchedAmount: r2(row.amount - need),
       });
     }
+    /*
+     * Proven unrelated = every remembered receipt still EXISTS and is either
+     * another party's or further than BANK_DATE_TOL_DAYS from this credit.
+     * Looked up in the ledger itself, not the matching pool: a receipt that
+     * was DELETED is missing from both, and a deleted nearby receipt is the
+     * very case the review protects against. Missing therefore counts as
+     * "could be related", and the block stays.
+     */
+    const lostRefs = [...new Set(active.flatMap((r) => [...refsIn(r.matchedRefs), ...refsIn(r.note?.match(/references: ([^)]*)\)/)?.[1])]))];
+    const byRef = new Map<string, { custId: number; recDate: Date }[]>();
+    if (lostRefs.length) {
+      const found = [
+        ...(await this.prisma.acctPaymentReceipt.findMany({ where: { refId: { in: lostRefs } }, select: { refId: true, custId: true, recDate: true } })),
+        ...(await this.prisma.acctPartyAdvance.findMany({ where: { refId: { in: lostRefs } }, select: { refId: true, custId: true, recDate: true } })),
+      ];
+      for (const f of found) (byRef.get(f.refId) ?? byRef.set(f.refId, []).get(f.refId)!).push(f);
+    }
+    const provablyUnrelated = (row: typeof rows[number], refs: string[]) =>
+      refs.length > 0 &&
+      refs.every((ref) => {
+        const hits = byRef.get(ref);
+        return !!hits?.length && hits.every((h) => h.custId !== row.customerId || Math.abs(+h.recDate - +row.txnDate) > BANK_DATE_TOL_DAYS * DAY);
+      });
     await this.inTransaction(async (tx) => {
       for (const row of active) {
         const update = updates.get(row.id)!;
         const staleNote = /receipt.*(deleted|reopened)/i.test(row.note ?? '');
-        const needsReview = update.status === 'UNMATCHED' && row.matchedAmount > update.matchedAmount;
+        const identifiedTransfer = bankTransferReference(row.refNo, row.narration) != null;
+        const needsReview =
+          update.status === 'UNMATCHED' && row.matchedAmount > update.matchedAmount && !identifiedTransfer &&
+          !provablyUnrelated(row, refsIn(row.matchedRefs));
         const oldReview = row.note?.startsWith('Receipt review required:');
+        // An existing block over links proven unrelated is lifted. "not recorded"
+        // or missing links cannot be proven, so those blocks stay.
+        const phantomReview = oldReview && provablyUnrelated(row, refsIn(row.note!.match(/references: ([^)]*)\)/)?.[1]));
         const note = needsReview && !oldReview
           ? `Receipt review required: previous coverage changed (references: ${row.matchedRefs || 'not recorded'}). Check these receipts in Receive Payments before recording any missing money there. Automatic posting is blocked until this line is covered.`
-          : (oldReview && update.status !== 'UNMATCHED') || staleNote ? null : row.note;
+          : (oldReview && (update.status !== 'UNMATCHED' || identifiedTransfer || phantomReview)) || staleNote ? null : row.note;
         await tx.bankStatementRow.update({ where: { id: row.id }, data: { ...update, note } });
       }
       for (const run of runs) {
@@ -827,7 +892,7 @@ export class BankStatementService {
   /** Real receipt cash, including money held on account or clearing openings. */
   private async receiptVouchers(
     customerId: number | null, from: Date, to: Date, bankName?: string | null,
-  ): Promise<{ refId: string; voucherNo: string; custId: number; recDate: Date; amount: number }[]> {
+  ): Promise<{ refId: string; voucherNo: string; custId: number; recDate: Date; amount: number; bankRef: string | null }[]> {
     const range = { gte: new Date(+from - BANK_DATE_TOL_DAYS * DAY), lt: new Date(+to + (BANK_DATE_TOL_DAYS + 1) * DAY) };
     const ledger = await this.prisma.acctLedger.findMany({
       where: { voucherType: 'RECEIPT', transMode: { in: ['BANK', 'CHEQUE'] }, transDate: range, bankCredit: { gt: 0 } },
@@ -857,8 +922,9 @@ export class BankStatementService {
       const actualBank = v.bankName || linked.find((a) => a.bankName)?.bankName;
       if (!bankMatches(actualBank)) continue;
       const refId = v.receiptRefId || v.advanceRefId || `VOUCHER:${v.voucherNo}`;
+      const bankRef = v.bankRef || (v.transMode === 'CHEQUE' ? v.chequeNo?.replace(/[^A-Z0-9]/gi, '').toUpperCase() || null : bankTransferReference(v.transRemarks));
       if (v.custId > 0) {
-        if (customerId == null || customerId === v.custId) result.push({ refId, voucherNo: v.voucherNo, custId: v.custId, recDate: v.transDate, amount: r2(v.bankCredit) });
+        if (customerId == null || customerId === v.custId) result.push({ refId, voucherNo: v.voucherNo, custId: v.custId, recDate: v.transDate, amount: r2(v.bankCredit), bankRef });
       } else {
         // Agent receipts can settle several customers. Only each customer's
         // fresh-money allocations belong to that customer; never repeat the
@@ -872,7 +938,7 @@ export class BankStatementService {
         for (const [custId, amount] of portions) {
           const part = r2(Math.min(available, amount));
           available = r2(available - part);
-          if (part > 0 && (customerId == null || customerId === custId)) result.push({ refId, voucherNo: v.voucherNo, custId, recDate: v.transDate, amount: part });
+          if (part > 0 && (customerId == null || customerId === custId)) result.push({ refId, voucherNo: v.voucherNo, custId, recDate: v.transDate, amount: part, bankRef });
         }
       }
     }
@@ -1207,6 +1273,36 @@ export class BankStatementService {
     return { receiptCount, receiptTotal, pendingBank, pendingCash, advance };
   }
 
+  /**
+   * A receipt already in the books that may be this very payment but that
+   * matching cannot see — typed by hand under the agent or a sister party
+   * (B KUMAR: RN/537 sat under the agent, the statement said BK METAL, and
+   * Process wrote RN/869 on top of it). Same amount, within 3 days, and not
+   * already linked to any statement line.
+   */
+  private async possibleTwin(row: { customerId: number | null; txnDate: Date }, amount: number, agentName: string | null) {
+    const sisters = agentName ? (await this.prisma.customer.findMany({ where: { agentName }, select: { id: true } })).map((c) => c.id) : [];
+    const candidates = await this.prisma.acctLedger.findMany({
+      where: {
+        voucherType: 'RECEIPT',
+        transMode: { in: ['BANK', 'CHEQUE'] },
+        bankCredit: { gte: amount - 0.5, lte: amount + 0.5 },
+        transDate: { gte: new Date(+row.txnDate - 3 * DAY), lte: new Date(+row.txnDate + 3 * DAY) },
+        OR: [{ custId: row.customerId ?? -1 }, ...(agentName ? [{ custId: 0, agentName }, { custId: { in: sisters } }] : [])],
+      },
+      orderBy: { transDate: 'asc' },
+    });
+    for (const v of candidates) {
+      const refs = [v.receiptRefId, v.advanceRefId, `VOUCHER:${v.voucherNo}`].filter((r): r is string => !!r);
+      const linked = await this.prisma.bankStatementRow.findFirst({
+        where: { OR: [{ postedRef: v.voucherNo }, ...refs.map((r) => ({ matchedRefs: { contains: r } }))] },
+        select: { id: true },
+      });
+      if (!linked) return v;
+    }
+    return null;
+  }
+
   /* ── Process ───────────────────────────────────────────────────────────── */
 
   /**
@@ -1289,6 +1385,16 @@ export class BankStatementService {
         });
         continue;
       }
+      const twin = await this.possibleTwin(row, amount, agentName);
+      if (twin && !picked?.includes(row.id)) {
+        failed.push({
+          rowId: row.id,
+          reason:
+            `${twin.voucherNo} (${ymd(twin.transDate)}, ₹${twin.bankCredit.toLocaleString('en-IN')}) is already in the books for this party or its agent and may be this same payment. ` +
+            `If it is, delete ${twin.voucherNo} in Receive Payments and Process again, so the receipt is linked to this bank line. If it is a different payment, tick only this line and Process it.`,
+        });
+        continue;
+      }
       await this.transaction.$executeRawUnsafe('SAVEPOINT bank_statement_receipt');
       try {
         const res = await this.payments.save(
@@ -1298,6 +1404,7 @@ export class BankStatementService {
             agentName: viaAgent ? agentName! : undefined,
             payMode: 'BANK',
             bankName: run.bankName ?? null,
+            bankRef: bankTransferReference(row.refNo, row.narration),
             adjMode: 'AUTOMATIC',
             receiptAmt: amount,
             recDate: ymd(row.txnDate),
@@ -1305,6 +1412,7 @@ export class BankStatementService {
           },
           userName,
           this.transaction,
+          `BANK_STATEMENT_ROW:${row.id}`,
         );
         const voucherNo = res?.voucherNo ?? '';
         await this.prisma.bankStatementRow.update({

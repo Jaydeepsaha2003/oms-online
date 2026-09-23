@@ -215,6 +215,27 @@ test('covered lines lose obsolete deletion notes', async () => {
   assert.doesNotMatch((await rowsOf(r.id))[0].note || '', /deleted|posting again/);
 });
 
+test('different explicit bank references never match merely because date and amount match', async () => {
+  await prisma.customer.create({ data: { id: 3, partyName: 'REFERENCE PARTY', payBy: 'PARTY' } });
+  await prisma.acctLedger.create({ data: {
+    voucherNo: 'RN/REF-A', custId: 3, customerName: 'REFERENCE PARTY', transDate: new Date('2026-08-25'),
+    transMode: 'BANK', bankName: 'AXIS BANK', bankCredit: 4400, receiptRefId: 'REC-REF-A',
+    transRemarks: 'BANK TRANSFER UTR PUNBA11111111111',
+  } });
+  const r = await prisma.bankStatementRun.create({ data: {
+    fileName: 'reference.csv', bankName: 'AXIS BANK', status: 'DRAFT', fromDate: new Date('2026-08-01'), toDate: new Date('2026-08-31'),
+  } });
+  const row = await prisma.bankStatementRow.create({ data: {
+    runId: r.id, rowNo: 1, txnDate: new Date('2026-08-25'), narration: 'NEFT/PUNBZ22222222222/REFERENCE PARTY',
+    refNo: 'PUNBZ22222222222', amount: 4400, customerId: 3, customerName: 'REFERENCE PARTY', partySource: 'NARRATION',
+    status: 'UNMATCHED', matchedAmount: 0, rowKey: '2026-08-25|4400|reference',
+  } });
+  await svc.recheck(r.id);
+  const checked = await prisma.bankStatementRow.findUnique({ where: { id: row.id } });
+  assert.equal(checked.status, 'UNMATCHED');
+  assert.equal(checked.matchedAmount, 0);
+});
+
 (async () => {
   let failures = 0;
   try {

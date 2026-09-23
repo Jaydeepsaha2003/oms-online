@@ -42,6 +42,7 @@ import {
   useReconRun,
   useReconRuns,
   useMarkReconRows,
+  useMatchReconOpenings,
   useRerunRecon,
   useSaveTallyAlias,
 } from './use-tally-recon';
@@ -162,6 +163,10 @@ const canAddOpening = (r: ReconRow) =>
   !!r.customerId &&
   Math.abs(r.omsAmount ?? 0) < 0.005 &&
   Math.max(r.dr || 0, r.cr || 0) > 0;
+
+/** An existing OMS opening whose bank figure Tally proves is different. */
+const canMatchOpening = (r: ReconRow) =>
+  r.vchType === 'OPENING' && r.status === 'AMOUNT_MISMATCH' && !r.resolvedAt && !!r.customerId && r.omsAmount != null;
 
 const REVIEW: Record<Exclude<ReconReview, 'OPEN'>, { label: string; chip: string }> = {
   PENDING: {
@@ -521,6 +526,8 @@ export function TallyReconPage() {
   const canRun = can('tallyrecon:create');
   const canDelete = can('tallyrecon:delete');
   const canEnterReceipt = canRun && can('payment:create');
+  const canCreateOpeningBalance = canRun && can('openingbalance:create');
+  const canUpdateOpeningBalance = canRun && can('openingbalance:update');
   /** Marking is an annotation, so recon-create alone is enough for it. */
   const canMark = canRun;
 
@@ -559,6 +566,7 @@ export function TallyReconPage() {
   const [formatGuideOpen, setFormatGuideOpen] = useState(false);
   const [ledgerTab, setLedgerTab] = useState<'party' | 'other'>('party');
   const [confirmOpen, setConfirmOpen] = useState(false);
+  const [openingToMatch, setOpeningToMatch] = useState<ReconRow | null>(null);
   const [bankOverride, setBankOverride] = useState('');
 
   const { data: runs } = useReconRuns();
@@ -575,6 +583,7 @@ export function TallyReconPage() {
   const rerun = useRerunRecon();
   const createReceipts = useCreateReconReceipts();
   const createOpenings = useCreateReconOpenings();
+  const matchOpenings = useMatchReconOpenings();
   const markRows = useMarkReconRows();
 
   const custByName = useMemo(() => new Map((lookups?.customers ?? []).map((c) => [c.name, c.id])), [lookups]);
@@ -603,6 +612,8 @@ export function TallyReconPage() {
     [rows],
   );
   const vchOptions = useMemo(() => VCH_ORDER.filter((t) => rows.some((r) => r.vchType === t)), [rows]);
+  const canReconcileOpening = (row: ReconRow) =>
+    canMatchOpening(row) && (canAddOpening(row) ? canCreateOpeningBalance : canUpdateOpeningBalance);
 
   const visible = useMemo(
     () =>
@@ -914,7 +925,33 @@ export function TallyReconPage() {
     }
   };
 
+  const onMatchOpening = async () => {
+    if (!openingToMatch) return;
+    try {
+      if (canAddOpening(openingToMatch)) {
+        const res = await createOpenings.mutateAsync({ rowIds: [openingToMatch.id] });
+        if (res.created.length) {
+          toast.success(`${res.created[0].customerName} opening was created from Tally.`);
+          setOpeningToMatch(null);
+        }
+        for (const f of res.failed) toast.error(f.reason, { duration: 9000 });
+        return;
+      }
+      const res = await matchOpenings.mutateAsync({ rowIds: [openingToMatch.id] });
+      if (res.updated.length) {
+        const change = res.updated[0];
+        toast.success(`${change.customerName} opening now matches Tally.`);
+        setOpeningToMatch(null);
+      }
+      for (const f of res.failed) toast.error(f.reason, { duration: 9000 });
+    } catch (e) {
+      toast.error(e instanceof Error ? e.message : 'Could not match this opening balance.');
+    }
+  };
+
   const problemCount = run ? run.missingInOms + run.missingInTally + run.mismatchCount + run.unmatchedParty : 0;
+  const creatingOpening = !!openingToMatch && canAddOpening(openingToMatch);
+  const openingActionPending = createOpenings.isPending || matchOpenings.isPending;
   const hasFilters =
     !!vchType || tallyParties.length > 0 || omsParties.length > 0 || !!review || status !== 'PROBLEMS';
 
@@ -1318,7 +1355,7 @@ export function TallyReconPage() {
                     aria-pressed={view === key}
                     className={cn(
                       'flex cursor-pointer items-center gap-1 px-2 py-[3px] text-[11px] font-bold tracking-wide uppercase transition-colors',
-                      view === key ? 'bg-amber-300 text-slate-900' : 'text-amber-200 hover:bg-white/10',
+                      view === key ? 'bg-amber-300 text-amber-950' : 'text-amber-200 hover:bg-white/10',
                     )}
                   >
                     <Icon className="size-3" /> <span className="hidden sm:inline">{label}</span>
@@ -1567,11 +1604,23 @@ export function TallyReconPage() {
                                 <StatusChip status={r.status} />
                               </td>
                               <td className={cn(TD, 'whitespace-nowrap')}>
-                                {r.review !== 'OPEN' ? (
-                                  <ReviewBadge row={r} onClear={canMark ? () => void onClearOne(r) : undefined} />
-                                ) : canMark && isFlagged(r) ? (
-                                  <span className="text-muted-foreground text-[11px] font-medium">—</span>
-                                ) : null}
+                                <div className="flex items-center gap-1.5">
+                                  {r.review !== 'OPEN' ? (
+                                    <ReviewBadge row={r} onClear={canMark ? () => void onClearOne(r) : undefined} />
+                                  ) : canMark && isFlagged(r) && !canReconcileOpening(r) ? (
+                                    <span className="text-muted-foreground text-[11px] font-medium">—</span>
+                                  ) : null}
+                                  {canReconcileOpening(r) && (
+                                    <button
+                                      type="button"
+                                      onClick={() => setOpeningToMatch(r)}
+                                      className="inline-flex h-6 items-center gap-1 rounded-[4px] border border-amber-500 bg-amber-50 px-1.5 text-[10.5px] font-extrabold text-amber-900 transition-colors hover:bg-amber-100 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-amber-500/40 dark:border-amber-400/60 dark:bg-amber-400/10 dark:text-amber-200 dark:hover:bg-amber-400/20"
+                                    >
+                                      <Scale className="size-3" />
+                                      {canAddOpening(r) ? 'Create opening' : 'Match opening'}
+                                    </button>
+                                  )}
+                                </div>
                               </td>
                               <td className={cn(TD, 'text-[12.5px] font-semibold whitespace-nowrap')}>
                                 {r.omsRef || '-'}
@@ -1659,6 +1708,16 @@ export function TallyReconPage() {
                               </span>
                             </div>
                             {r.note && <p className="text-muted-foreground mt-1 text-[11.5px] font-medium">{r.note}</p>}
+                            {canReconcileOpening(r) && (
+                              <button
+                                type="button"
+                                onClick={() => setOpeningToMatch(r)}
+                                className="mt-2 inline-flex h-8 w-full items-center justify-center gap-1.5 rounded-[4px] border border-amber-500 bg-amber-50 text-[12px] font-extrabold text-amber-900 transition-colors hover:bg-amber-100 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-amber-500/40 dark:border-amber-400/60 dark:bg-amber-400/10 dark:text-amber-200 dark:hover:bg-amber-400/20"
+                              >
+                                <Scale className="size-3.5" />
+                                {canAddOpening(r) ? 'Create opening balance' : 'Match opening balance'}
+                              </button>
+                            )}
                           </div>
                         );
                       })}
@@ -1967,6 +2026,79 @@ export function TallyReconPage() {
 
       {/* ── export-format guide, shown before every upload ───────────────── */}
       <TallyExportGuide open={formatGuideOpen} onOpenChange={setFormatGuideOpen} onChoose={openFilePicker} />
+
+      {/* A financial edit deserves one explicit comparison before it is saved. */}
+      <Dialog open={!!openingToMatch} onOpenChange={(open) => !open && setOpeningToMatch(null)}>
+        <DialogContent className="sm:max-w-md">
+          <DialogHeader>
+            <DialogTitle className="text-[15px]">
+              {creatingOpening ? 'Create opening balance from Tally?' : 'Match opening balance to Tally?'}
+            </DialogTitle>
+          </DialogHeader>
+          {openingToMatch && (
+            <div className="space-y-3">
+              <p className="text-[13px] font-bold text-slate-900 dark:text-slate-100">
+                {openingToMatch.customerName ?? openingToMatch.ledgerName}
+              </p>
+              <div className="overflow-hidden rounded-[4px] border border-amber-300 dark:border-amber-400/40">
+                <div className="grid grid-cols-[1fr_auto] gap-x-5 gap-y-2 p-3 text-[12.5px]">
+                  <span className="text-slate-600 dark:text-slate-300">
+                    {creatingOpening ? 'OMS opening for this period' : 'Current OMS bank opening'}
+                  </span>
+                  {creatingOpening ? (
+                    <strong className="text-right text-rose-700 dark:text-rose-300">Not created</strong>
+                  ) : (
+                    <strong className="text-right tabular-nums">
+                      ₹{inr(Math.abs(openingToMatch.omsAmount ?? 0))} {(openingToMatch.omsAmount ?? 0) < 0 ? 'Cr' : 'Dr'}
+                    </strong>
+                  )}
+                  <span className="text-slate-600 dark:text-slate-300">Tally opening</span>
+                  <strong className="text-right tabular-nums text-blue-800 dark:text-blue-300">
+                    ₹{inr(Math.max(openingToMatch.dr || 0, openingToMatch.cr || 0))} {(openingToMatch.dr || 0) >= (openingToMatch.cr || 0) ? 'Dr' : 'Cr'}
+                  </strong>
+                  {!creatingOpening && (
+                    <>
+                      <span className="border-t border-amber-200 pt-2 font-bold text-amber-900 dark:border-amber-400/30 dark:text-amber-200">Difference to apply</span>
+                      <strong className="border-t border-amber-200 pt-2 text-right tabular-nums text-amber-900 dark:border-amber-400/30 dark:text-amber-200">
+                        ₹{inr(Math.abs((openingToMatch.dr || 0) - (openingToMatch.cr || 0) - (openingToMatch.omsAmount ?? 0)))}
+                      </strong>
+                    </>
+                  )}
+                </div>
+              </div>
+              <p className="text-muted-foreground text-[11.5px] font-medium leading-relaxed">
+                {creatingOpening
+                  ? 'OMS has no opening for this period. This creates one bank opening using the Tally date, amount and Dr/Cr side. No cash opening is added.'
+                  : 'This edits the existing OMS bank opening; it does not create another entry. Any cash opening and existing remarks stay unchanged.'}
+              </p>
+            </div>
+          )}
+          <DialogFooter>
+            <Button
+              variant="outline"
+              className="h-9 rounded-[4px] text-[12.5px] font-semibold"
+              onClick={() => setOpeningToMatch(null)}
+              disabled={openingActionPending}
+            >
+              Cancel
+            </Button>
+            <Button
+              className="h-9 gap-1.5 rounded-[4px] bg-amber-600 text-[12.5px] font-bold text-white hover:bg-amber-700"
+              onClick={() => void onMatchOpening()}
+              disabled={openingActionPending}
+            >
+              {openingActionPending ? (
+                <Loader2 className="size-3.5 animate-spin" />
+              ) : creatingOpening ? (
+                <Wallet className="size-3.5" />
+              ) : (
+                <Scale className="size-3.5" />
+              )}
+              {openingActionPending ? (creatingOpening ? 'Creating…' : 'Updating…') : creatingOpening ? 'Create OMS opening' : 'Update OMS opening'}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
 
       {/* ── receipt confirmation ──────────────────────────────────────────── */}
       <Dialog open={confirmOpen} onOpenChange={setConfirmOpen}>

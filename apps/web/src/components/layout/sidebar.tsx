@@ -144,7 +144,7 @@ export function Sidebar({ collapsed = false, onNavigate }: SidebarProps) {
         {!collapsed && (
           <div className="flex min-w-0 flex-col leading-tight">
             <span className="truncate text-base font-bold tracking-tight">{APP_NAME}</span>
-            <span className="truncate text-[11px] font-medium text-sidebar-foreground/55">
+            <span className="truncate text-xs font-medium text-sidebar-foreground/70">
               Order Management
             </span>
           </div>
@@ -184,7 +184,7 @@ export function Sidebar({ collapsed = false, onNavigate }: SidebarProps) {
           <SystemStatus variant="compact" />
         </div>
       ) : (
-        <div className="px-4 py-3 text-xs text-sidebar-foreground/45">
+        <div className="px-4 py-3 text-xs text-sidebar-foreground/65">
           <Separator className="mb-3 bg-sidebar-border" />
           <SystemStatus variant="full" className="mb-2" />
           {APP_NAME} · v0.1.0
@@ -201,7 +201,7 @@ function ShortcutHint({ letter, className }: { letter: string; className?: strin
     <kbd
       title={`Alt+Shift+${letter}`}
       className={cn(
-        'hidden rounded border border-sidebar-border/60 bg-sidebar-accent/40 px-1.5 py-0.5 font-mono text-[10px] font-semibold text-sidebar-foreground/45 lg:inline-block',
+        'hidden rounded border border-sidebar-border/60 bg-sidebar-accent/40 px-1.5 py-0.5 font-mono text-[10px] font-semibold text-sidebar-foreground/65 lg:inline-block',
         className,
       )}
     >
@@ -233,7 +233,7 @@ function MenuLeaf({
       onClick={onNavigate}
       className={() =>
         cn(
-          'group relative flex items-center gap-3 rounded-lg px-3 py-2 text-sm font-medium text-sidebar-foreground/80 transition-all',
+          'group relative flex items-center gap-3 rounded-lg px-3 py-2 text-[16.2px] font-medium text-white transition-all',
           'hover:bg-sidebar-accent/60 hover:text-sidebar-accent-foreground',
           active &&
             'bg-sidebar-accent font-semibold text-sidebar-accent-foreground shadow-sm before:absolute before:inset-y-1.5 before:left-0 before:w-1 before:rounded-full before:bg-brand-amber',
@@ -318,7 +318,7 @@ function MenuGroup({
         type="button"
         onClick={onToggle}
         className={cn(
-          'group flex w-full items-center gap-3 rounded-lg px-3 py-2 text-sm font-medium text-sidebar-foreground/80 transition-all',
+          'group flex w-full items-center gap-3 rounded-lg px-3 py-2 text-[16.2px] font-medium text-white transition-all',
           'hover:bg-sidebar-accent/60 hover:text-sidebar-accent-foreground',
           childActive && 'text-sidebar-accent-foreground',
         )}

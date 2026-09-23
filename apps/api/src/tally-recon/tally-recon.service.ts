@@ -2,6 +2,8 @@ import { BadRequestException, Injectable, NotFoundException } from '@nestjs/comm
 import type {
   ReconCreateOpeningInput,
   ReconCreateOpeningResult,
+  ReconMatchOpeningInput,
+  ReconMatchOpeningResult,
   ReconCreateReceiptInput,
   ReconCreateReceiptResult,
   ReconRow,
@@ -1086,6 +1088,8 @@ export class TallyReconService {
             remarks: `Tally recon — register voucher ${row.vchNo || '(no number)'}`,
           },
           userName,
+          undefined,
+          `TALLY_RECON_ROW:${row.id}`,
         );
         const voucherNo = res?.voucherNo ?? '';
         await this.prisma.tallyReconRow.update({
@@ -1139,7 +1143,10 @@ export class TallyReconService {
     const ids = [...new Set(input.rowIds ?? [])];
     if (!ids.length) throw new BadRequestException('Select at least one opening balance to add.');
 
-    const rows = await this.prisma.tallyReconRow.findMany({ where: { id: { in: ids } } });
+    const rows = await this.prisma.tallyReconRow.findMany({
+      where: { id: { in: ids } },
+      include: { run: { select: { fromDate: true } } },
+    });
     const created: ReconCreateOpeningResult['created'] = [];
     const failed: ReconCreateOpeningResult['failed'] = [];
 
@@ -1171,6 +1178,25 @@ export class TallyReconService {
        */
       if (Math.abs(row.omsAmount ?? 0) > 0.004) {
         failed.push({ rowId: id, reason: `OMS already holds an opening of ${(row.omsAmount ?? 0).toFixed(2)} for this party — settle the difference by hand.` });
+        continue;
+      }
+
+      // The report is only a snapshot. Re-check the live books immediately
+      // before creating anything so a later opening, or another pre-period
+      // posting, cannot turn this action into a duplicate or a wrong balance.
+      const allOpenings = await this.prisma.acctOpeningTrans.findMany({
+        where: { kind: 'OPENING', custId: row.customerId },
+        select: { transDate: true },
+      });
+      if (allOpenings.some((o) => fyStart(o.transDate) <= row.run.fromDate)) {
+        failed.push({ rowId: id, reason: 'OMS already has an opening for this period. Re-check the report, then use Match opening.' });
+        continue;
+      }
+      const toExclusive = new Date(row.run.fromDate.getTime() + DAY);
+      const currentBook = (await this.loadOmsBooks([row.customerId], row.run.fromDate, toExclusive)).get(row.customerId);
+      const currentAmount = r2(currentBook?.openingBankNet ?? 0);
+      if (Math.abs(currentAmount - (row.omsAmount ?? 0)) > 0.004) {
+        failed.push({ rowId: id, reason: 'The OMS balance changed after this report was created. Re-check the report, then try again.' });
         continue;
       }
       // Tally states an opening on the side it falls: Dr = the party owes us.
@@ -1220,6 +1246,148 @@ export class TallyReconService {
       for (const runId of touched) await this.refreshCounts(runId);
     }
     return { created, failed };
+  }
+
+  /**
+   * Makes an existing OMS bank opening agree with an OPENING row from Tally.
+   *
+   * The report's OMS figure is a brought-forward balance: stored opening plus
+   * every OMS movement before the register period. Therefore this applies only
+   * the reported difference to the stored opening anchor. Replacing the anchor
+   * with Tally's total would count those earlier movements twice.
+   *
+   * One effective opening record is required. With two, choosing which record
+   * to edit would be guesswork. The update and the row resolution are one
+   * transaction, and the opening values are included in the update predicate so
+   * a concurrent edit cannot be silently overwritten.
+   */
+  async matchOpenings(input: ReconMatchOpeningInput, userName?: string | null): Promise<ReconMatchOpeningResult> {
+    const ids = [...new Set(input.rowIds ?? [])];
+    if (!ids.length) throw new BadRequestException('Select at least one opening balance to match.');
+
+    const rows = await this.prisma.tallyReconRow.findMany({
+      where: { id: { in: ids } },
+      include: { run: { select: { fromDate: true, registerJson: true } } },
+    });
+    const updated: ReconMatchOpeningResult['updated'] = [];
+    const failed: ReconMatchOpeningResult['failed'] = [];
+    const touchedRuns = new Map<number, boolean>();
+
+    for (const id of ids) {
+      const row = rows.find((r) => r.id === id);
+      if (!row) {
+        failed.push({ rowId: id, reason: 'Row not found.' });
+        continue;
+      }
+      if (row.vchType !== 'OPENING' || row.status !== 'AMOUNT_MISMATCH') {
+        failed.push({ rowId: id, reason: 'Only an opening row whose amount differs can be matched.' });
+        continue;
+      }
+      if (row.resolvedAt) {
+        failed.push({ rowId: id, reason: 'This opening difference has already been resolved.' });
+        continue;
+      }
+      if (!row.customerId) {
+        failed.push({ rowId: id, reason: 'No OMS customer is mapped to this Tally ledger name.' });
+        continue;
+      }
+
+      try {
+        const allOpenings = await this.prisma.acctOpeningTrans.findMany({
+          where: { kind: 'OPENING', custId: row.customerId },
+          orderBy: { id: 'asc' },
+        });
+        const effective = allOpenings.filter((o) => fyStart(o.transDate) <= row.run.fromDate);
+        if (effective.length !== 1) {
+          const reason = effective.length
+            ? 'Multiple OMS opening records affect this period. Edit them in Opening Balance so the system does not guess which record to change.'
+            : 'No existing OMS opening record affects this period. Use Add opening instead.';
+          failed.push({ rowId: id, reason });
+          continue;
+        }
+
+        // Re-read today's brought-forward amount. The saved report value may be
+        // stale if somebody edited the party after this report was opened.
+        const toExclusive = new Date(row.run.fromDate.getTime() + DAY);
+        const currentBook = (await this.loadOmsBooks([row.customerId], row.run.fromDate, toExclusive)).get(row.customerId);
+        const currentAmount = r2(currentBook?.openingBankNet ?? 0);
+        if (row.omsAmount == null || Math.abs(currentAmount - row.omsAmount) > 0.004) {
+          failed.push({ rowId: id, reason: 'The OMS opening changed after this report was created. Re-check the report, then try again.' });
+          continue;
+        }
+
+        const opening = effective[0];
+        const tallyAmount = r2((row.dr || 0) - (row.cr || 0));
+        const openingSign = (opening.drCr ?? 'DEBIT').toUpperCase() === 'CREDIT' ? -1 : 1;
+        const storedBank = r2(openingSign * (opening.bankAmt ?? 0));
+        const nextStoredBank = r2(storedBank + (tallyAmount - currentAmount));
+        const nextDrCr = nextStoredBank > 0.004 ? 'DEBIT' : nextStoredBank < -0.004 ? 'CREDIT' : (opening.drCr ?? 'DEBIT').toUpperCase();
+        const nextBankAmt = Math.abs(nextStoredBank) <= 0.004 ? 0 : Math.abs(nextStoredBank);
+
+        if (nextDrCr !== (opening.drCr ?? 'DEBIT').toUpperCase() && (opening.cashAmt ?? 0) > 0.004) {
+          failed.push({
+            rowId: id,
+            reason: 'Matching this bank opening would also reverse the existing cash opening. Edit this mixed bank/cash opening manually.',
+          });
+          continue;
+        }
+        if (nextBankAmt <= 0.004 && (opening.cashAmt ?? 0) <= 0.004) {
+          failed.push({ rowId: id, reason: 'Matching would leave an empty opening record. Remove or edit it in Opening Balance.' });
+          continue;
+        }
+
+        await this.prisma.$transaction(async (tx) => {
+          const openingWrite = await tx.acctOpeningTrans.updateMany({
+            where: {
+              id: opening.id,
+              kind: 'OPENING',
+              custId: row.customerId!,
+              bankAmt: opening.bankAmt,
+              cashAmt: opening.cashAmt,
+              drCr: opening.drCr,
+            },
+            data: { bankAmt: nextBankAmt, drCr: nextDrCr, userName: userName ?? null },
+          });
+          if (openingWrite.count !== 1) throw new Error('The opening was edited by somebody else. Re-check the report, then try again.');
+
+          const rowWrite = await tx.tallyReconRow.updateMany({
+            where: { id: row.id, status: 'AMOUNT_MISMATCH', resolvedAt: null, omsAmount: row.omsAmount },
+            data: {
+              status: 'MATCHED',
+              resolvedAt: new Date(),
+              resolvedRef: 'Opening Balance',
+              review: 'SOLVED',
+              reviewNote: 'Existing OMS opening matched to Tally from the report.',
+              reviewedAt: new Date(),
+              reviewedBy: userName ?? null,
+              omsAmount: tallyAmount,
+              omsDate: row.txnDate,
+              note: `OMS opening updated from ${currentAmount.toFixed(2)} to ${tallyAmount.toFixed(2)} to match Tally.`,
+            },
+          });
+          if (rowWrite.count !== 1) throw new Error('This reconciliation row changed. Re-check the report, then try again.');
+        });
+
+        updated.push({
+          rowId: row.id,
+          customerName: row.customerName ?? row.ledgerName,
+          previousAmount: currentAmount,
+          amount: tallyAmount,
+          drCr: tallyAmount >= 0 ? 'DEBIT' : 'CREDIT',
+        });
+        touchedRuns.set(row.runId, !!row.run.registerJson);
+      } catch (e) {
+        failed.push({ rowId: id, reason: e instanceof Error ? e.message : 'Could not match this opening balance.' });
+      }
+    }
+
+    // A stored register lets us rebuild all row and balance verdicts against the
+    // new opening, rather than leaving the rest of the report as a stale snapshot.
+    for (const [runId, canRerun] of touchedRuns) {
+      if (canRerun) await this.rerun(runId);
+      else await this.refreshCounts(runId);
+    }
+    return { updated, failed };
   }
 
   /** Recompute a run's headline counts after rows were resolved. */

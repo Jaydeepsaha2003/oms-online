@@ -1,14 +1,7 @@
 const assert = require('node:assert/strict');
-const path = require('node:path');
-const { pathToFileURL } = require('node:url');
-
-const root = path.resolve(__dirname, '..');
 
 (async () => {
-  const moduleUrl = pathToFileURL(
-    path.join(root, 'apps/web/src/features/customers/customer-addition-prefill.ts'),
-  ).href;
-  const { customerAdditionPrefill } = await import(moduleUrl);
+  const { customerAdditionPrefill } = require('@oms/shared');
 
   const prefill = customerAdditionPrefill(
     {
@@ -41,6 +34,16 @@ const root = path.resolve(__dirname, '..');
     packing: '12',
     freight: '34',
   });
+
+  const stalePrefill = customerAdditionPrefill(
+    {
+      tallyName: 'Arya Enterprises',
+      groupName: 'Sundry Debtors',
+      details: { state: null, gstin: '27AGOPB2919B1ZQ' },
+    },
+    { groups: [], transporters: [] },
+  );
+  assert.equal(stalePrefill.state, 'MAHARASHTRA');
 
   console.log('PASS Addition List details prefill the New Customer form');
 })().catch((error) => {

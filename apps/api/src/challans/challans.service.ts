@@ -20,6 +20,7 @@ import { PdfService } from '../pdf/pdf.service';
 import { NotificationsGateway } from '../notifications/notifications.gateway';
 import { SettingsService } from '../settings/settings.service';
 import { AgentCommissionService } from '../agent-commission/agent-commission.service';
+import { PaymentsService } from '../payments/payments.service';
 import { DispatchService } from '../dispatch/dispatch.service';
 import { CreateChallanDto, DraftChallanDto, ItemHistoryQueryDto, PendingChallanQueryDto, ChallanQueryDto } from './dto/challan.dto';
 import { isDebitNote, type ChallanReportNotes, type NoteReportRow } from './challan-report.builder';
@@ -52,6 +53,7 @@ export class ChallansService {
     private readonly settings: SettingsService,
     private readonly commission: AgentCommissionService,
     private readonly dispatch: DispatchService,
+    private readonly payments: PaymentsService,
   ) {}
 
   /** Dispatch lines still awaiting a challan (mirrors the legacy PendChallan query:
@@ -456,7 +458,43 @@ export class ChallansService {
     // ping open clients so their Pending Challan view refreshes live.
     this.notifications.emitPendingChallansChanged();
     await this.priceCommission(row.id);
+    await this.settleOnAccount(row.customerId);
     return this.map(row);
+  }
+
+  /**
+   * What pins a bill: receipts, credit notes and discounts against it. A pinned
+   * bill cannot change its amount, number, party or date, or be cancelled or
+   * deleted — the payment would be left pointing at a bill that no longer says
+   * what it paid. Money applied from the party's advance does not pin it: that
+   * is lifted off before the change and applied again after.
+   */
+  private async assertNotPinned(code: string, action: string): Promise<void> {
+    const [paid, disc] = await Promise.all([
+      this.prisma.acctPaymentReceipt.findMany({ where: { invNo: code }, select: { refRecId: true } }),
+      this.prisma.acctPartyDiscount.findMany({ where: { invNo: code }, select: { voucherNo: true } }),
+    ]);
+    const refs = [...new Set([...paid.map((p) => p.refRecId ?? 'a payment').filter((r) => !r.startsWith('ADV')), ...disc.map((d) => d.voucherNo ?? 'a discount')])];
+    if (!refs.length) return;
+    throw new BadRequestException(
+      `${code} already has payments against it (${refs.slice(0, 4).join(', ')}${refs.length > 4 ? ` and ${refs.length - 4} more` : ''}). Reverse ${refs.length === 1 ? 'it' : 'them'} first, then ${action}.`,
+    );
+  }
+
+  /** Advance money applied to a bill, lifted off before the bill changes. */
+  private liftOnAccount(code: string) {
+    return this.prisma.acctPaymentReceipt.deleteMany({ where: { invNo: code, refRecId: { startsWith: 'ADV' } } });
+  }
+
+  /** Settle the party's open bills from its money on account (see PaymentsService.applyOnAccount).
+   *  Swallowed on failure like commission: the bill is what matters here. */
+  private async settleOnAccount(customerId: number | null): Promise<void> {
+    if (!customerId) return;
+    try {
+      await this.prisma.$transaction((tx) => this.payments.applyOnAccount(tx, customerId));
+    } catch {
+      /* the next receipt or bill save applies it */
+    }
   }
 
   async findMany(q: ChallanQueryDto): Promise<Paginated<ChallanDto>> {
@@ -1048,7 +1086,10 @@ export class ChallansService {
 
   /** Replace a saved challan's header + lines (invoice no is preserved). */
   async update(id: number, dto: CreateChallanDto): Promise<ChallanDto> {
-    const existing = await this.prisma.challan.findUnique({ where: { id }, select: { id: true, code: true } });
+    const existing = await this.prisma.challan.findUnique({
+      where: { id },
+      select: { id: true, code: true, customerId: true, customerName: true, invDate: true, b: true, c: true, challanStatus: true },
+    });
     if (!existing) throw new NotFoundException('Challan not found');
     const scrap = isScrapCategory(dto.category);
     const { tcsPercent } = await this.settings.getTcsPercent();
@@ -1064,8 +1105,17 @@ export class ChallansService {
     if (code) await this.assertCodeAvailable(code, id);
     // Exclude the challan being edited, or every save would flag itself.
     await this.assertNotDuplicate(dto, id);
+    const touchesMoney =
+      !!code ||
+      dto.customerName.trim() !== existing.customerName ||
+      (!!invDate && invDate.toDateString() !== existing.invDate.toDateString()) ||
+      !ChallansService.sameMoney(dto.b, existing.b) ||
+      !ChallansService.sameMoney(dto.c, existing.c) ||
+      (dto.challanStatus ?? 'CONFIRMED') !== existing.challanStatus;
+    if (touchesMoney) await this.assertNotPinned(existing.code, 'change its amount, number, party, date or status');
 
     await this.prisma.$transaction([
+      ...(touchesMoney ? [this.liftOnAccount(existing.code)] : []),
       this.prisma.challanItem.deleteMany({ where: { challanId: id } }),
       this.prisma.challan.update({
         where: { id },
@@ -1118,12 +1168,18 @@ export class ChallansService {
     this.notifications.emitPendingChallansChanged();
     // Editing the lines changes the quantities commission is calculated on.
     await this.priceCommission(id);
+    await this.settleOnAccount(existing.customerId);
     return this.findOne(id);
   }
 
   async updateStatus(id: number, status: string): Promise<ChallanDto> {
-    await this.findOne(id);
+    const existing = await this.findOne(id);
+    if (status.toUpperCase() !== existing.challanStatus) {
+      await this.assertNotPinned(existing.code, `mark it ${status.toLowerCase()}`);
+      await this.liftOnAccount(existing.code);
+    }
     const row = await this.prisma.challan.update({ where: { id }, data: { challanStatus: status.toUpperCase() }, include: { items: true } });
+    await this.settleOnAccount(row.customerId);
     // Cancelling/reinstating a challan moves its lines out of / back into the pool.
     this.notifications.emitPendingChallansChanged();
     // Only a CONFIRMED invoice earns commission, so cancelling must clear what
@@ -1153,8 +1209,11 @@ export class ChallansService {
   }
 
   async remove(id: number): Promise<{ id: number }> {
-    await this.findOne(id);
+    const existing = await this.findOne(id);
+    await this.assertNotPinned(existing.code, 'delete it');
+    await this.liftOnAccount(existing.code);
     await this.prisma.challan.delete({ where: { id } }); // items cascade
+    await this.settleOnAccount(existing.customerId);
     // Deleting a challan returns its dispatched lines to the un-challaned pool.
     this.notifications.emitPendingChallansChanged();
     return { id };

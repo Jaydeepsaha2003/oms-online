@@ -255,6 +255,22 @@ export interface ReconCreateOpeningResult {
   failed: { rowId: number; reason: string }[];
 }
 
+/** Make an existing OMS opening agree with an OPENING difference in Tally. */
+export interface ReconMatchOpeningInput {
+  rowIds: number[];
+}
+
+export interface ReconMatchOpeningResult {
+  updated: {
+    rowId: number;
+    customerName: string;
+    previousAmount: number;
+    amount: number;
+    drCr: string;
+  }[];
+  failed: { rowId: number; reason: string }[];
+}
+
 /** Mark (or clear) the user's review on a set of report lines. */
 export interface MarkReconRowsInput {
   rowIds: number[];

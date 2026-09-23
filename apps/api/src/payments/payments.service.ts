@@ -26,8 +26,6 @@ import { EditPaymentDto, LedgerQueryDto, PaymentContextQueryDto, SavePaymentDto 
 
 const r2 = (x: number) => Math.round(x * 100) / 100;
 const EPS = 0.005;
-/** How long an identical non-cheque receipt counts as a double tap or retry. */
-const RECEIPT_DEDUPE_WINDOW_MS = 120_000;
 /** `settings` key holding the last receipt number ever issued. */
 const RECEIPT_SEQ_KEY = 'payments.lastReceiptNo';
 /** BANK and CHEQUE receipts settle the bank bucket; CASH settles the cash bucket.
@@ -35,6 +33,86 @@ const RECEIPT_SEQ_KEY = 'payments.lastReceiptNo';
  *  party's routing is judged on can never disagree. */
 const isBankMode = (m: string) => payBucketOf(m) === 'bank';
 const BANK_MODES = ['BANK', 'CHEQUE'];
+const referenceTokens = (value: string | null | undefined) => (value?.toUpperCase().split(/[^A-Z0-9]+/).filter(Boolean) ?? []);
+
+/** Calendar day on this server's clock. Imported rows sit at UTC midnight and
+ *  typed ones at local midnight; both fall on the same day here. */
+const dayOf = (d: Date) => new Date(d.getFullYear(), d.getMonth(), d.getDate()).getTime();
+const nextDay = (d: Date) => {
+  const n = new Date(dayOf(d));
+  n.setDate(n.getDate() + 1);
+  return n;
+};
+/**
+ * The order receipts settle bills in: the money that arrived first pays the
+ * oldest bill first, whatever order the receipts were typed in. The same day
+ * goes in entry order.
+ */
+const byArrival = (a: { transDate: Date; id: number }, b: { transDate: Date; id: number }) =>
+  dayOf(a.transDate) - dayOf(b.transDate) || a.id - b.id;
+
+/** Per invoice, the bank/cash amount set aside for named (AGST REF) receipts. */
+type Reserved = Map<string, { bank: number; cash: number }>;
+/** The same, kept per named voucher so each one's hold can be released as it replays. */
+type Claims = Map<string, Reserved>;
+
+/** Far enough ahead to mean "every open bill". */
+const FAR = new Date(2999, 11, 31);
+
+/** One receipt as the exact-amount search sees it. */
+interface Entry {
+  voucherNo: string;
+  transDate: Date;
+  adjMode: string;
+  payMode: string;
+  amount: number;
+}
+const entryOf = (r: LedgerRow): Entry => ({
+  voucherNo: r.voucherNo,
+  transDate: r.transDate,
+  adjMode: r.adjMode ?? '',
+  payMode: r.transMode,
+  amount: r.bankCredit || r.cashCredit,
+});
+
+/**
+ * The bills a payment's amount names: one bill, a run of consecutive bills, or
+ * any two bills whose open amounts add up to it (within ₹1). Searched oldest
+ * first; null when nothing fits, and the payment then settles oldest-first as
+ * usual. Wider combinations are deliberately not tried: among many small bills
+ * some mix matches almost any amount by chance, which would scatter payments.
+ */
+function findExact<T extends { bal: number }>(open: T[], amount: number): T[] | null {
+  // A round figure (₹19,000, ₹50,000) is money on account, not a payment for
+  // particular bills — bills carry odd amounts, so a round sum of them is chance.
+  // METRO METALS' ₹19,000 matched 7,790 + 11,210 and skipped six older bills.
+  // ponytail: a bill that is itself exactly round now settles oldest-first; use AGST REF for it.
+  if (amount % 1000 === 0) return null;
+  const TOL = 1;
+  for (let i = 0; i < open.length; i++) {
+    let sum = 0;
+    for (let j = i; j < open.length; j++) {
+      sum = r2(sum + open[j].bal);
+      if (Math.abs(sum - amount) <= TOL) return open.slice(i, j + 1);
+      if (sum > amount + TOL) break;
+    }
+  }
+  for (let i = 0; i < open.length; i++) {
+    for (let j = i + 2; j < open.length; j++) if (Math.abs(open[i].bal + open[j].bal - amount) <= TOL) return [open[i], open[j]];
+  }
+  return null;
+}
+
+function reservedFrom(claims: Claims): Reserved {
+  const out: Reserved = new Map();
+  for (const held of claims.values()) {
+    for (const [inv, h] of held) {
+      const cur = out.get(inv) ?? { bank: 0, cash: 0 };
+      out.set(inv, { bank: r2(cur.bank + h.bank), cash: r2(cur.cash + h.cash) });
+    }
+  }
+  return out;
+}
 
 function parseDay(s: string | undefined, label: string): Date {
   const d = s ? new Date(s) : new Date();
@@ -91,6 +169,7 @@ interface WaterfallParams {
   headId: number;
   payMode: string;
   bankName: string | null;
+  bankRef: string | null;
   chequeNo: string | null;
   cashLoc: string | null;
   cashBy: string | null;
@@ -101,7 +180,14 @@ interface WaterfallParams {
   userName?: string | null;
   editedAt: Date | null;
   editedByName: string | null;
+  sourceKey: string | null;
   createdAt: Date | null;
+  /** Bills held for named receipts that settle later; an AUTOMATIC receipt skips them. */
+  reserved?: Reserved;
+  /** Bills this receipt's exact amount names (see findExact): settled first, ahead of the opening. */
+  claimed?: Reserved;
+  /** A replay re-creates what was already saved, so it must not refuse on input rules. */
+  replay?: boolean;
 }
 
 @Injectable()
@@ -116,11 +202,17 @@ export class PaymentsService {
     // screen sends its pay mode and the list changes with it.
     const bucket = payBucketOf(q.payMode);
     const customers = await this.resolveCustomers(this.prisma, q.customerId ?? null, q.agentName ?? null, bucket);
-    const [invoices, advances, openings, sameDayReceipts] = await Promise.all([
-      this.invoicePending(this.prisma, customers, recDate),
-      this.advancePending(this.prisma, customers),
-      this.openingPending(this.prisma, customers),
+    // A back-dated receipt settles ahead of the later-dated ones (see save), so
+    // show the bills as they stood before those later receipts touched them.
+    const later = await this.chainAfter(this.prisma, q.customerId ?? 0, q.customerId != null ? null : (q.agentName ?? null), recDate);
+    const skip = new Set(later.map((r) => r.voucherNo));
+    const [invoices, advances, openings, sameDayReceipts, today] = await Promise.all([
+      this.invoicePending(this.prisma, customers, recDate, skip),
+      this.advancePending(this.prisma, customers, recDate, skip),
+      this.openingPending(this.prisma, customers, skip),
       this.receiptsOn(recDate, q.customerId ?? null, q.agentName ?? null),
+      // Same bills with the later receipts counted — what is actually owed now.
+      later.length ? this.invoicePending(this.prisma, customers, recDate) : null,
     ]);
     return {
       customers: customers.map((c) => ({ customerId: c.id, customerName: c.name })),
@@ -128,6 +220,18 @@ export class PaymentsService {
       advances,
       openings,
       sameDayReceipts,
+      // Only this leg's money: a cash entry is not overstated by later bank receipts.
+      laterReceipts: later
+        .map((r) => ({
+          voucherNo: r.voucherNo,
+          recDate: r.transDate.toISOString(),
+          amount: r2(bucket === 'cash' ? r.cashCredit : r.bankCredit),
+        }))
+        .filter((r) => r.amount > EPS),
+      pendingToday: today && {
+        invoiceBank: r2(today.reduce((a, i) => a + i.bankBal, 0)),
+        invoiceCash: r2(today.reduce((a, i) => a + i.cashBal, 0)),
+      },
       totals: {
         invoiceBank: r2(invoices.reduce((a, i) => a + i.bankBal, 0)),
         invoiceCash: r2(invoices.reduce((a, i) => a + i.cashBal, 0)),
@@ -276,7 +380,7 @@ export class PaymentsService {
     else if (mode === 'C') and.push({ cashCredit: { gt: 0 } });
 
     const search = q.search?.trim();
-    if (search) and.push({ OR: [{ voucherNo: { contains: search } }, { customerName: { contains: search } }, { particulars: { contains: search } }] });
+    if (search) and.push({ OR: [{ voucherNo: { contains: search } }, { customerName: { contains: search } }, { particulars: { contains: search } }, { bankRef: { contains: search } }] });
     const where: Prisma.AcctLedgerWhereInput = and.length ? { AND: and } : {};
     const [rows, total] = await this.prisma.$transaction([
       this.prisma.acctLedger.findMany({ where, orderBy: [{ transDate: 'desc' }, { id: 'desc' }], skip: q.skip, take: q.pageSize }),
@@ -300,6 +404,7 @@ export class PaymentsService {
         userName: r.userName,
         createdAt: r.createdAt.toISOString(),
         bankName: r.bankName,
+        bankRef: r.bankRef,
         chequeNo: r.chequeNo,
         cashTransLocation: r.cashTransLocation,
         cashRecBy: r.cashRecBy,
@@ -341,7 +446,7 @@ export class PaymentsService {
     return { receiptAmt, recDate };
   }
 
-  async save(dto: SavePaymentDto, userName?: string | null, transaction?: Db): Promise<SavePaymentResult> {
+  async save(dto: SavePaymentDto, userName?: string | null, transaction?: Db, internalSourceKey?: string): Promise<SavePaymentResult> {
     const isAgent = dto.takeAccOn === 'AGENT';
     if (isAgent ? !dto.agentName?.trim() : dto.customerId == null) {
       throw new BadRequestException('Please select either Customer / Party Name or Agent Name.');
@@ -352,26 +457,93 @@ export class PaymentsService {
     const { receiptAmt, recDate } = this.validateFigures(dto);
 
     const bankName = dto.bankName?.trim().toUpperCase() || null;
+    const bankRef = dto.payMode === 'BANK' ? dto.bankRef?.trim().toUpperCase().replace(/[^A-Z0-9]/g, '') || null : null;
+    if (bankRef && bankRef.length < 6) throw new BadRequestException('Bank UTR / Reference must contain at least 6 letters or numbers.');
     const chequeNo = dto.payMode === 'CHEQUE' ? dto.chequeNo?.trim().toUpperCase() || null : null;
     const cashLoc = dto.payMode === 'CASH' ? dto.cashTransLocation?.trim().toUpperCase() || null : null;
     const cashBy = dto.payMode === 'CASH' ? dto.cashRecBy?.trim().toUpperCase() || null : null;
     const remarks = dto.remarks?.trim().toUpperCase() || null;
+    const sourceKey = internalSourceKey ?? (dto.requestId ? `RECEIVE_PAYMENT:${dto.requestId}` : null);
 
     const save = async (tx: Db) => {
+      if (sourceKey) {
+        const prior = await tx.acctLedger.findUnique({ where: { sourceKey }, select: { voucherNo: true } });
+        if (prior) throw new ConflictException(`This request was already saved as ${prior.voucherNo}. No second receipt was created.`);
+      }
+      if (bankRef) {
+        let prior = await tx.acctLedger.findUnique({ where: { bankRef }, select: { voucherNo: true, customerName: true } });
+        // Receipts created before `bankRef` existed still carry the UTR in the
+        // immutable bank-statement audit remark. Honour those too, otherwise a
+        // historical transfer could be re-entered after this migration.
+        if (!prior) {
+          const historical = await tx.acctLedger.findMany({
+            where: { voucherType: 'RECEIPT', transMode: 'BANK', bankRef: null, transRemarks: { contains: bankRef } },
+            select: { voucherNo: true, customerName: true, transRemarks: true },
+          });
+          prior = historical.find((row) => referenceTokens(row.transRemarks).includes(bankRef)) ?? null;
+        }
+        if (!prior) {
+          // Some legacy receipts were entered manually and only later matched
+          // to a statement. In that case the UTR belongs to the linked statement
+          // row, while the receipt itself has neither `bankRef` nor a remark.
+          const statementRows = await tx.bankStatementRow.findMany({
+            where: {
+              status: { in: ['MATCHED', 'PARTIAL', 'POSTED'] },
+              OR: [{ refNo: { contains: bankRef } }, { narration: { contains: bankRef } }],
+            },
+            select: { refNo: true, narration: true, postedRef: true, matchedRefs: true },
+          });
+          const linked = statementRows.find((row) => referenceTokens(row.refNo).includes(bankRef) || referenceTokens(row.narration).includes(bankRef));
+          if (linked?.postedRef) {
+            prior = await tx.acctLedger.findFirst({ where: { voucherType: 'RECEIPT', voucherNo: linked.postedRef }, select: { voucherNo: true, customerName: true } });
+          }
+          if (!prior && linked?.matchedRefs) {
+            const refs = linked.matchedRefs.split(',').map((ref) => ref.trim()).filter(Boolean);
+            const voucherNos = refs.filter((ref) => ref.startsWith('VOUCHER:')).map((ref) => ref.slice('VOUCHER:'.length));
+            prior = await tx.acctLedger.findFirst({
+              where: {
+                voucherType: 'RECEIPT',
+                OR: [
+                  { receiptRefId: { in: refs } },
+                  { advanceRefId: { in: refs } },
+                  ...(voucherNos.length ? [{ voucherNo: { in: voucherNos } }] : []),
+                ],
+              },
+              select: { voucherNo: true, customerName: true },
+            });
+          }
+        }
+        if (prior) throw new ConflictException(`Bank reference ${bankRef} is already recorded as ${prior.voucherNo} for ${prior.customerName}.`);
+      }
       const customers = await this.resolveCustomers(tx, isAgent ? null : (dto.customerId ?? null), isAgent ? (dto.agentName ?? null) : null, payBucketOf(dto.payMode));
       const agentName = isAgent ? dto.agentName!.trim() : null;
       const headName = isAgent ? agentName! : customers[0].name;
       const headId = isAgent ? 0 : customers[0].id;
-      // Only a person's own save is checked. Bank reconciliation and Tally
-      // reconciliation pass their own `transaction` and post many lines in one
-      // go — two genuine ₹50,000 NEFTs on one day are not a duplicate — and both
-      // already de-duplicate the statement lines they post from.
+      // A person's own save must explicitly confirm same-day duplicates. An
+      // internal transaction (bank reconciliation) instead relies on its fresh
+      // global rematch, unique UTR and unique source-row key.
       if (!transaction) {
-        await this.assertNotDuplicateReceipt(tx, { headId, agentName, payMode: dto.payMode, chequeNo, receiptAmt, recDate });
+        await this.assertNotDuplicateReceipt(tx, { headId, agentName, payMode: dto.payMode, chequeNo, receiptAmt, recDate, confirmed: dto.confirmDuplicate === true });
       }
       const voucherNo = await this.nextVoucherNo(tx);
 
-      return this.runWaterfall(tx, {
+      // Back-dated: the party's later-dated receipts come out, this one settles
+      // first, and they go back in date order. A legacy receipt among them
+      // cannot be replayed, so then it simply settles what is left, as before.
+      let later = await this.chainAfter(tx, headId, agentName, recDate);
+      // An exact amount can name a bill an older unnamed receipt already took;
+      // those older receipts then settle again around it.
+      let earlier = dto.adjMode === 'AUTOMATIC' ? await this.holdersOfExact(tx, customers, headId, agentName, recDate, receiptAmt, dto.payMode) : [];
+      if ([...earlier, ...later].some((r) => r.adjMode == null)) (earlier = []), (later = []);
+      const claims = await this.claimsOf(tx, [...earlier, ...later]);
+      await this.reverseChain(tx, [...earlier, ...later]);
+      const fresh: Entry = { voucherNo, transDate: recDate, adjMode: dto.adjMode, payMode: dto.payMode, amount: receiptAmt };
+      await this.claimExact(tx, headId, agentName, [...earlier.map(entryOf), fresh, ...later.map(entryOf)], claims, earlier.length ? voucherNo : undefined);
+      await this.replayInOrder(tx, earlier, claims);
+      const own = claims.get(voucherNo);
+      claims.delete(voucherNo);
+
+      const result = await this.runWaterfall(tx, {
         voucherNo,
         receiptRefId: null,
         advanceRefId: null,
@@ -383,6 +555,7 @@ export class PaymentsService {
         headId,
         payMode: dto.payMode,
         bankName,
+        bankRef,
         chequeNo,
         cashLoc,
         cashBy,
@@ -393,8 +566,14 @@ export class PaymentsService {
         userName: userName ?? null,
         editedAt: null,
         editedByName: null,
+        sourceKey,
         createdAt: null,
+        reserved: reservedFrom(claims),
+        claimed: own,
       });
+      await this.replayInOrder(tx, later, claims);
+      await this.applyOnAccount(tx, headId);
+      return result;
     };
     // Bank reconciliation includes its statement-row update in the same
     // transaction. Ordinary Receive Payment retains its own transaction.
@@ -441,8 +620,11 @@ export class PaymentsService {
     const remarks = dto.remarks?.trim().toUpperCase() || null;
 
     return this.prisma.$transaction(async (tx) => {
-      const chain = await this.loadReplayChain(tx, target, 'edited');
+      const chain = await this.loadReplayChain(tx, target, 'edited', recDate);
+      const claims = await this.claimsOf(tx, chain);
       await this.reverseChain(tx, chain);
+      const entries = chain.map((r) => (r.id === target.id ? { ...entryOf(r), transDate: recDate, payMode: dto.payMode, amount: receiptAmt } : entryOf(r)));
+      await this.claimExact(tx, target.custId, target.agentName, entries, claims);
 
       // Replay each voucher in original order — the target with the corrected
       // figures, everything after it exactly as it was originally recorded.
@@ -458,9 +640,8 @@ export class PaymentsService {
         editedAt: new Date(),
         editedByName: userName ?? null,
       };
-      for (const row of chain) {
-        await this.replayRow(tx, row, row.id === target.id ? corrected : undefined);
-      }
+      await this.replayInOrder(tx, chain, claims, { id: target.id, data: corrected });
+      await this.applyOnAccount(tx, target.custId);
 
       return { voucherNo: target.voucherNo, replayedCount: chain.length - 1 };
     });
@@ -503,12 +684,13 @@ export class PaymentsService {
 
     return this.prisma.$transaction(async (tx) => {
       const chain = await this.loadReplayChain(tx, target, 'deleted');
+      const rest = chain.filter((row) => row.id !== target.id); // not replaying it IS the delete
+      const claims = await this.claimsOf(tx, rest);
       await this.reverseChain(tx, chain);
-      for (const row of chain) {
-        if (row.id === target.id) continue; // not replaying it IS the delete
-        await this.replayRow(tx, row);
-      }
-      return { voucherNo: target.voucherNo, replayedCount: chain.length - 1 };
+      await this.claimExact(tx, target.custId, target.agentName, rest.map(entryOf), claims);
+      await this.replayInOrder(tx, rest, claims);
+      await this.applyOnAccount(tx, target.custId);
+      return { voucherNo: target.voucherNo, replayedCount: rest.length };
     });
   }
 
@@ -581,37 +763,44 @@ export class PaymentsService {
       for (const members of groups.values()) {
         // The EARLIEST target anchors the chain: everything from there on could
         // depend on it, and everything before it is untouched by the delete.
-        const earliest = members.reduce((a, b) => (a.id <= b.id ? a : b));
+        const earliest = members.reduce((a, b) => (byArrival(a, b) <= 0 ? a : b));
         const chain = await this.loadReplayChain(tx, earliest, 'deleted');
+        deleted.push(...chain.filter((row) => targetIds.has(row.id)).map((row) => row.voucherNo));
+        const rest = chain.filter((row) => !targetIds.has(row.id)); // not replaying them IS the delete
+        const claims = await this.claimsOf(tx, rest);
         await this.reverseChain(tx, chain);
-        for (const row of chain) {
-          if (targetIds.has(row.id)) {
-            deleted.push(row.voucherNo);
-            continue; // not replaying it IS the delete
-          }
-          await this.replayRow(tx, row);
-          replayedCount += 1;
-        }
+        await this.claimExact(tx, earliest.custId, earliest.agentName, rest.map(entryOf), claims);
+        await this.replayInOrder(tx, rest, claims);
+        await this.applyOnAccount(tx, earliest.custId);
+        replayedCount += rest.length;
       }
       return { deleted, replayedCount };
     });
   }
 
   /**
-   * This voucher plus every later RECEIPT voucher for the same party (custId) or
-   * agent group (agentName) — the set whose allocations could depend on it, and
-   * so the set that has to be reversed and replayed together. Throws when any
-   * member predates edit support, since it could not be faithfully replayed.
+   * This voucher plus every RECEIPT for the same party (custId) or agent group
+   * (agentName) that settles after it in arrival order — the set whose
+   * allocations could depend on it, and so the set that has to be reversed and
+   * replayed together, in arrival order. An edit that moves the date starts
+   * from whichever of the two dates is earlier, and sorts the target at its
+   * new date. Throws when any member predates edit support, since it could not
+   * be faithfully replayed.
    */
-  private async loadReplayChain(tx: Db, target: LedgerRow, verb: 'edited' | 'deleted'): Promise<LedgerRow[]> {
-    const chain = await tx.acctLedger.findMany({
+  private async loadReplayChain(tx: Db, target: LedgerRow, verb: 'edited' | 'deleted', newDate?: Date): Promise<LedgerRow[]> {
+    const anchor = Math.min(dayOf(target.transDate), dayOf(newDate ?? target.transDate));
+    const rows = await tx.acctLedger.findMany({
       where: {
-        id: { gte: target.id },
         voucherType: 'RECEIPT',
+        transDate: { gte: new Date(anchor) },
         ...(target.custId !== 0 ? { custId: target.custId } : { agentName: target.agentName }),
       },
-      orderBy: { id: 'asc' },
     });
+    // Same-day receipts typed before this one settle before it and are untouched.
+    const at = (r: LedgerRow) => (r.id === target.id && newDate ? { transDate: newDate, id: r.id } : r);
+    const chain = rows
+      .filter((r) => r.id === target.id || dayOf(r.transDate) > anchor || r.id > target.id)
+      .sort((a, b) => byArrival(at(a), at(b)));
     const blocker = chain.find((row) => row.adjMode == null);
     if (blocker) {
       throw new BadRequestException(
@@ -621,6 +810,159 @@ export class PaymentsService {
       );
     }
     return chain;
+  }
+
+  /** The party's (or agent group's) receipts dated after `recDate`, in arrival order. */
+  private async chainAfter(db: Db, headId: number, agentName: string | null, recDate: Date): Promise<LedgerRow[]> {
+    if (headId === 0 && !agentName) return [];
+    const rows = await db.acctLedger.findMany({
+      where: { voucherType: 'RECEIPT', transDate: { gte: nextDay(recDate) }, ...(headId !== 0 ? { custId: headId } : { agentName }) },
+    });
+    return rows.sort(byArrival);
+  }
+
+  /**
+   * What each named (AGST REF) receipt in `rows` currently holds, per invoice
+   * and bucket. While the chain replays, an AUTOMATIC receipt must leave those
+   * amounts alone: the party said which bill that money was for, so an older
+   * unnamed receipt settling first must not take it.
+   */
+  private async claimsOf(tx: Db, rows: LedgerRow[]): Promise<Claims> {
+    const named = new Set(rows.filter((r) => r.adjMode === 'AGST REF').map((r) => r.voucherNo));
+    const claims: Claims = new Map();
+    if (!named.size) return claims;
+    const allocs = await tx.acctPaymentReceipt.findMany({
+      where: { recType: 'RECEIPT', OR: [{ sourceVoucherNo: { in: [...named] } }, { refRecId: { in: [...named] } }] },
+      select: { invNo: true, recAmt: true, payMode: true, sourceVoucherNo: true, refRecId: true },
+    });
+    for (const a of allocs) {
+      const owner = a.sourceVoucherNo && named.has(a.sourceVoucherNo) ? a.sourceVoucherNo : a.refRecId!;
+      const held = claims.get(owner) ?? claims.set(owner, new Map()).get(owner)!;
+      const cur = held.get(a.invNo) ?? { bank: 0, cash: 0 };
+      if (BANK_MODES.includes(a.payMode)) cur.bank = r2(cur.bank + a.recAmt);
+      else cur.cash = r2(cur.cash + a.recAmt);
+      held.set(a.invNo, cur);
+    }
+    return claims;
+  }
+
+  /** Replay reversed receipts in the given (arrival) order, releasing each
+   *  receipt's hold on its bills just before it settles them itself. */
+  private async replayInOrder(tx: Db, rows: LedgerRow[], claims: Claims, edit?: { id: number; data: ReplayOverride }): Promise<void> {
+    for (const row of rows) {
+      const own = claims.get(row.voucherNo);
+      claims.delete(row.voucherNo);
+      await this.replayRow(tx, row, row.id === edit?.id ? edit.data : undefined, reservedFrom(claims), row.adjMode === 'AUTOMATIC' ? own : undefined);
+    }
+  }
+
+  /**
+   * Adds to `claims` the bills each AUTOMATIC receipt's exact amount names
+   * (see findExact), in arrival order, among the bills open on its date that
+   * no earlier claim holds. Called with the receipts already reversed, so an
+   * exact payment keeps its bill even from an older receipt that settles first.
+   */
+  private async claimExact(tx: Db, headId: number, agentName: string | null, entries: Entry[], claims: Claims, intent?: string): Promise<void> {
+    const openBy = new Map<PayBucket, PendingInvoiceRow[]>();
+    for (const e of entries) {
+      if (e.adjMode !== 'AUTOMATIC') continue;
+      const bucket = payBucketOf(e.payMode);
+      if (!openBy.has(bucket)) {
+        const customers = await this.resolveCustomers(tx, headId !== 0 ? headId : null, headId !== 0 ? null : agentName, bucket, true);
+        openBy.set(bucket, await this.invoicePending(tx, customers, FAR));
+      }
+      const held = reservedFrom(claims);
+      const bank = bucket !== 'cash';
+      const open = openBy
+        .get(bucket)!
+        .filter((r) => dayOf(new Date(r.invDate)) <= dayOf(e.transDate))
+        .map((r) => ({ invNo: r.invNo, bal: r2((bank ? r.bankBal : r.cashBal) - ((bank ? held.get(r.invNo)?.bank : held.get(r.invNo)?.cash) ?? 0)) }))
+        .filter((r) => r.bal > EPS);
+      const hit = findExact(open, e.amount);
+      // The oldest open bills in a row are what oldest-first gives anyway, so
+      // they say nothing about intent and older money must still come first.
+      // A match that skips older bills is the party's choice, and holds.
+      const oldestFirst = e.voucherNo !== intent && hit?.every((h, k) => h === open[k]);
+      if (hit && !oldestFirst) claims.set(e.voucherNo, new Map(hit.map((h) => [h.invNo, bank ? { bank: h.bal, cash: 0 } : { bank: 0, cash: h.bal }])));
+    }
+  }
+
+  /**
+   * The party's receipts, from the earliest AUTOMATIC one that holds a bill
+   * this new amount names (as if no automatic receipt had settled anything)
+   * up to its date; [] when the amount names nothing, or only the oldest bills.
+   */
+  private async holdersOfExact(tx: Db, customers: { id: number; name: string }[], headId: number, agentName: string | null, recDate: Date, amount: number, payMode: string): Promise<LedgerRow[]> {
+    const rows = (
+      await tx.acctLedger.findMany({ where: { voucherType: 'RECEIPT', transDate: { lt: nextDay(recDate) }, ...(headId !== 0 ? { custId: headId } : { agentName }) } })
+    ).sort(byArrival);
+    const auto = rows.filter((r) => r.adjMode === 'AUTOMATIC');
+    if (!auto.length) return [];
+    const bank = payBucketOf(payMode) !== 'cash';
+    const open = (await this.invoicePending(tx, customers, recDate, new Set(auto.map((r) => r.voucherNo))))
+      .map((r) => ({ invNo: r.invNo, bal: bank ? r.bankBal : r.cashBal }))
+      .filter((r) => r.bal > EPS);
+    const hit = findExact(open, amount);
+    if (!hit || hit.every((h, k) => h === open[k])) return [];
+    const held = await tx.acctPaymentReceipt.findMany({ where: { invNo: { in: hit.map((h) => h.invNo) } }, select: { sourceVoucherNo: true, refRecId: true } });
+    const owners = new Set(held.flatMap((h) => [h.sourceVoucherNo, h.refRecId]));
+    const first = auto.find((r) => owners.has(r.voucherNo));
+    return first ? rows.slice(rows.indexOf(first)) : [];
+  }
+
+  /**
+   * Settle the party's open bills from money it already has on account: oldest
+   * bill first, oldest money first, bank and cash kept apart. Runs after every
+   * receipt change and every bill save, so a bill the party has already paid
+   * for never shows as due. Each settlement is dated the later of the bill and
+   * the money — it was paid the moment both existed.
+   *
+   * Only money a receipt parked for this party is used: an agent's money is
+   * spread over several parties, and notes manage what they park themselves.
+   * The rows carry the parking receipt as their source, so reversing that
+   * receipt takes them back out.
+   */
+  async applyOnAccount(tx: Db, custId: number): Promise<void> {
+    if (!custId) return;
+    const c = await tx.customer.findUnique({ where: { id: custId }, select: { id: true, partyName: true } });
+    if (!c) return;
+    const customers = [{ id: c.id, name: c.partyName ?? `#${c.id}` }];
+    const [bills, money] = await Promise.all([this.invoicePending(tx, customers, FAR), this.advancePending(tx, customers)]);
+    const advs = money.filter((a) => a.takeAccOn !== 'AGENT');
+    if (!bills.length || !advs.length) return;
+    const parked = await tx.acctPartyAdvance.findMany({ where: { refId: { in: advs.map((a) => a.refId) } }, select: { refId: true, refRecId: true } });
+    const owners = new Set((await tx.acctLedger.findMany({ where: { voucherType: 'RECEIPT', voucherNo: { in: parked.map((p) => p.refRecId ?? '') } }, select: { voucherNo: true } })).map((v) => v.voucherNo));
+    const ownerOf = new Map(parked.filter((p) => p.refRecId && owners.has(p.refRecId)).map((p) => [p.refId, p.refRecId!]));
+
+    for (const bank of [true, false]) {
+      const pots = advs.filter((a) => ownerOf.has(a.refId)).map((a) => ({ ...a, left: bank ? a.bankBal : a.cashBal })).filter((a) => a.left > EPS);
+      let i = 0;
+      for (const bill of bills) {
+        let need = bank ? bill.bankBal : bill.cashBal;
+        while (need > EPS && i < pots.length) {
+          const pot = pots[i];
+          const use = r2(Math.min(need, pot.left));
+          await tx.acctPaymentReceipt.create({
+            data: {
+              refId: pot.refId,
+              recDate: new Date(Math.max(+new Date(bill.invDate), +new Date(pot.recDate))),
+              invNo: bill.invNo,
+              customerName: bill.customerName,
+              custId: bill.customerId,
+              recType: 'RECEIPT',
+              recAmt: use,
+              payMode: bank ? 'BANK' : 'CASH',
+              modeOfAdj: 'ADVANCE',
+              refRecId: pot.refId,
+              sourceVoucherNo: ownerOf.get(pot.refId)!,
+            },
+          });
+          need = r2(need - use);
+          pot.left = r2(pot.left - use);
+          if (pot.left <= EPS) i += 1;
+        }
+      }
+    }
   }
 
   /** Undo every row the chain's vouchers wrote, most-recent first. `sourceVoucherNo`
@@ -648,6 +990,13 @@ export class PaymentsService {
     for (const row of [...chain].reverse()) {
       const owned = { OR: [{ sourceVoucherNo: row.voucherNo }, { refRecId: row.voucherNo }] };
       await tx.acctPaymentReceipt.deleteMany({ where: owned });
+      // Spends of this receipt's money on account that it did not write itself
+      // (old imports, notes) go too: the replay may park less or nothing, and a
+      // spend of money that no longer exists pays a bill twice (DEVI METALS
+      // ADV-2026-0010). Whatever they covered settles again from real money.
+      // The voucher keeps its ADV- id even after an earlier replay parked nothing.
+      const parkedIds = [...(await tx.acctPartyAdvance.findMany({ where: owned, select: { refId: true } })).map((a) => a.refId), ...(row.advanceRefId ? [row.advanceRefId] : [])];
+      if (parkedIds.length) await tx.acctPaymentReceipt.deleteMany({ where: { refRecId: { in: parkedIds } } });
       await tx.acctPartyAdvance.deleteMany({ where: owned });
       await tx.acctOpeningTrans.deleteMany({ where: owned });
       await tx.acctLedger.delete({ where: { id: row.id } });
@@ -657,7 +1006,7 @@ export class PaymentsService {
   /** Re-run one reversed voucher through the waterfall. Without `override` it is
    *  replayed exactly as originally recorded; with one, the target's figures are
    *  corrected. Voucher number and REC-/ADV- ref ids are always reused. */
-  private async replayRow(tx: Db, row: LedgerRow, override?: ReplayOverride): Promise<void> {
+  private async replayRow(tx: Db, row: LedgerRow, override?: ReplayOverride, reserved?: Reserved, claimed?: Reserved): Promise<void> {
     const isAgent = row.custId === 0;
     const customers = await this.resolveCustomers(tx, isAgent ? null : row.custId, isAgent ? row.agentName : null, payBucketOf(row.transMode), true);
     await this.runWaterfall(tx, {
@@ -672,6 +1021,7 @@ export class PaymentsService {
       headId: isAgent ? 0 : customers[0].id,
       payMode: override?.payMode ?? row.transMode,
       bankName: override ? override.bankName : row.bankName,
+      bankRef: row.bankRef,
       chequeNo: override ? override.chequeNo : row.chequeNo,
       cashLoc: override ? override.cashLoc : row.cashTransLocation,
       cashBy: override ? override.cashBy : row.cashRecBy,
@@ -682,7 +1032,11 @@ export class PaymentsService {
       userName: row.userName,
       editedAt: override?.editedAt ?? row.editedAt,
       editedByName: override ? override.editedByName : row.editedByName,
+      sourceKey: row.sourceKey,
       createdAt: row.createdAt,
+      reserved,
+      claimed,
+      replay: true,
     });
   }
 
@@ -718,11 +1072,13 @@ export class PaymentsService {
         selectedInvNos: p.selectedInvNos?.length ? JSON.stringify(p.selectedInvNos) : null,
         takeAccOn: p.isAgent ? 'AGENT' : 'PARTY',
         bankName: p.bankName,
+        bankRef: p.bankRef,
         chequeNo: p.chequeNo,
         cashTransLocation: p.cashLoc,
         cashRecBy: p.cashBy,
         editedAt: p.editedAt,
         editedByName: p.editedByName,
+        sourceKey: p.sourceKey,
         ...(p.createdAt ? { createdAt: p.createdAt } : {}),
       },
     });
@@ -732,7 +1088,8 @@ export class PaymentsService {
     let openingCleared = 0;
 
     // 2) Clear opening balances first (mode bucket). Agent mode: per customer.
-    const openings = await this.openingPending(tx, p.customers);
+    //    Not when the amount names its own bills: that money was for them.
+    const openings = p.claimed?.size ? [] : await this.openingPending(tx, p.customers);
     for (const o of openings) {
       if (remaining <= EPS) break;
       const pend = bankish ? o.pendingBank : o.pendingCash;
@@ -765,13 +1122,29 @@ export class PaymentsService {
         // Only the ticked invoices, in the user's tick order.
         const order = new Map((p.selectedInvNos ?? []).map((n, i) => [n, i]));
         rows = rows.filter((r) => order.has(r.invNo)).sort((a, b) => order.get(a.invNo)! - order.get(b.invNo)!);
-        if (!rows.length) throw new BadRequestException('AGST REF mode requires selecting at least one invoice.');
+        // Typed in, a named receipt with nothing left to pay is a mistake to
+        // refuse. Replayed, its bills were settled by money that arrived first,
+        // so its amount waits on account instead.
+        if (!rows.length && !p.replay) throw new BadRequestException('AGST REF mode requires selecting at least one invoice.');
+      } else {
+        // Bills another receipt is holding (named, or matched by its exact
+        // amount) are not this receipt's to take.
+        if (p.reserved?.size) {
+          rows = rows
+            .map((r) => {
+              const held = p.reserved!.get(r.invNo);
+              return held ? { ...r, bankBal: Math.max(0, r2(r.bankBal - held.bank)), cashBal: Math.max(0, r2(r.cashBal - held.cash)) } : r;
+            })
+            .filter((r) => (bankish ? r.bankBal : r.cashBal) > EPS);
+        }
+        // The bills its own amount names go first; anything over runs on oldest-first.
+        if (p.claimed?.size) rows = [...rows.filter((r) => p.claimed!.has(r.invNo)), ...rows.filter((r) => !p.claimed!.has(r.invNo))];
       }
 
       // Party mode: fund each allocation from today's receipt first, then from
       // OLD advances FIFO for any shortfall. Agent mode uses only the receipt.
       const advRows = !p.isAgent
-        ? (await this.advancePending(tx, p.customers)).filter((a) => (bankish ? a.bankBal : a.cashBal) > EPS)
+        ? (await this.advancePending(tx, p.customers, p.recDate)).filter((a) => (bankish ? a.bankBal : a.cashBal) > EPS)
         : [];
       let advIdx = 0;
       let advLeft = advRows.length ? (bankish ? advRows[0].bankBal : advRows[0].cashBal) : 0;
@@ -972,8 +1345,10 @@ export class PaymentsService {
     return linked.map((c) => ({ id: c.id, name: c.partyName ?? `#${c.id}`, payBy: c.payBy }));
   }
 
-  /** InvPendingSummary: per CONFIRMED challan dated ≤ recDate, bank/cash pending. */
-  private async invoicePending(db: Db, customers: { id: number; name: string }[], recDate: Date): Promise<PendingInvoiceRow[]> {
+  /** InvPendingSummary: per CONFIRMED challan dated ≤ recDate, bank/cash pending.
+   *  `skip`: vouchers whose settlements are left out (the later-dated receipts a
+   *  back-dated one goes ahead of). */
+  private async invoicePending(db: Db, customers: { id: number; name: string }[], recDate: Date, skip?: Set<string>): Promise<PendingInvoiceRow[]> {
     const names = customers.map((c) => c.name);
     const idByName = new Map(customers.map((c) => [c.name, c.id]));
     const end = new Date(recDate);
@@ -988,14 +1363,15 @@ export class PaymentsService {
     // Pending = amount − Σ receipts − Σ discounts (Sales Discount reduces the
     // same bank/cash bucket, so both screens reconcile).
     const [recs, discs] = await Promise.all([
-      db.acctPaymentReceipt.groupBy({ by: ['invNo', 'payMode'], where: { invNo: { in: codes } }, _sum: { recAmt: true } }),
+      db.acctPaymentReceipt.findMany({ where: { invNo: { in: codes } }, select: { invNo: true, payMode: true, recAmt: true, sourceVoucherNo: true, refRecId: true } }),
       db.acctPartyDiscount.groupBy({ by: ['invNo', 'billType'], where: { invNo: { in: codes } }, _sum: { disAmt: true } }),
     ]);
     const bankRec = new Map<string, number>();
     const cashRec = new Map<string, number>();
     for (const r of recs) {
+      if (skip?.has(r.sourceVoucherNo ?? '') || skip?.has(r.refRecId ?? '')) continue;
       const m = BANK_MODES.includes(r.payMode) ? bankRec : cashRec;
-      m.set(r.invNo, r2((m.get(r.invNo) ?? 0) + (r._sum.recAmt ?? 0)));
+      m.set(r.invNo, r2((m.get(r.invNo) ?? 0) + r.recAmt));
     }
     const bankDisc = new Map<string, number>();
     const cashDisc = new Map<string, number>();
@@ -1027,24 +1403,30 @@ export class PaymentsService {
     return rows;
   }
 
-  /** AdvPendingSummary: per advance REF ID, remaining bank/cash. FIFO by recDate. */
-  private async advancePending(db: Db, customers: { id: number }[]): Promise<PendingAdvanceRow[]> {
+  /**
+   * AdvPendingSummary: per advance REF ID, remaining bank/cash. FIFO by recDate.
+   * Only money on account by `upTo` — a receipt cannot be topped up from money
+   * that arrived after it. `skip` as in {@link invoicePending}.
+   */
+  private async advancePending(db: Db, customers: { id: number }[], upTo?: Date, skip?: Set<string>): Promise<PendingAdvanceRow[]> {
     const ids = customers.map((c) => c.id);
-    const advs = await db.acctPartyAdvance.findMany({
-      where: { custId: { in: ids } },
-      orderBy: [{ recDate: 'asc' }, { refId: 'asc' }],
-    });
+    const advs = (
+      await db.acctPartyAdvance.findMany({
+        where: { custId: { in: ids }, ...(upTo ? { recDate: { lt: nextDay(upTo) } } : {}) },
+        orderBy: [{ recDate: 'asc' }, { refId: 'asc' }],
+      })
+    ).filter((a) => !skip?.has(a.refRecId ?? ''));
     if (!advs.length) return [];
-    const used = await db.acctPaymentReceipt.groupBy({
-      by: ['refRecId', 'payMode'],
+    const used = await db.acctPaymentReceipt.findMany({
       where: { refRecId: { in: advs.map((a) => a.refId) } },
-      _sum: { recAmt: true },
+      select: { refRecId: true, payMode: true, recAmt: true, sourceVoucherNo: true },
     });
     const usedBank = new Map<string, number>();
     const usedCash = new Map<string, number>();
     for (const u of used) {
+      if (skip?.has(u.sourceVoucherNo ?? '')) continue;
       const m = BANK_MODES.includes(u.payMode) ? usedBank : usedCash;
-      m.set(u.refRecId ?? '', r2((m.get(u.refRecId ?? '') ?? 0) + (u._sum.recAmt ?? 0)));
+      m.set(u.refRecId ?? '', r2((m.get(u.refRecId ?? '') ?? 0) + u.recAmt));
     }
     return advs
       .map((a) => ({
@@ -1080,20 +1462,23 @@ export class PaymentsService {
         ...(customerId != null ? { custId: customerId } : { agentName: agentName!.trim() }),
       },
       orderBy: { id: 'desc' },
-      select: { voucherNo: true, bankCredit: true, cashCredit: true, transMode: true, transRemarks: true },
+      select: { voucherNo: true, bankCredit: true, cashCredit: true, transMode: true, bankRef: true, transRemarks: true },
     });
     return rows.map((r) => ({
       voucherNo: r.voucherNo,
       amount: r2(r.bankCredit || r.cashCredit),
       payMode: r.transMode,
+      bankRef: r.bankRef,
       remarks: r.transRemarks,
     }));
   }
 
   /** OpeningBalSummary: Σ OPENING DEBIT − Σ CLEARANCE per customer (CREDITs excluded). */
-  private async openingPending(db: Db, customers: { id: number; name: string }[]): Promise<OpeningPendingRow[]> {
+  private async openingPending(db: Db, customers: { id: number; name: string }[], skip?: Set<string>): Promise<OpeningPendingRow[]> {
     const ids = customers.map((c) => c.id);
-    const rows = await db.acctOpeningTrans.findMany({ where: { custId: { in: ids } } });
+    const rows = (await db.acctOpeningTrans.findMany({ where: { custId: { in: ids } } })).filter(
+      (r) => !(r.kind === 'CLEARANCE' && (skip?.has(r.refRecId ?? '') || skip?.has(r.sourceVoucherNo ?? ''))),
+    );
     const byCust = new Map<number, { bank: number; cash: number }>();
     for (const r of rows) {
       const cur = byCust.get(r.custId) ?? { bank: 0, cash: 0 };
@@ -1126,14 +1511,13 @@ export class PaymentsService {
    *   already on a live receipt is a duplicate on any date. A cheque that
    *   bounced and is re-presented must have its old receipt reversed first,
    *   which is exactly what this message asks for.
-   * - Anything else identical (party, day, mode, amount) is refused only if
-   *   the first copy was saved in the last {@link RECEIPT_DEDUPE_WINDOW_MS}.
-   *   That is a double tap or a retry; a genuine second payment of the same
-   *   amount later in the day is still allowed.
+   * - Anything else identical (party, day, mode, amount) requires an explicit
+   *   confirmation. The rule lives here, not only in the browser, so a stale
+   *   tab or direct API request cannot bypass it.
    */
   private async assertNotDuplicateReceipt(
     db: Db,
-    r: { headId: number; agentName: string | null; payMode: string; chequeNo: string | null; receiptAmt: number; recDate: Date },
+    r: { headId: number; agentName: string | null; payMode: string; chequeNo: string | null; receiptAmt: number; recDate: Date; confirmed: boolean },
   ): Promise<void> {
     const party = r.headId !== 0 ? { custId: r.headId } : { agentName: r.agentName };
     if (r.payMode === 'CHEQUE' && r.chequeNo) {
@@ -1158,14 +1542,13 @@ export class PaymentsService {
         ...party,
         transMode: r.payMode,
         transDate: { gte: day, lt: new Date(day.getTime() + 86_400_000) },
-        createdAt: { gte: new Date(Date.now() - RECEIPT_DEDUPE_WINDOW_MS) },
         OR: [{ bankCredit: amt }, { cashCredit: amt }],
       },
       select: { voucherNo: true },
     });
-    if (hit) {
+    if (hit && !r.confirmed) {
       throw new ConflictException(
-        `This receipt was just saved as ${hit.voucherNo}. If it really is a second payment of the same amount, wait a couple of minutes and save again.`,
+        `A possible duplicate is already recorded as ${hit.voucherNo} for this party, date, mode and amount. Confirm that this is a separate payment before saving another receipt.`,
       );
     }
   }

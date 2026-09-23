@@ -21,6 +21,10 @@ export class CreateOpeningsDto {
   @IsArray() @ArrayNotEmpty() @Type(() => Number) @IsInt({ each: true }) rowIds!: number[];
 }
 
+export class MatchOpeningsDto {
+  @IsArray() @ArrayNotEmpty() @Type(() => Number) @IsInt({ each: true }) rowIds!: number[];
+}
+
 export class MarkRowsDto {
   @IsArray() @ArrayNotEmpty() @Type(() => Number) @IsInt({ each: true }) rowIds!: number[];
   @IsIn(RECON_REVIEWS as unknown as string[]) review!: string;

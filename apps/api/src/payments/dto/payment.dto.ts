@@ -1,4 +1,4 @@
-import { ArrayMaxSize, ArrayNotEmpty, IsArray, IsBoolean, IsIn, IsInt, IsNumber, IsOptional, IsString, ValidateNested } from 'class-validator';
+import { ArrayMaxSize, ArrayNotEmpty, IsArray, IsBoolean, IsIn, IsInt, IsNumber, IsOptional, IsString, IsUUID, MaxLength, ValidateNested } from 'class-validator';
 import { Type } from 'class-transformer';
 import { ADJ_MODES, PAY_MODES, TAKE_ACC_ON } from '@oms/shared';
 import { PaginationDto } from '../../common/dto/pagination.dto';
@@ -33,6 +33,7 @@ export class SavePaymentDto {
   @IsOptional() @IsString() agentName?: string | null;
   @IsIn(PAY_MODES as unknown as string[]) payMode!: string;
   @IsOptional() @IsString() bankName?: string | null;
+  @IsOptional() @IsString() @MaxLength(80) bankRef?: string | null;
   @IsOptional() @IsString() chequeNo?: string | null;
   @IsOptional() @IsString() cashTransLocation?: string | null;
   @IsOptional() @IsString() cashRecBy?: string | null;
@@ -41,6 +42,10 @@ export class SavePaymentDto {
   @Type(() => Number) @IsNumber() receiptAmt!: number;
   @IsString() recDate!: string;
   @IsOptional() @IsString() remarks?: string | null;
+  /** Browser-generated idempotency key: a retry may never write twice. */
+  @IsOptional() @IsUUID() requestId?: string;
+  /** Explicit acknowledgement of an existing same-day/same-amount receipt. */
+  @IsOptional() @IsBoolean() confirmDuplicate?: boolean;
 }
 
 /** Correct an already-saved receipt's amount/date/mode/remarks. WHO it was

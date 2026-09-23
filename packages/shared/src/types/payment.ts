@@ -122,6 +122,7 @@ export interface SameDayReceiptDto {
   voucherNo: string;
   amount: number;
   payMode: string;
+  bankRef: string | null;
   remarks: string | null;
 }
 
@@ -133,6 +134,12 @@ export interface PaymentContext {
   openings: OpeningPendingRow[];
   /** Receipts already entered for this party on the chosen receipt date. */
   sameDayReceipts: SameDayReceiptDto[];
+  /** Back-dated entry only: receipts dated after the chosen date. The grid shows
+   *  bills as they stood on that date, so without this it overstates what is
+   *  owed today. Empty when the date is not back-dated. */
+  laterReceipts: { voucherNo: string; recDate: string; amount: number }[];
+  /** The same bills' pending today, i.e. after `laterReceipts`. Null when none. */
+  pendingToday: { invoiceBank: number; invoiceCash: number } | null;
   totals: {
     invoiceBank: number;
     invoiceCash: number;
@@ -153,6 +160,8 @@ export interface SavePaymentInput {
   payMode: string;
   /** BANK/CHEQUE: our receiving bank account display name. */
   bankName?: string | null;
+  /** Bank UTR / transaction reference. Stronger than date/amount matching. */
+  bankRef?: string | null;
   /** CHEQUE only. */
   chequeNo?: string | null;
   /** CASH only. */
@@ -166,6 +175,10 @@ export interface SavePaymentInput {
   /** Receipt / deposit date (yyyy-mm-dd, not in the future). */
   recDate: string;
   remarks?: string | null;
+  /** Unique for this submit attempt; retries reuse it and cannot write twice. */
+  requestId?: string;
+  /** Operator explicitly confirmed a same-day, same-amount second payment. */
+  confirmDuplicate?: boolean;
 }
 
 /** One allocation the engine performed (for the result summary + audit). */
@@ -273,6 +286,7 @@ export interface LedgerEntryDto {
   /** Mode-specific detail, for pre-filling an edit — null on receipts saved
    *  before edit support existed (and on non-RECEIPT vouchers). */
   bankName: string | null;
+  bankRef: string | null;
   chequeNo: string | null;
   cashTransLocation: string | null;
   cashRecBy: string | null;

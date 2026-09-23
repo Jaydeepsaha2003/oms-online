@@ -3,6 +3,7 @@ import { NotificationsModule } from '../notifications/notifications.module';
 import { SettingsModule } from '../settings/settings.module';
 import { AgentCommissionModule } from '../agent-commission/agent-commission.module';
 import { DispatchModule } from '../dispatch/dispatch.module';
+import { PaymentsModule } from '../payments/payments.module';
 import { ChallansController } from './challans.controller';
 import { ChallansService } from './challans.service';
 
@@ -11,8 +12,9 @@ import { ChallansService } from './challans.service';
   // so there is no separate re-pricing step to remember. DispatchModule → the
   // Pending Challan list reads the same in-memory line-lock map the Dispatch
   // Order screen uses, so it can warn a line is mid-dispatch elsewhere. Neither
-  // module imports ChallansModule back, so there's no cycle.
-  imports: [NotificationsModule, SettingsModule, AgentCommissionModule, DispatchModule],
+  // module imports ChallansModule back, so there's no cycle. PaymentsModule →
+  // a saved bill is settled from the party's money on account.
+  imports: [NotificationsModule, SettingsModule, AgentCommissionModule, DispatchModule, PaymentsModule],
   controllers: [ChallansController],
   providers: [ChallansService],
 })

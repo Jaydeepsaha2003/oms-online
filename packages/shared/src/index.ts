@@ -6,6 +6,7 @@
 export * from './permissions';
 export * from './roles';
 export * from './menu';
+export * from './customer-addition-prefill';
 
 export * from './types/common';
 export * from './types/doc-template';

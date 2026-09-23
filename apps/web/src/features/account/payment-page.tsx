@@ -138,6 +138,7 @@ export function PaymentPage() {
   const [agent, setAgent] = useState(state?.agent ?? '');
   const [payMode, setPayMode] = useState('');
   const [bankName, setBankName] = useState('');
+  const [bankRef, setBankRef] = useState('');
   const [chequeNo, setChequeNo] = useState('');
   const [cashLoc, setCashLoc] = useState('');
   const [cashBy, setCashBy] = useState('');
@@ -367,6 +368,7 @@ export function PaymentPage() {
     setAgent('');
     setPayMode('');
     setBankName('');
+    setBankRef('');
     setChequeNo('');
     setCashLoc('');
     setCashBy('');
@@ -402,15 +404,17 @@ export function PaymentPage() {
       // Caught before saving because a duplicate receipt is genuinely painful to
       // unwind: it over-settles invoices and the surplus becomes a silent advance.
       const dup = (ctx?.sameDayReceipts ?? []).filter((r) => Math.abs(r.amount - receipt) < 0.01);
+      let duplicateConfirmed = false;
       if (dup.length) {
         const ok = await confirm({
           title: 'Possibly already received',
-          description: `${inr(receipt)} was already received from ${ownerLabel} on ${formatDate(recDate)} — ${dup.map((d) => d.voucherNo).join(', ')}. Save this as a SECOND receipt for the same amount?`,
+          description: `${inr(receipt)} was already received from ${ownerLabel} on ${formatDate(recDate)} — ${dup.map((d) => `${d.voucherNo}${d.bankRef ? ` (UTR ${d.bankRef})` : ''}`).join(', ')}. Save this as a SECOND receipt for the same amount?`,
           confirmText: 'Yes, this is a separate payment',
           cancelText: 'No, let me check',
           destructive: true,
         });
         if (!ok) return;
+        duplicateConfirmed = true;
       }
 
       // ── 2. Amount exactly matches one pending invoice → offer AGST REF ─────
@@ -440,13 +444,13 @@ export function PaymentPage() {
         }
       }
 
-      save.mutate(
-        {
+      const payload = {
           takeAccOn: isAgent ? 'AGENT' : 'PARTY',
           customerId: isAgent ? null : customerId,
           agentName: isAgent ? agent : null,
           payMode,
           bankName: bankName || null,
+          bankRef: payMode === 'BANK' ? bankRef || null : null,
           chequeNo: chequeNo || null,
           cashTransLocation: cashLoc || null,
           cashRecBy: cashBy || null,
@@ -455,18 +459,42 @@ export function PaymentPage() {
           receiptAmt: receipt,
           recDate,
           remarks: remarks || null,
-        },
-        {
-          onSuccess: (res) => {
-            setResult(res);
-            clearAll();
-          },
-          onError: (e) => toast.error(getApiErrorMessage(e, 'Save failed')),
-        },
-      );
+          requestId: globalThis.crypto.randomUUID(),
+          confirmDuplicate: duplicateConfirmed,
+      };
+      try {
+        const res = await save.mutateAsync(payload);
+        setResult(res);
+        clearAll();
+      } catch (e) {
+        const message = getApiErrorMessage(e, 'Save failed');
+        // The browser's context can be stale when another user/tab just saved.
+        // Let the server's authoritative duplicate check drive the same explicit
+        // confirmation, then retry with the SAME request id.
+        if (!duplicateConfirmed && /possible duplicate/i.test(message)) {
+          const ok = await confirm({
+            title: 'Possibly already received',
+            description: `${message} Save only if you verified that the bank received a separate payment.`,
+            confirmText: 'Verified — save separate receipt',
+            cancelText: 'No, let me check',
+            destructive: true,
+          });
+          if (ok) {
+            try {
+              const res = await save.mutateAsync({ ...payload, confirmDuplicate: true });
+              setResult(res);
+              clearAll();
+              return;
+            } catch (retryError) {
+              toast.error(getApiErrorMessage(retryError, 'Save failed'));
+              return;
+            }
+          }
+          return;
+        }
+        toast.error(message);
+      }
     } finally {
-      // mutate() is callback-based, so this runs as soon as it's been fired —
-      // from here on `save.isPending` is what keeps the button disabled.
       setSubmitting(false);
     }
   };
@@ -645,6 +673,21 @@ export function PaymentPage() {
               </div>
             )}
 
+            {payMode === 'BANK' && (
+              <div className="space-y-1">
+                <Label htmlFor="bank-ref" className={FIELD_LABEL}>Bank UTR / Reference</Label>
+                <Input
+                  id="bank-ref"
+                  value={bankRef}
+                  onChange={(e) => setBankRef(e.target.value)}
+                  placeholder="Recommended — uniquely identifies the transfer"
+                  autoComplete="off"
+                  className={cn(CONTROL, 'font-mono uppercase')}
+                />
+                <p className="text-muted-foreground text-[11px] leading-snug">Adding the UTR prevents this transfer being entered again from another screen.</p>
+              </div>
+            )}
+
             {payMode === 'CASH' && (
               <>
                 <div className="space-y-1">
@@ -784,6 +827,17 @@ export function PaymentPage() {
             <Fig label="O/S After Adj" value={outstandingAfterAdj} strong />
             <Fig label="To Advance" value={preview.advanceToSave} tone={preview.advanceToSave > 0 ? 'amber' : undefined} />
           </dl>
+
+          {/* Back-dated entry: the grid is correct for that date, but without this it
+              reads as what the party owes today. */}
+          {!!ctx?.laterReceipts.length && ctx.pendingToday && (
+            <p role="status" className="shrink-0 border-b border-amber-400 bg-amber-100 px-3 py-1.5 text-[12.5px] font-medium text-amber-900 dark:bg-amber-500/15 dark:text-amber-200">
+              ⚠ Is date ke baad ₹{inr(ctx.laterReceipts.reduce((a, r) => a + r.amount, 0))} aa chuka hai (
+              {ctx.laterReceipts.map((r) => `${r.voucherNo} ${prettyDate(r.recDate)}`).join(', ')}). Upar ki list {prettyDate(recDate)}{' '}
+              ka hisaab hai — <strong>in bills ka aaj ka asli baki ₹{inr(bucket === 'CASH' ? ctx.pendingToday.invoiceCash : ctx.pendingToday.invoiceBank)}</strong>.
+              Save karne par baad wali receipts apne aap dobara adjust ho jayengi.
+            </p>
+          )}
 
           {/* Desktop grid. */}
           <div className={cn('hidden overflow-x-auto overscroll-x-contain sm:block lg:min-h-0 lg:flex-1 lg:overflow-auto', '[scrollbar-width:thin] [scrollbar-color:var(--color-amber-400)_var(--color-amber-100)]')}>
@@ -1564,7 +1618,9 @@ function LedgerModal({ ownerKind, owner, customerId, agentName, onClose }: { own
                         side is dimmed right down and the eye lands on the money. */}
                     <td className={cn(TD, NUM, r.bankCredit ? 'font-bold' : 'text-muted-foreground/40')}>{r.bankCredit ? inr(r.bankCredit) : '–'}</td>
                     <td className={cn(TD, NUM, r.cashCredit ? 'font-bold' : 'text-muted-foreground/40')}>{r.cashCredit ? inr(r.cashCredit) : '–'}</td>
-                    <td className={cn(TD, 'text-muted-foreground max-w-40 truncate')} title={r.transRemarks ?? ''}>{r.transRemarks ?? '—'}</td>
+                    <td className={cn(TD, 'text-muted-foreground max-w-52 truncate')} title={[r.bankRef ? `UTR ${r.bankRef}` : '', r.transRemarks ?? ''].filter(Boolean).join(' · ')}>
+                      {[r.bankRef ? `UTR ${r.bankRef}` : '', r.transRemarks ?? ''].filter(Boolean).join(' · ') || '—'}
+                    </td>
                     {showActions && (
                       <td className="px-1 py-[3px]">
                         {r.voucherType === 'RECEIPT' && (

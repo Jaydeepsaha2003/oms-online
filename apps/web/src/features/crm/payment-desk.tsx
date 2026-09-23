@@ -55,7 +55,9 @@ const promiseChip = (s: PromiseState) => {
   }
 };
 
-const ageTone = (days: number) => (days >= 60 ? 'rose' : days >= 30 ? 'amber' : days > 0 ? 'sky' : 'slate');
+// Any overdue day is red, same as Receive Payment's OVERDUE — a 17-day-late bill
+// in blue read as "fine" next to the same bill flagged red on the other screen.
+const ageTone = (days: number) => (days > 0 ? 'rose' : 'slate');
 
 /**
  * The age badge sits next to the overdue AMOUNT, which makes it read as "all of

@@ -18,7 +18,7 @@ import { ACTIONS, perm, RESOURCES } from '@oms/shared';
 import { Audit } from '../common/decorators/audit.decorator';
 import { CurrentUser } from '../common/decorators/current-user.decorator';
 import { Permissions } from '../common/decorators/permissions.decorator';
-import { CreateOpeningsDto, CreateReceiptsDto, MarkRowsDto, ReconRunsQueryDto, SaveAliasDto } from './dto/tally-recon.dto';
+import { CreateOpeningsDto, CreateReceiptsDto, MarkRowsDto, MatchOpeningsDto, ReconRunsQueryDto, SaveAliasDto } from './dto/tally-recon.dto';
 import { TallyReconService } from './tally-recon.service';
 
 const R = RESOURCES.TALLY_RECON;
@@ -127,5 +127,13 @@ export class TallyReconController {
   @Permissions(perm(R, ACTIONS.CREATE), perm(RESOURCES.OPENING_BALANCE, ACTIONS.CREATE))
   createOpenings(@Body() dto: CreateOpeningsDto, @CurrentUser('name') userName?: string) {
     return this.svc.createOpenings(dto, userName ?? null);
+  }
+
+  /** Edit one unambiguous existing OMS opening to the amount Tally states. */
+  @Post('openings/match')
+  @Permissions(perm(R, ACTIONS.CREATE), perm(RESOURCES.OPENING_BALANCE, ACTIONS.UPDATE))
+  @Audit({ action: ACTIONS.UPDATE, resource: RESOURCES.OPENING_BALANCE, description: 'Matched an OMS opening balance to Tally' })
+  matchOpenings(@Body() dto: MatchOpeningsDto, @CurrentUser('name') userName?: string) {
+    return this.svc.matchOpenings(dto, userName ?? null);
   }
 }

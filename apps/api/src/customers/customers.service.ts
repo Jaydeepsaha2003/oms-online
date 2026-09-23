@@ -146,7 +146,18 @@ export class CustomersService {
     await this.assertNameOk(dto.partyName, dto.transportName);
     await this.resolveAgent(dto.agentName);
     const transporter = await this.resolveTransporter(dto.transportName, dto.packing, dto.freight);
-    const row = await this.prisma.customer.update({ where: { id }, data: this.toData(dto, transporter) });
+    const before = await this.prisma.customer.findUnique({ where: { id }, select: { partyName: true } });
+    const row = await this.prisma.$transaction(async (tx) => {
+      const updated = await tx.customer.update({ where: { id }, data: this.toData(dto, transporter) });
+      // Receive Payment and credit notes find a party's bills by NAME, so the
+      // bills follow a rename — otherwise every old bill drops out of sight.
+      const from = before?.partyName;
+      if (from && updated.partyName && updated.partyName !== from) {
+        await tx.challan.updateMany({ where: { OR: [{ customerId: id }, { customerId: null, customerName: from }] }, data: { customerName: updated.partyName } });
+        await tx.creditNote.updateMany({ where: { OR: [{ customerId: id }, { customerId: null, customerName: from }] }, data: { customerName: updated.partyName } });
+      }
+      return updated;
+    });
     return this.toDto(row);
   }
 

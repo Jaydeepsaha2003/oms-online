@@ -1,4 +1,4 @@
-import type { TallyLedgerDetails } from '@oms/shared';
+import { gstStateFromGstin, type TallyLedgerDetails } from '@oms/shared';
 
 export interface TallyMasterEntry {
   name: string;
@@ -54,52 +54,6 @@ function allTags(body: string, name: string): string[] {
   return [...body.matchAll(new RegExp(`<${name}(?:\\s[^>]*)?>([\\s\\S]*?)</${name}>`, 'gi'))].map((m) => text(m[1])).filter(Boolean);
 }
 
-const GST_STATE_BY_CODE: Record<string, string> = {
-  '01': 'Jammu and Kashmir',
-  '02': 'Himachal Pradesh',
-  '03': 'Punjab',
-  '04': 'Chandigarh',
-  '05': 'Uttarakhand',
-  '06': 'Haryana',
-  '07': 'Delhi',
-  '08': 'Rajasthan',
-  '09': 'Uttar Pradesh',
-  '10': 'Bihar',
-  '11': 'Sikkim',
-  '12': 'Arunachal Pradesh',
-  '13': 'Nagaland',
-  '14': 'Manipur',
-  '15': 'Mizoram',
-  '16': 'Tripura',
-  '17': 'Meghalaya',
-  '18': 'Assam',
-  '19': 'West Bengal',
-  '20': 'Jharkhand',
-  '21': 'Odisha',
-  '22': 'Chhattisgarh',
-  '23': 'Madhya Pradesh',
-  '24': 'Gujarat',
-  '25': 'Daman and Diu',
-  '26': 'Dadra and Nagar Haveli and Daman and Diu',
-  '27': 'Maharashtra',
-  '29': 'Karnataka',
-  '30': 'Goa',
-  '31': 'Lakshadweep',
-  '32': 'Kerala',
-  '33': 'Tamil Nadu',
-  '34': 'Puducherry',
-  '35': 'Andaman and Nicobar Islands',
-  '36': 'Telangana',
-  '37': 'Andhra Pradesh',
-  '38': 'Ladakh',
-  '97': 'Other Territory',
-};
-
-function stateFromGstin(gstin: string | null): string | null {
-  if (!gstin || !/^\d{2}[A-Z0-9]{13}$/i.test(gstin)) return null;
-  return GST_STATE_BY_CODE[gstin.slice(0, 2)] ?? null;
-}
-
 function cityFromAddress(lines: string[]): string | null {
   for (let i = lines.length - 1; i >= 0; i--) {
     const withoutPin = lines[i]
@@ -120,7 +74,7 @@ function detailsOf(body: string): TallyLedgerDetails {
   const gstin = tag(body, 'PARTYGSTIN', 'GSTIN');
   return {
     creditPeriod: credit ? Number(credit[1]) : null,
-    state: tag(body, 'STATE', 'LEDSTATENAME', 'PRIORSTATENAME', 'OLDLEDSTATENAME') ?? stateFromGstin(gstin),
+    state: tag(body, 'STATE', 'LEDSTATENAME', 'PRIORSTATENAME', 'OLDLEDSTATENAME') ?? gstStateFromGstin(gstin),
     city: tag(body, 'CITY', 'LEDGERCITY') ?? cityFromAddress(address),
     mobile: tag(body, 'LEDGERMOBILE', 'LEDGERPHONE'),
     email: tag(body, 'EMAIL'),

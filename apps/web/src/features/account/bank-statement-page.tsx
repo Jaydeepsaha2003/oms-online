@@ -62,6 +62,7 @@ const PANEL = 'rounded-xl border border-amber-300 bg-card shadow-sm dark:border-
 const money = (v: number) => `₹ ${(v ?? 0).toLocaleString('en-IN', { maximumFractionDigits: 2 })}`;
 const money0 = (v: number) => `₹ ${(v ?? 0).toLocaleString('en-IN', { maximumFractionDigits: 0 })}`;
 const ymd = (d: Date) => `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+const RECEIPT_REVIEW_TEXT = 'Old receipt links no longer match. Process will recheck this bank credit and post it only when safe.';
 
 /** What each row status means, in the words the screen uses everywhere. */
 const STATUS_META: Record<string, { label: string; cls: string; hint: string }> = {
@@ -667,20 +668,29 @@ export function BankStatementPage() {
   /** Ticked lines that Process could actually post. Drives the button's label,
    *  so it never offers to post a matched line just because it was ticked. */
   const selectedPostable = useMemo(
-    () => rows.filter((r) => r.status === 'UNMATCHED' && !r.note?.startsWith('Receipt review required:') && checked.has(r.id)).length,
+    () => rows.filter((r) => r.status === 'UNMATCHED' && checked.has(r.id)).length,
     [rows, checked],
   );
   const allCheckedIgnored = checkedRows.length > 0 && checkedRows.every((r) => r.status === 'IGNORED');
   const run = runResult?.run;
   const isDraft = run?.status === 'DRAFT';
 
-  const toggleRow = (id: number) =>
-    setChecked((s) => {
-      const n = new Set(s);
-      if (n.has(id)) n.delete(id);
-      else n.add(id);
-      return n;
-    });
+  const toggleRow = (id: number) => {
+    const n = new Set(checked);
+    if (n.has(id)) n.delete(id);
+    else n.add(id);
+    setChecked(n);
+    /*
+     * One ticked line: the panel shows THAT line's party.
+     *
+     * Otherwise it kept the party last assigned, and a "Process changes nothing
+     * here" verdict for BK METAL sat beside a ticked SHREE CHARBHUJA line reading
+     * "No receipt" — the panel's answer looked like it was about the ticked line.
+     * The list filter is untouched (see `selectedParty`), so nothing disappears.
+     */
+    const only = n.size === 1 ? rows.find((r) => n.has(r.id)) : undefined;
+    if (only?.customerId != null) setWorkingParty(only.customerId);
+  };
 
   /**
    * Assign the ticked lines to a party.
@@ -796,14 +806,14 @@ export function BankStatementPage() {
      * counted here so the confirmation promises what will actually happen —
      * ticking a matched line and a new one must not read as "post 2".
      */
-    const postable = rows.filter((r) => r.status === 'UNMATCHED' && !r.note?.startsWith('Receipt review required:'));
+    const postable = rows.filter((r) => r.status === 'UNMATCHED');
     const selected = postable.filter((r) => checked.has(r.id));
     const onlySelected = checked.size > 0;
     const targets = onlySelected ? selected : postable;
     const n = targets.length;
     if (!n) {
       return toast.error(
-        onlySelected ? 'None of the ticked lines can be posted. Check any receipt-review notes.' : 'Nothing to post — lines are covered, need a party, or require receipt review.',
+        onlySelected ? 'None of the ticked lines need a receipt.' : 'Nothing to post — lines are covered, need a party, or are not required.',
       );
     }
     const total = targets.reduce((s, r) => s + (r.amount - r.matchedAmount), 0);
@@ -921,8 +931,8 @@ export function BankStatementPage() {
             )}
             <p>
               This working is available for review. <strong>Process</strong> checks the latest receipts again
-              and posts only the remaining shortfall on eligible lines. Lines marked “Receipt review required”
-              are blocked from automatic posting. Check their references in Receive Payments first.
+              and posts only the remaining shortfall. A bank transaction ID lets OMS safely clear an old,
+              incorrect receipt link; unclear lines stay unposted for review.
               {!!reopenedInfo?.stillPosted && (
                 <>
                   {' '}
@@ -1499,7 +1509,7 @@ export function BankStatementPage() {
 
               <div className="sm:min-h-0 sm:flex-1 sm:overflow-auto">
                 {/* Mobile View: Cards */}
-                <div className="space-y-2 p-2 sm:hidden">
+                <div className="space-y-2 p-2 lg:hidden">
                   {runLoading ? (
                     <div className="text-muted-foreground flex justify-center py-10">
                       <Loader2 className="size-6 animate-spin" />
@@ -1522,7 +1532,7 @@ export function BankStatementPage() {
                 </div>
 
                 {/* Desktop View: Table */}
-                <table className="hidden w-full border-collapse sm:table">
+                <table className="hidden w-full table-fixed border-collapse lg:table">
                   <thead>
                     <tr>
                       <th className={cn(TH, 'w-9')} aria-label="Select" />
@@ -1759,7 +1769,7 @@ function LineCard({
       <div className="space-y-1">
         <p className="text-xs font-medium leading-relaxed text-foreground break-words">{row.narration || '—'}</p>
         {row.note?.startsWith('Receipt review required:') && (
-          <p className="text-xs font-medium leading-relaxed text-amber-800 dark:text-amber-300">{row.note}</p>
+          <p className="text-xs font-medium leading-relaxed text-amber-800 dark:text-amber-300">{RECEIPT_REVIEW_TEXT}</p>
         )}
 
         {hasRef(row.refNo) && (
@@ -1845,24 +1855,24 @@ function LineRow({ row, checked, onToggle, selectable, vouchers, onChangeParty }
         )}
       </td>
       <td className={cn(TD, 'whitespace-nowrap tabular-nums')}>{formatDate(row.txnDate)}</td>
-      <td className={cn(TD, 'max-w-0')}>
+      <td className={cn(TD, 'min-w-0 max-w-0 overflow-hidden')}>
         <span className="block truncate font-medium" title={row.narration}>
           {row.narration || '—'}
         </span>
         {row.note?.startsWith('Receipt review required:') && (
-          <p className="mt-1 whitespace-normal text-xs font-medium text-amber-800 dark:text-amber-300">{row.note}</p>
+          <p className="mt-1 whitespace-normal text-xs font-medium text-amber-800 dark:text-amber-300">{RECEIPT_REVIEW_TEXT}</p>
         )}
         {/* Labelled, because a bare grey number under the narration read as part
             of the narration — nobody could tell it was the cheque number. */}
         {hasRef(row.refNo) && (
           <span
-            className="mt-0.5 inline-flex items-center gap-1 rounded-[3px] border px-1.5 py-px align-middle text-[10.5px] leading-[1.45]"
+            className="mt-0.5 inline-flex max-w-full items-center gap-1 overflow-hidden rounded-[3px] border px-1.5 py-px align-middle text-[10.5px] leading-[1.45]"
             title={`${isChequeTxn(row.narration) ? 'Cheque no' : 'Reference no'} ${row.refNo} — from the statement's ref column`}
           >
-            <span className="text-muted-foreground font-semibold tracking-wide uppercase">
+            <span className="text-muted-foreground shrink-0 font-semibold tracking-wide uppercase">
               {isChequeTxn(row.narration) ? 'Cheque' : 'Ref'}
             </span>
-            <span className="font-mono font-semibold tabular-nums">{row.refNo}</span>
+            <span className="min-w-0 truncate font-mono font-semibold tabular-nums">{row.refNo}</span>
           </span>
         )}
         {/* The evidence, not just the verdict. A line says "Matched" because a
@@ -1901,7 +1911,7 @@ function LineRow({ row, checked, onToggle, selectable, vouchers, onChangeParty }
           </span>
         )}
       </td>
-      <td className={cn(TD, NUM, 'font-bold')}>{money0(row.amount)}</td>
+      <td className={cn(TD, NUM, 'whitespace-nowrap font-bold')}>{money0(row.amount)}</td>
       {/*
         The party is editable in place.
         
@@ -1912,16 +1922,16 @@ function LineRow({ row, checked, onToggle, selectable, vouchers, onChangeParty }
         "remember this narration" choice still gets made deliberately rather
         than being assumed.
       */}
-      <td className={TD} onClick={(e) => e.stopPropagation()}>
+      <td className={cn(TD, 'min-w-0 max-w-0 overflow-hidden')} onClick={(e) => e.stopPropagation()}>
         {onChangeParty ? (
           <button
             type="button"
             onClick={() => onChangeParty(row)}
-            className="group/party -mx-1 flex max-w-full items-center gap-1 rounded-[3px] px-1 py-0.5 text-left hover:bg-indigo-50 dark:hover:bg-indigo-500/15"
+            className="group/party -mx-1 flex min-w-0 max-w-full items-center gap-1 rounded-[3px] px-1 py-0.5 text-left hover:bg-indigo-50 dark:hover:bg-indigo-500/15"
             title={row.customerName ? 'Change the party on this line' : 'Assign a party to this line'}
           >
             {row.customerName ? (
-              <span className="font-semibold">
+              <span className="min-w-0 break-words font-semibold leading-snug">
                 {row.customerName}
                 {row.partySource && row.partySource !== 'MANUAL' && (
                   <span className="text-muted-foreground ml-1 text-[10.5px] font-medium" title="Worked out automatically — confirm it if unsure">
@@ -1935,7 +1945,7 @@ function LineRow({ row, checked, onToggle, selectable, vouchers, onChangeParty }
             <Pencil className="text-muted-foreground size-3 shrink-0 opacity-0 transition-opacity group-hover/party:opacity-100" />
           </button>
         ) : row.customerName ? (
-          <span className="font-semibold">
+          <span className="break-words font-semibold leading-snug">
             {row.customerName}
             {row.partySource && row.partySource !== 'MANUAL' && (
               <span className="text-muted-foreground ml-1 text-[10.5px] font-medium" title="Worked out automatically — confirm it if unsure">

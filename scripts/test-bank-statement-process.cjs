@@ -79,6 +79,7 @@ test('an agent-routed party posts, instead of failing with advice this screen ca
   assert.equal(led.takeAccOn, 'AGENT');
   assert.equal(led.agentName, 'B KUMAR');
   assert.equal(led.bankCredit, 95800);
+  assert.equal(led.sourceKey, `BANK_STATEMENT_ROW:${row.id}`);
   assert.equal((await prisma.bankStatementRow.findUnique({ where: { id: row.id } })).status, 'POSTED');
 });
 
@@ -180,6 +181,32 @@ test('historical coverage changes cannot silently create another receipt', async
   assert.equal(await prisma.acctLedger.count({ where: { custId: p.id } }), 0);
 });
 
+test('changed historical coverage with a strong bank reference posts the missing receipt', async () => {
+  const p = await party('IDENTIFIED REVIEW', 'PARTY');
+  const { run, row } = await runWithRow(p, 2900);
+  await prisma.bankStatementRow.update({
+    where: { id: row.id },
+    data: {
+      narration: 'NEFT/KKBKH26243935409/IDENTIFIED REVIEW',
+      status: 'MATCHED',
+      matchedAmount: 2900,
+      matchedRefs: 'REC-OLD-REFERENCE',
+    },
+  });
+  await svc.recheck(run.id);
+
+  const res = await svc.process(run.id, 'Tester');
+  assert.deepEqual(res.failed, []);
+  assert.equal(res.created.length, 1);
+  assert.equal(res.created[0].amount, 2900);
+  const posted = await prisma.bankStatementRow.findUnique({ where: { id: row.id } });
+  assert.equal(posted.status, 'POSTED');
+  assert.doesNotMatch(posted.note ?? '', /Receipt review required/i);
+  assert.match(posted.note ?? '', /Receipt created/i);
+  const receipt = await prisma.acctLedger.findFirst({ where: { voucherNo: res.created[0].voucherNo } });
+  assert.equal(receipt.bankRef, 'KKBKH26243935409');
+});
+
 test('historical partial-post coverage cannot steal an earlier exact match', async () => {
   const p = await party('HISTORICAL DOUBLE COVER', 'PARTY');
   const earlier = await runWithRow(p, 4000);
@@ -211,6 +238,83 @@ test('normal Receive Payments can still save, edit and delete a receipt', async 
   await payments.deleteReceipt(ledger.id);
   assert.equal(await prisma.acctLedger.count({ where: { custId: p.id } }), 0);
   assert.equal(await prisma.acctPaymentReceipt.count({ where: { custId: p.id } }), 0);
+});
+
+test('Receive Payments requires explicit confirmation for an older same-day duplicate', async () => {
+  const p = await party('SERVER DUPLICATE GUARD', 'PARTY');
+  const dto = { takeAccOn: 'PARTY', customerId: p.id, payMode: 'BANK', bankName: 'AXIS BANK-8254', adjMode: 'AUTOMATIC', receiptAmt: 3200, recDate: '2026-08-11', requestId: '11111111-1111-4111-8111-111111111111' };
+  const first = await payments.save(dto, 'Tester');
+  await prisma.acctLedger.updateMany({ where: { voucherNo: first.voucherNo }, data: { createdAt: new Date(Date.now() - 10 * 60_000) } });
+  await assert.rejects(
+    () => payments.save({ ...dto, requestId: '22222222-2222-4222-8222-222222222222' }, 'Tester'),
+    /already recorded|possible duplicate/i,
+  );
+  const confirmed = await payments.save({ ...dto, requestId: '33333333-3333-4333-8333-333333333333', confirmDuplicate: true }, 'Tester');
+  assert.ok(confirmed.voucherNo);
+  assert.equal(await prisma.acctLedger.count({ where: { custId: p.id, voucherType: 'RECEIPT' } }), 2);
+});
+
+test('Receive Payments request ID cannot create the same receipt twice', async () => {
+  const p = await party('IDEMPOTENT FORM', 'PARTY');
+  const dto = { takeAccOn: 'PARTY', customerId: p.id, payMode: 'BANK', bankName: 'AXIS BANK-8254', adjMode: 'AUTOMATIC', receiptAmt: 3300, recDate: '2026-08-11', requestId: '44444444-4444-4444-8444-444444444444' };
+  await payments.save(dto, 'Tester');
+  await assert.rejects(() => payments.save({ ...dto, confirmDuplicate: true }, 'Tester'), /already saved|request/i);
+  assert.equal(await prisma.acctLedger.count({ where: { custId: p.id, voucherType: 'RECEIPT' } }), 1);
+});
+
+test('a UTR stored by an older bank reconciliation cannot be entered again', async () => {
+  const p = await party('HISTORICAL UTR GUARD', 'PARTY');
+  const utr = 'PUNBZ55555555555';
+  const old = await payments.save({ takeAccOn: 'PARTY', customerId: p.id, payMode: 'BANK', bankName: 'AXIS BANK-8254', adjMode: 'AUTOMATIC', receiptAmt: 3400, recDate: '2026-08-11' }, 'Tester');
+  await prisma.acctLedger.updateMany({
+    where: { voucherNo: old.voucherNo },
+    data: { bankRef: null, transRemarks: `BANK STATEMENT OLD.CSV — REF NEFT/${utr}/HISTORICAL UTR GUARD` },
+  });
+  await assert.rejects(
+    () => payments.save({ takeAccOn: 'PARTY', customerId: p.id, payMode: 'BANK', bankName: 'AXIS BANK-8254', bankRef: utr, adjMode: 'AUTOMATIC', receiptAmt: 3400, recDate: '2026-08-20', requestId: '55555555-5555-4555-8555-555555555555' }, 'Tester'),
+    /bank reference.*already recorded/i,
+  );
+  assert.equal(await prisma.acctLedger.count({ where: { custId: p.id } }), 1);
+});
+
+test('a UTR on a statement row matched to an older manual receipt cannot be entered again', async () => {
+  const p = await party('MATCHED LEGACY UTR GUARD', 'PARTY');
+  const utr = 'PUNBX66666666666';
+  const old = await payments.save({ takeAccOn: 'PARTY', customerId: p.id, payMode: 'BANK', bankName: 'AXIS BANK-8254', adjMode: 'AUTOMATIC', receiptAmt: 3500, recDate: '2026-08-11' }, 'Tester');
+  const ledger = await prisma.acctLedger.findFirstOrThrow({ where: { voucherNo: old.voucherNo } });
+  const run = await prisma.bankStatementRun.create({ data: { fileName: 'legacy-matched.csv', bankName: 'AXIS BANK-8254', status: 'DRAFT', fromDate: new Date('2026-08-01'), toDate: new Date('2026-08-31') } });
+  await prisma.bankStatementRow.create({ data: { runId: run.id, rowNo: 1, txnDate: new Date('2026-08-11'), narration: `NEFT/${utr}/MATCHED LEGACY UTR GUARD`, refNo: `NEFT/${utr}/MATCHED LEGACY UTR GUARD`, amount: 3500, customerId: p.id, customerName: p.partyName, partySource: 'NARRATION', status: 'MATCHED', matchedAmount: 3500, matchedRefs: ledger.receiptRefId || ledger.advanceRefId, rowKey: 'legacy-matched-utr' } });
+  await assert.rejects(
+    () => payments.save({ takeAccOn: 'PARTY', customerId: p.id, payMode: 'BANK', bankName: 'AXIS BANK-8254', bankRef: utr, adjMode: 'AUTOMATIC', receiptAmt: 3500, recDate: '2026-08-20', requestId: '66666666-6666-4666-8666-666666666666' }, 'Tester'),
+    /bank reference.*already recorded/i,
+  );
+  assert.equal(await prisma.acctLedger.count({ where: { custId: p.id } }), 1);
+});
+
+test('equal payments with different UTRs remain two legitimate receipts', async () => {
+  const p = await party('TWO REAL TRANSFERS', 'PARTY');
+  await bill(p, 'SSS/TWO', 10000);
+  const run = await prisma.bankStatementRun.create({ data: { fileName: 'two.csv', bankName: 'AXIS BANK-8254', status: 'DRAFT', fromDate: new Date('2026-08-01'), toDate: new Date('2026-08-31') } });
+  for (const [rowNo, ref] of [[1, 'PUNBA11111111111'], [2, 'PUNBZ22222222222']]) {
+    await prisma.bankStatementRow.create({ data: { runId: run.id, rowNo, txnDate: new Date('2026-08-15'), narration: `NEFT/${ref}/TWO REAL TRANSFERS`, refNo: ref, amount: 2500, customerId: p.id, customerName: p.partyName, partySource: 'NARRATION', status: 'UNMATCHED', rowKey: `two-${rowNo}` } });
+  }
+  const res = await svc.process(run.id, 'Tester');
+  assert.equal(res.created.length, 2);
+  assert.deepEqual((await prisma.acctLedger.findMany({ where: { custId: p.id }, orderBy: { bankRef: 'asc' }, select: { bankRef: true } })).map((r) => r.bankRef), ['PUNBA11111111111', 'PUNBZ22222222222']);
+});
+
+test('the same UTR from two statement rows can create only one receipt', async () => {
+  const p = await party('DUPLICATE UTR ROW', 'PARTY');
+  await bill(p, 'SSS/ONE', 10000);
+  const run = await prisma.bankStatementRun.create({ data: { fileName: 'duplicate-utr.csv', bankName: 'AXIS BANK-8254', status: 'DRAFT', fromDate: new Date('2026-08-01'), toDate: new Date('2026-08-31') } });
+  for (const rowNo of [1, 2]) {
+    await prisma.bankStatementRow.create({ data: { runId: run.id, rowNo, txnDate: new Date('2026-08-16'), narration: 'NEFT/PUNBX33333333333/DUPLICATE UTR ROW', refNo: 'PUNBX33333333333', amount: 2600, customerId: p.id, customerName: p.partyName, partySource: 'NARRATION', status: 'UNMATCHED', rowKey: `duplicate-utr-${rowNo}` } });
+  }
+  const res = await svc.process(run.id, 'Tester');
+  assert.equal(res.created.length, 1);
+  assert.equal(res.failed.length, 1);
+  assert.match(res.failed[0].reason, /bank reference.*already recorded/i);
+  assert.equal(await prisma.acctLedger.count({ where: { custId: p.id } }), 1);
 });
 
 (async () => {

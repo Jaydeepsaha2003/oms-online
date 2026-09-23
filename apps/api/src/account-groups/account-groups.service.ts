@@ -122,12 +122,46 @@ export class AccountGroupsService {
       this.prisma.customer.findMany({ where: { partyName: { not: null } }, select: { id: true, partyName: true, active: true, groupId: true }, orderBy: { partyName: 'asc' } }),
       this.prisma.tallyPartyAlias.findMany({ select: { tallyName: true, customerId: true } }),
       this.tallyBalances(),
-      this.prisma.customerAddition.findMany({ where: { status: 'PENDING' }, select: { tallyName: true } }),
+      this.prisma.customerAddition.findMany({
+        where: { status: 'PENDING' },
+        select: { id: true, tallyName: true, groupName: true, details: true },
+      }),
       this.prisma.tallyLedger.findMany({ select: { name: true, groupName: true } }),
     ]);
 
     const key = (s: string) => s.trim().toUpperCase();
     const inList = new Set(queued.map((q) => key(q.tallyName)));
+    const queuedByName = new Map(queued.map((q) => [key(q.tallyName), q]));
+    /*
+     * A pending party keeps living after the review dialog closes. Re-uploading
+     * a newer master therefore has to refresh that saved snapshot too. Without
+     * this, an item queued before city/state parsing was improved stayed blank
+     * forever: the review only said "In addition list" and offered no way to
+     * add it again with the newer XML details.
+     *
+     * Merge non-empty values instead of replacing the object. Some Tally
+     * exports omit contact/location fields, and a poorer later export must not
+     * erase useful details captured earlier.
+     */
+    for (const ledger of master.ledgers) {
+      const pending = queuedByName.get(key(ledger.name));
+      if (!pending) continue;
+      let saved: TallyLedgerDetails = {};
+      try {
+        saved = pending.details ? (JSON.parse(pending.details) as TallyLedgerDetails) : {};
+      } catch {
+        saved = {};
+      }
+      const merged: TallyLedgerDetails = { ...saved };
+      for (const [field, value] of Object.entries(ledger.details ?? {})) {
+        if (value != null && value !== '') Object.assign(merged, { [field]: value });
+      }
+      const details = JSON.stringify(merged);
+      const groupName = ledger.parent ?? 'Primary';
+      if (details !== (pending.details ?? '{}') || groupName !== pending.groupName) {
+        await this.prisma.customerAddition.update({ where: { id: pending.id }, data: { details, groupName } });
+      }
+    }
     const omsById = new Map(omsGroups.map((g) => [g.id, g]));
     const omsByName = new Map(omsGroups.map((g) => [key(g.name), g]));
     const parentName = new Map<string, string | null>();

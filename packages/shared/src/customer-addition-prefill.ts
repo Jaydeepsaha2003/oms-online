@@ -1,4 +1,6 @@
-import type { CustomerAdditionDto, CustomerLookups } from '@oms/shared';
+import type { CustomerAdditionDto } from './types/account-group';
+import { gstStateFromGstin } from './types/account-group';
+import type { CustomerLookups } from './types/customer';
 
 type AdditionSource = Pick<CustomerAdditionDto, 'tallyName' | 'groupName' | 'details'>;
 type AdditionLookups = Pick<CustomerLookups, 'groups' | 'transporters'>;
@@ -11,6 +13,7 @@ export function customerAdditionPrefill(
   lookups: AdditionLookups,
 ): Record<string, string> {
   const details = addition.details;
+  const state = details.state?.trim() || gstStateFromGstin(details.gstin);
   const group = lookups.groups.find((item) => sameName(item.name, addition.groupName));
   const xmlTransportName = details.transportName?.trim() ?? '';
   const transporter = xmlTransportName
@@ -21,7 +24,7 @@ export function customerAdditionPrefill(
     partyName: addition.tallyName,
     ...(group ? { groupId: String(group.id) } : {}),
     ...(details.creditPeriod != null ? { creditPeriod: String(details.creditPeriod) } : {}),
-    ...(details.state ? { state: details.state.toUpperCase() } : {}),
+    ...(state ? { state: state.toUpperCase() } : {}),
     ...(details.city ? { city: details.city.toUpperCase() } : {}),
     ...(details.mobile ? { mobile: details.mobile } : {}),
     ...(details.email ? { email: details.email } : {}),

@@ -4,6 +4,8 @@ import type {
   MarkReconRowsResult,
   ReconCreateOpeningInput,
   ReconCreateOpeningResult,
+  ReconMatchOpeningInput,
+  ReconMatchOpeningResult,
   ReconCreateReceiptInput,
   ReconCreateReceiptResult,
   ReconRunResult,
@@ -130,6 +132,21 @@ export function useCreateReconOpenings() {
   const qc = useQueryClient();
   return useMutation({
     mutationFn: (input: ReconCreateOpeningInput) => http.post<ReconCreateOpeningResult>('/tally-recon/openings', input),
+    onSuccess: () => {
+      void qc.invalidateQueries({ queryKey: RUNS });
+      void qc.invalidateQueries({ queryKey: ['party-ledger'] });
+      void qc.invalidateQueries({ queryKey: ['opening-balances'] });
+      void qc.invalidateQueries({ queryKey: ['payments'] });
+      void qc.invalidateQueries({ queryKey: ['daybook'] });
+    },
+  });
+}
+
+/** Updates an existing OMS opening to the figure proved by the Tally report. */
+export function useMatchReconOpenings() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (input: ReconMatchOpeningInput) => http.post<ReconMatchOpeningResult>('/tally-recon/openings/match', input),
     onSuccess: () => {
       void qc.invalidateQueries({ queryKey: RUNS });
       void qc.invalidateQueries({ queryKey: ['party-ledger'] });

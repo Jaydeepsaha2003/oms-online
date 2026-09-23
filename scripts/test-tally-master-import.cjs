@@ -14,7 +14,7 @@ const xml = `<ENVELOPE><BODY><IMPORTDATA><REQUESTDATA>
 <TALLYMESSAGE><GROUP NAME="Current Assets" RESERVEDNAME="Current Assets"><PARENT>&#4; Primary</PARENT></GROUP></TALLYMESSAGE>
 <TALLYMESSAGE><GROUP NAME="ZZ TEST PARTIES" RESERVEDNAME=""><PARENT>Sundry Debtors</PARENT></GROUP></TALLYMESSAGE>
 <TALLYMESSAGE><LEDGER NAME="SUMTI MARKETING NX" RESERVEDNAME=""><PARENT>ZZ TEST PARTIES</PARENT></LEDGER></TALLYMESSAGE>
-<TALLYMESSAGE><LEDGER NAME="ZZ NOBODY &amp; CO" RESERVEDNAME=""><PARENT>Sundry Debtors</PARENT></LEDGER></TALLYMESSAGE>
+<TALLYMESSAGE><LEDGER NAME="ZZ NOBODY &amp; CO" RESERVEDNAME=""><PARENT>Sundry Debtors</PARENT><LEDGERCITY>PUNE</LEDGERCITY><LEDSTATENAME>Maharashtra</LEDSTATENAME><PARTYGSTIN>27ABCDE1234F1Z5</PARTYGSTIN></LEDGER></TALLYMESSAGE>
 <TALLYMESSAGE><LEDGER NAME="ZZ Salary" RESERVEDNAME=""><PARENT>Indirect Expenses</PARENT></LEDGER></TALLYMESSAGE>
 </REQUESTDATA></IMPORTDATA></BODY></ENVELOPE>`;
 
@@ -106,6 +106,21 @@ const xml = `<ENVELOPE><BODY><IMPORTDATA><REQUESTDATA>
     assert.equal(add.details.creditPeriod, 45);
     assert.ok((await svc.tallyPreview(utf16, 'Master.xml')).parties.find((x) => x.tallyName === 'ZZ NOBODY & CO').inList);
     ok('added to the addition list with balance and credit period');
+
+    // A party may have been queued before the master parser learned how to
+    // read its location. Re-uploading the XML must refresh that pending row;
+    // otherwise the New Customer form is permanently stuck with the old blank
+    // city/state because an in-list party cannot be added a second time.
+    await prisma.customerAddition.update({
+      where: { id: add.id },
+      data: { details: JSON.stringify({ creditPeriod: 45, state: null, gstin: '27ABCDE1234F1Z5' }) },
+    });
+    await svc.tallyPreview(utf16, 'Master.xml');
+    const refreshed = await svc.addition(add.id);
+    assert.equal(refreshed.details.state, 'Maharashtra');
+    assert.equal(refreshed.details.city, 'PUNE');
+    assert.equal(refreshed.details.creditPeriod, 45);
+    ok('re-upload refreshes city/state for a party already in the addition list');
 
     const cust = await prisma.customer.create({ data: { partyName: 'ZZ NOBODY AND CO', groupId: (await svc.defaultGroupId()) } });
     await svc.markAdded(add.id, { customerId: cust.id }, 'test');
