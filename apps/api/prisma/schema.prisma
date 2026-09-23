@@ -227,6 +227,8 @@ model Transporter {
   name      String   @unique
   packing   Float?
   freight   Float?
+  /// Transporter GSTIN / TRANSIN — the e-way bill Part-A transporter ID, sent on every Tally invoice.
+  gstin     String?
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 

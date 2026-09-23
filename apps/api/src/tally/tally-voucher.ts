@@ -71,6 +71,8 @@ export interface SalesVoucher {
   shippedBy: string | null;
   /** "6-BAG" — the accountant's delivery-note entry. */
   deliveryNote: string | null;
+  /** Transporter GSTIN/TRANSIN from the OMS Transporter master — pre-fills the e-way bill. */
+  transporterId?: string | null;
 }
 
 const r2 = (x: number) => Math.round((x + Number.EPSILON) * 100) / 100;
@@ -256,6 +258,12 @@ export function salesVoucherXml(v: SalesVoucher, p: VoucherParty): string {
     el('BASICFINALDESTINATION', dest) +
     '<PERSISTEDVIEW>Invoice Voucher View</PERSISTEDVIEW><VCHENTRYMODE>Item Invoice</VCHENTRYMODE><ISINVOICE>Yes</ISINVOICE>' +
     (v.deliveryNote ? `<INVOICEDELNOTES.LIST><BASICSHIPPINGDATE>${date}</BASICSHIPPINGDATE>${el('BASICSHIPDELIVERYNOTE', v.deliveryNote)}</INVOICEDELNOTES.LIST>` : '') +
+    // E-way bill Part-A transporter, where Tally keeps it (as on SSS-739) — the
+    // accountant then only generates. No bill number: Tally/NIC fill that in.
+    (v.transporterId
+      ? '<EWAYBILLDETAILS.LIST><DOCUMENTTYPE>Tax Invoice</DOCUMENTTYPE><SUBTYPE>Supply</SUBTYPE>' +
+        `<TRANSPORTDETAILS.LIST>${el('TRANSPORTERNAME', v.shippedBy)}${el('TRANSPORTERID', v.transporterId)}</TRANSPORTDETAILS.LIST></EWAYBILLDETAILS.LIST>`
+      : '') +
     lines +
     ledgers +
     '</VOUCHER>'

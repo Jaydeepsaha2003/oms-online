@@ -108,3 +108,11 @@ test('billing-rate bill posts billed KGS at billing rate; C and unbilled charges
   const neg = buildSalesVoucher({ ...base, code: 'x', gst: 5, tax: 50, total: 1049, b: 1049, packing: -1, freight: 0, items: [glass(10, 100)] }, party, 'Maharashtra', 'x');
   assert.ok(neg.blocks.some((b: string) => b.includes('negative')));
 });
+
+test('transporter ID goes into the e-way bill details; none sent when OMS has no ID', () => {
+  const { salesVoucherXml } = require('./tally-voucher.ts');
+  const v = { vchNo: 'SSS-740/26-27', date: new Date(2026, 8, 23), party: 'BAPU STEEL', lines: [], ledgers: [], total: 1, shippedBy: 'BEST ROADWAYS', deliveryNote: null };
+  const withId = salesVoucherXml({ ...v, transporterId: '88AAACB4214A1ZJ' }, { name: 'BAPU STEEL', state: 'Maharashtra' });
+  assert.match(withId, /<EWAYBILLDETAILS\.LIST>.*<TRANSPORTERNAME>BEST ROADWAYS<\/TRANSPORTERNAME><TRANSPORTERID>88AAACB4214A1ZJ<\/TRANSPORTERID>.*<\/EWAYBILLDETAILS\.LIST>/);
+  assert.doesNotMatch(salesVoucherXml({ ...v, transporterId: null }, { name: 'BAPU STEEL', state: 'Maharashtra' }), /EWAYBILLDETAILS/);
+});

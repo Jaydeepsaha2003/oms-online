@@ -56,7 +56,7 @@ export class TransportersService {
     await this.assertNotCustomerName(name);
     try {
       const created = await this.prisma.transporter.create({
-        data: { name, packing: dto.packing ?? null, freight: dto.freight ?? null },
+        data: { name, packing: dto.packing ?? null, freight: dto.freight ?? null, gstin: uc(dto.gstin) || null },
         include: INCLUDE,
       });
       return this.toDto(await this.ensureCode(created));
@@ -78,6 +78,7 @@ export class TransportersService {
           ...(dto.name !== undefined ? { name: uc(dto.name)! } : {}),
           ...(dto.packing !== undefined ? { packing: dto.packing } : {}),
           ...(dto.freight !== undefined ? { freight: dto.freight } : {}),
+          ...(dto.gstin !== undefined ? { gstin: uc(dto.gstin) || null } : {}),
         },
         include: INCLUDE,
       });
@@ -117,6 +118,7 @@ export class TransportersService {
       'TRANSPORT NAME': t.name,
       PACKING: t.packing ?? '',
       FREIGHT: t.freight ?? '',
+      GSTIN: t.gstin ?? '',
     }));
   }
 
@@ -140,7 +142,8 @@ export class TransportersService {
         // CODE and TID are auto-managed: we match the existing transporter by
         // NAME (reusing its TID) or create a new one. Any CODE/TID columns in the
         // upload are ignored — uploads never need to supply them.
-        const data = { packing: toNum(row['PACKING']), freight: toNum(row['FREIGHT']) };
+        const gstin = uc(row['GSTIN']);
+        const data = { packing: toNum(row['PACKING']), freight: toNum(row['FREIGHT']), ...(gstin ? { gstin } : {}) };
         const existing = await this.prisma.transporter.findUnique({ where: { name } });
         if (existing) {
           await this.prisma.transporter.update({
@@ -227,6 +230,7 @@ export class TransportersService {
       name: t.name,
       packing: t.packing,
       freight: t.freight,
+      gstin: t.gstin,
       customerCount: t._count.customers,
       createdAt: t.createdAt.toISOString(),
       updatedAt: t.updatedAt.toISOString(),

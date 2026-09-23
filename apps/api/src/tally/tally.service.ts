@@ -4,7 +4,7 @@ import { PrismaService } from '../prisma/prisma.service';
 import { decode, tag } from '../account-groups/tally-master.parser';
 
 const CONFIG_KEY = 'TALLY_CONFIG';
-const DEFAULT_CONFIG: TallyConfig = { url: 'http://192.168.0.245:9000', companyGuid: null };
+const DEFAULT_CONFIG: TallyConfig = { url: 'http://192.168.0.245:9000', companyGuid: null, gstLockDate: null };
 
 export const xmlEscape = (s: string) => s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
 
@@ -55,7 +55,11 @@ export class TallyService {
   }
 
   async saveConfig(input: TallyConfig): Promise<TallyConfig> {
-    const value = JSON.stringify({ url: input.url.trim().replace(/\/+$/, ''), companyGuid: input.companyGuid?.trim() || null });
+    const value = JSON.stringify({
+      url: input.url.trim().replace(/\/+$/, ''),
+      companyGuid: input.companyGuid?.trim() || null,
+      gstLockDate: /^\d{4}-\d{2}-\d{2}$/.test(input.gstLockDate ?? '') ? input.gstLockDate : null,
+    });
     await this.prisma.appConfig.upsert({ where: { key: CONFIG_KEY }, update: { value }, create: { key: CONFIG_KEY, value } });
     return this.getConfig();
   }

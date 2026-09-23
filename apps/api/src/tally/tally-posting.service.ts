@@ -10,7 +10,7 @@ import { buildSalesVoucher, salesVoucherXml, type SalesVoucher, type VoucherPart
 /** Sales vouchers with their stock and ledger lines (cancelled ones included). */
 const LINES_TDL = (filter: string) =>
   '<COLLECTION NAME="OmsSaleLines"><TYPE>Voucher</TYPE>' +
-  '<FETCH>GUID,MasterId,AlterId,VoucherNumber,Date,PartyLedgerName,PartyGSTIN,IsCancelled,IRNAckNo,AllInventoryEntries.List,LedgerEntries.List</FETCH>' +
+  '<FETCH>GUID,MasterId,AlterId,VoucherNumber,Date,PartyLedgerName,PartyGSTIN,IsCancelled,IRNAckNo,EWayBillDetails.List,AllInventoryEntries.List,LedgerEntries.List</FETCH>' +
   `<FILTER>OmsPick</FILTER></COLLECTION><SYSTEM TYPE="Formulae" NAME="OmsPick">$VoucherTypeName = "Sales"${filter}</SYSTEM>`;
 
 
@@ -55,6 +55,8 @@ interface Actual {
   date: Date | null;
   party: string;
   partyGstin: string | null;
+  /** E-way bill Part-A transporter ID on the voucher, if any. */
+  transporterId: string | null;
   cancelled: boolean;
   irnAckNo: string | null;
   items: Map<string, { qty: number; amount: number }>;
@@ -86,6 +88,7 @@ function parseActual(xml: string): Actual[] {
       date: d && /^\d{8}$/.test(d) ? new Date(+d.slice(0, 4), +d.slice(4, 6) - 1, +d.slice(6, 8)) : null,
       party: tag(head, 'PARTYLEDGERNAME') ?? '',
       partyGstin: tag(head, 'PARTYGSTIN'),
+      transporterId: tag(v, 'TRANSPORTERID'),
       cancelled: tag(head, 'ISCANCELLED') === 'Yes',
       irnAckNo: tag(head, 'IRNACKNO'),
       items,
@@ -144,7 +147,14 @@ export class TallyPostingService {
         await this.prisma.customer.findMany({ where: { tallyLedgerGuid: { not: null } }, select: { id: true, tallyLedgerGuid: true, tallyGstin: true, city: true } })
       ).map((c) => [c.id, c]),
     );
-    return { company, companyState: company.state ?? '', ledgers, customers };
+    const { gstLockDate } = await this.tally.getConfig();
+    // End of the filed day, local time: a bill dated that day is inside the filed period.
+    const lockedUpTo = gstLockDate ? new Date(`${gstLockDate}T23:59:59.999`) : null;
+    // Transporter name → GSTIN/TRANSIN, for the e-way bill details sent with each bill.
+    const transporters = new Map(
+      (await this.prisma.transporter.findMany({ where: { gstin: { not: null } }, select: { name: true, gstin: true } })).map((t) => [t.name.trim().toUpperCase(), t.gstin!]),
+    );
+    return { company, companyState: company.state ?? '', ledgers, customers, lockedUpTo, transporters };
   }
 
   private build(c: ChallanRow, ctx: Ctx): TallyPreview & { party: VoucherParty; built: SalesVoucher | null } {
@@ -168,9 +178,17 @@ export class TallyPostingService {
     };
     const vchNo = tallyVoucherNo(c.code);
     const { voucher, blocks } = buildSalesVoucher(c, party, ctx.companyState, vchNo ?? c.code);
-    // Checked first and alone: an NB/DN bill is not a Tally bill at all, so nothing else about it matters.
-    const all = !vchNo ? [`Only ${TALLY_PREFIX} series bills go to Tally — ${c.code} is not one.`] : partyBlock ? [partyBlock, ...blocks] : blocks;
+    // Checked first and alone: an NB/DN bill is not a Tally bill at all, and a
+    // bill inside a filed GST period must not change that return — nothing else matters then.
+    const all = !vchNo
+      ? [`Only ${TALLY_PREFIX} series bills go to Tally — ${c.code} is not one.`]
+      : ctx.lockedUpTo && c.invDate <= ctx.lockedUpTo
+        ? [`GST is filed up to ${ctx.lockedUpTo.toLocaleDateString('en-GB')} — a bill dated ${c.invDate.toLocaleDateString('en-GB')} is not posted. Enter it in Tally only after checking with the CA.`]
+        : partyBlock
+          ? [partyBlock, ...blocks]
+          : blocks;
     const built = all.length ? null : voucher;
+    if (built) built.transporterId = ctx.transporters.get((c.transName ?? '').trim().toUpperCase()) ?? null;
     return {
       challanId: c.id,
       code: c.code,
@@ -356,6 +374,12 @@ export class TallyPostingService {
       const warnings = [...diffs];
       if (found.vchNo !== b.built.vchNo) warnings.unshift(`Tally gave it number ${found.vchNo}, not ${b.built.vchNo}. Do not make the e-invoice — tell the developer.`);
       if (b.party.gstin && !found.partyGstin) warnings.push('The party GSTIN is not on the Tally voucher — open it in Tally and check before the e-invoice.');
+      if (b.built.transporterId && found.transporterId !== b.built.transporterId) {
+        warnings.push(`Transporter ID ${b.built.transporterId} did not reach Tally's e-way bill details — fill it in there before the e-way bill.`);
+      }
+      if (!b.built.transporterId && b.built.shippedBy) {
+        warnings.push(`Transporter ${b.built.shippedBy} has no GSTIN in OMS (Masters → Transporters) — fill it in Tally's e-way bill screen this time.`);
+      }
       await this.prisma.tallyPostLog.update({ where: { id: log.id }, data: { finishedAt: new Date(), outcome: 'POSTED', responseXml } });
       return { status: 'POSTED', message: `Posted as ${found.vchNo} and read back from Tally.`, vchNo: found.vchNo, warnings };
     }

@@ -126,6 +126,12 @@ function CustomerCount({ t }: { t: TransporterDto }) {
 const COLUMNS: DataColumn<TransporterDto>[] = [
   { id: 'name', label: 'Transport name', pin: 'left0', fixed: true, cell: (t) => <span className={cn(TEXT_CELL, 'text-indigo-700 dark:text-indigo-300')}>{t.name}</span> },
   {
+    id: 'gstin',
+    label: 'GSTIN / ID (e-way)',
+    cell: (t) =>
+      t.gstin ? <span className={cn(TEXT_CELL, 'font-mono')}>{t.gstin}</span> : <span className="text-xs font-medium text-amber-700 dark:text-amber-300">missing</span>,
+  },
+  {
     id: 'customers',
     label: 'Customers',
     align: 'right',
@@ -386,6 +392,7 @@ function TransporterDialog({
   const saving = create.isPending || update.isPending;
 
   const [name, setName] = useState(transporter?.name ?? '');
+  const [gstin, setGstin] = useState(transporter?.gstin ?? '');
 
   /*
    * Packing / Freight are deliberately NOT edited here any more.
@@ -402,7 +409,7 @@ function TransporterDialog({
    */
   const submit = () => {
     if (!name.trim()) return toast.error('Transporter name is required');
-    const input = { name: name.trim() };
+    const input = { name: name.trim(), gstin: gstin.trim().toUpperCase() };
     const opts = {
       onSuccess: () => {
         toast.success(isEdit ? 'Transporter updated' : 'Transporter created');
@@ -450,6 +457,11 @@ function TransporterDialog({
               onChange={(e) => setName(e.target.value)}
               autoFocus
             />
+          </div>
+          <div className="space-y-2">
+            <Label>Transporter GSTIN / ID (e-way bill)</Label>
+            <Input className="font-mono uppercase" maxLength={15} value={gstin} onChange={(e) => setGstin(e.target.value)} placeholder="27AQPPA8387D1ZJ" />
+            <p className="text-muted-foreground text-xs">Sent to Tally with every bill, so the e-way bill has the transporter already filled.</p>
           </div>
           <DialogFooter>
             <Button type="button" variant="outline" onClick={onClose}>

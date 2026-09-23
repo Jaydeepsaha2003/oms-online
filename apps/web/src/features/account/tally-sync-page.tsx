@@ -303,6 +303,12 @@ function PostQueue({ canPost, canManage }: { canPost: boolean; canManage: boolea
               ? 'Checking bills already entered in Tally…'
               : `This year’s bills still to check: ${ready.length} ready${rows.length > ready.length ? `, ${rows.length - ready.length} need review` : ''}.`}
           </CardDescription>
+          {rows.some((r) => r.blocks.some((b) => b.includes('not mapped to a Tally ledger'))) && (
+            <p className="mt-1 text-xs font-medium text-amber-800 dark:text-amber-200">
+              {rows.filter((r) => r.blocks.some((b) => b.includes('not mapped to a Tally ledger'))).length} bill(s) wait for a party mapping — map
+              the party in “Party → Tally ledger” below and they become ready.
+            </p>
+          )}
         </div>
         <div className="flex flex-wrap gap-2">
           {rows.length > ready.length && (
@@ -712,9 +718,13 @@ export function TallySyncPage() {
   });
 
   const [url, setUrl] = useState('');
+  const [lockDate, setLockDate] = useState('');
   useEffect(() => {
     if (data) setUrl(data.config.url);
   }, [data?.config.url]);
+  useEffect(() => {
+    if (data) setLockDate(data.config.gstLockDate ?? '');
+  }, [data?.config.gstLockDate]);
 
   const ui = data ? STATE_UI[data.state] : null;
   const locked = data?.config.companyGuid ?? null;
@@ -767,7 +777,7 @@ export function TallySyncPage() {
                   </span>
                 ) : (
                   canManage && (
-                    <Button size="sm" disabled={save.isPending} onClick={() => save.mutate({ url: data.config.url, companyGuid: c.guid })}>
+                    <Button size="sm" disabled={save.isPending} onClick={() => save.mutate({ ...data.config, companyGuid: c.guid })}>
                       Lock to this company
                     </Button>
                   )
@@ -781,22 +791,26 @@ export function TallySyncPage() {
       {canManage && data && (
         <Card>
           <CardHeader>
-            <CardTitle>Tally address</CardTitle>
-            <CardDescription>The Tally PC's address and XML port. Change it only if the Tally PC's IP changes.</CardDescription>
+            <CardTitle>Tally settings</CardTitle>
+            <CardDescription>Tally PC address (change only if its IP changes), and the date GST returns are filed up to.</CardDescription>
           </CardHeader>
           <CardContent>
             <form
               className="flex flex-wrap items-end gap-2"
               onSubmit={(e) => {
                 e.preventDefault();
-                save.mutate({ url, companyGuid: locked });
+                save.mutate({ url, companyGuid: locked, gstLockDate: lockDate || null });
               }}
             >
               <div className="min-w-64 flex-1 space-y-1">
                 <Label htmlFor="tally-url">Address</Label>
                 <Input id="tally-url" value={url} onChange={(e) => setUrl(e.target.value)} placeholder="http://192.168.0.245:9000" />
               </div>
-              <Button type="submit" disabled={save.isPending || !url.trim() || url.trim() === data.config.url}>
+              <div className="space-y-1">
+                <Label htmlFor="gst-lock">GST filed up to</Label>
+                <Input id="gst-lock" type="date" value={lockDate} onChange={(e) => setLockDate(e.target.value)} className="w-44" />
+              </div>
+              <Button type="submit" disabled={save.isPending || !url.trim() || (url.trim() === data.config.url && (lockDate || null) === data.config.gstLockDate)}>
                 Save
               </Button>
             </form>

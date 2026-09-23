@@ -18,6 +18,8 @@ export interface TransporterDto {
   name: string;
   packing: number | null;
   freight: number | null;
+  /** GSTIN / TRANSIN — the e-way bill transporter ID. */
+  gstin: string | null;
   /** ACTIVE customers on this transporter. Inactive parties are excluded — the
    *  column is read as "who ships with them", and a closed account does not. */
   customerCount?: number;
@@ -29,6 +31,7 @@ export interface TransporterInput {
   name: string;
   packing?: number | null;
   freight?: number | null;
+  gstin?: string | null;
 }
 
 export type TransporterQuery = PaginationQuery;

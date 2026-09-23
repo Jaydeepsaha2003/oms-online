@@ -4,6 +4,8 @@ export interface TallyConfig {
   url: string;
   /** GUID of the company OMS is locked to; null until an admin locks one. */
   companyGuid: string | null;
+  /** GST returns are filed up to this date (YYYY-MM-DD): bills dated on or before it are never posted. */
+  gstLockDate: string | null;
 }
 
 /**

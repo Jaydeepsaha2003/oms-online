@@ -17,6 +17,7 @@ const R = RESOURCES.TALLY;
 class TallyConfigDto {
   @IsUrl({ require_tld: false, require_protocol: true, protocols: ['http', 'https'] }) url!: string;
   @IsOptional() @IsString() companyGuid?: string | null;
+  @IsOptional() @IsString() gstLockDate?: string | null;
 }
 
 class MappingItemDto {
@@ -58,7 +59,7 @@ export class TallyController {
   @Permissions(perm(R, ACTIONS.MANAGE))
   @Audit({ action: ACTIONS.UPDATE, resource: R, description: 'Changed the Tally connection settings' })
   saveConfig(@Body() dto: TallyConfigDto) {
-    return this.svc.saveConfig({ url: dto.url, companyGuid: dto.companyGuid ?? null });
+    return this.svc.saveConfig({ url: dto.url, companyGuid: dto.companyGuid ?? null, gstLockDate: dto.gstLockDate ?? null });
   }
 
   /** Every active party with its Tally ledger, checked live against Tally. */
