@@ -104,7 +104,7 @@ export class TransportersService {
 
   /** Stable export/import column order — also used as the empty-export template. */
   exportHeaders(): string[] {
-    return ['TID', 'CODE', 'TRANSPORT NAME', 'PACKING', 'FREIGHT'];
+    return ['TID', 'CODE', 'TRANSPORT NAME', 'PACKING', 'FREIGHT', 'GSTIN'];
   }
 
   async exportRows(query: TransporterQueryDto): Promise<Record<string, unknown>[]> {
