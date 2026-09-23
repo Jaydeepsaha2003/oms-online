@@ -1,4 +1,4 @@
-import { BadRequestException, ConflictException, Injectable, NotFoundException } from '@nestjs/common';
+﻿import { BadRequestException, ConflictException, Injectable, NotFoundException } from '@nestjs/common';
 import { Prisma } from '@prisma/client';
 import {
   type ChequeOptionRow,
@@ -77,15 +77,15 @@ const entryOf = (r: LedgerRow): Entry => ({
 
 /**
  * The bills a payment's amount names: one bill, a run of consecutive bills, or
- * any two bills whose open amounts add up to it (within ₹1). Searched oldest
+ * any two bills whose open amounts add up to it (within â‚¹1). Searched oldest
  * first; null when nothing fits, and the payment then settles oldest-first as
  * usual. Wider combinations are deliberately not tried: among many small bills
  * some mix matches almost any amount by chance, which would scatter payments.
  */
 function findExact<T extends { bal: number }>(open: T[], amount: number): T[] | null {
-  // A round figure (₹19,000, ₹50,000) is money on account, not a payment for
-  // particular bills — bills carry odd amounts, so a round sum of them is chance.
-  // METRO METALS' ₹19,000 matched 7,790 + 11,210 and skipped six older bills.
+  // A round figure (â‚¹19,000, â‚¹50,000) is money on account, not a payment for
+  // particular bills â€” bills carry odd amounts, so a round sum of them is chance.
+  // METRO METALS' â‚¹19,000 matched 7,790 + 11,210 and skipped six older bills.
   // ponytail: a bill that is itself exactly round now settles oldest-first; use AGST REF for it.
   if (amount % 1000 === 0) return null;
   const TOL = 1;
@@ -125,7 +125,7 @@ function parseDay(s: string | undefined, label: string): Date {
  *  comes from `classifyDueType` so this screen and the Party Ledger can never
  *  drift apart on what counts as overdue / past due / normal. */
 function dueTypeOf(invDate: Date, dueDate: Date | null, today: Date): { dueType: DueType; dueDays: string } {
-  if (!dueDate) return { dueType: 'NORMAL', dueDays: '—' };
+  if (!dueDate) return { dueType: 'NORMAL', dueDays: 'â€”' };
   const daysLeft = Math.round((dueDate.getTime() - today.getTime()) / 86_400_000);
   const dueDays = daysLeft > 0 ? `${daysLeft} LEFT` : daysLeft === 0 ? 'TODAY' : `${Math.abs(daysLeft)} OVER`;
   return { dueType: classifyDueType(invDate, dueDate, today), dueDays };
@@ -134,7 +134,7 @@ function dueTypeOf(invDate: Date, dueDate: Date | null, today: Date): { dueType:
 /** The prisma delegate set usable both from the service root and inside $transaction. */
 type Db = Prisma.TransactionClient;
 
-/** One saved voucher, as stored — the unit an edit/delete reverses and replays. */
+/** One saved voucher, as stored â€” the unit an edit/delete reverses and replays. */
 type LedgerRow = Prisma.AcctLedgerGetPayload<object>;
 
 /** The corrected figures an edit applies to its own target voucher. Every other
@@ -194,7 +194,7 @@ interface WaterfallParams {
 export class PaymentsService {
   constructor(private readonly prisma: PrismaService) {}
 
-  /* ── Pending context (grid + labels + KPI source) ─────────────────────────── */
+  /* â”€â”€ Pending context (grid + labels + KPI source) â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€ */
 
   async context(q: PaymentContextQueryDto): Promise<PaymentContext> {
     const recDate = parseDay(q.recDate, 'Receipt date');
@@ -211,7 +211,7 @@ export class PaymentsService {
       this.advancePending(this.prisma, customers, recDate, skip),
       this.openingPending(this.prisma, customers, skip),
       this.receiptsOn(recDate, q.customerId ?? null, q.agentName ?? null),
-      // Same bills with the later receipts counted — what is actually owed now.
+      // Same bills with the later receipts counted â€” what is actually owed now.
       later.length ? this.invoicePending(this.prisma, customers, recDate) : null,
     ]);
     return {
@@ -244,7 +244,7 @@ export class PaymentsService {
   }
 
   /**
-   * Every party (or agent) currently sitting on an outstanding advance —
+   * Every party (or agent) currently sitting on an outstanding advance â€”
    * across the whole book, not scoped to one customer/agent like `context()`.
    * The "who's paid in advance" quick-glance view.
    */
@@ -263,7 +263,7 @@ export class PaymentsService {
       m.set(u.refRecId ?? '', r2((m.get(u.refRecId ?? '') ?? 0) + (u._sum.recAmt ?? 0)));
     }
 
-    // Group by party (custId) or, for AGENT-level advances, by agent name —
+    // Group by party (custId) or, for AGENT-level advances, by agent name â€”
     // AGENT advances all share custId = 0, so grouping on that alone would
     // wrongly merge every agent's advances together.
     const byKey = new Map<string, PartyAdvanceSummary>();
@@ -322,7 +322,7 @@ export class PaymentsService {
   }
 
   /**
-   * Whether each of these RECEIPT rows can be edited — false once any LATER
+   * Whether each of these RECEIPT rows can be edited â€” false once any LATER
    * voucher for the same party/agent group predates edit support (adjMode
    * null), since that later voucher can't be safely replayed. Grouped so one
    * "how far back does this party's edit-support boundary go" query covers
@@ -370,7 +370,7 @@ export class PaymentsService {
      * `transMode`.
      *
      * That is deliberate. `transMode` records how the money arrived (BANK,
-     * CHEQUE, CASH), but the table shows BANK CR and CASH CR — so filtering on
+     * CHEQUE, CASH), but the table shows BANK CR and CASH CR â€” so filtering on
      * the mode would hide a voucher whose money genuinely sits in the column the
      * user asked for. A cheque lands on the bank side, and a split voucher has
      * real amounts on BOTH sides and correctly appears under either filter.
@@ -419,11 +419,18 @@ export class PaymentsService {
     };
   }
 
-  /* ── Save (the legacy BtnSave waterfall, in one transaction) ──────────────── */
+  /* â”€â”€ Save (the legacy BtnSave waterfall, in one transaction) â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€ */
 
-  /** Shared field validation for both a fresh save and an edit's new figures —
-   *  mirrors the legacy ValidateBeforeSave messages, in order. */
-  private validateFigures(input: {
+  /** Shared field validation for both a fresh save and an edit's new figures â€”
+   *  mirrors the legacy ValidateBeforeSave messages, in order.
+   *
+   *  `requireBankName` is false when editing a receipt that never had one: the
+   *  legacy import left it blank on old BANK receipts, and demanding it here
+   *  made every one of them impossible to edit â€” or to replay, which is how a
+   *  mis-settled allocation gets corrected. */
+  private validateFigures(
+    requireBankName: boolean,
+    input: {
     payMode: string;
     receiptAmt: number;
     bankName?: string | null;
@@ -435,7 +442,7 @@ export class PaymentsService {
     if (!['BANK', 'CHEQUE', 'CASH'].includes(input.payMode)) throw new BadRequestException('Please select Payment Mode (BANK / CHEQUE / CASH).');
     const receiptAmt = r2(input.receiptAmt);
     if (!Number.isFinite(receiptAmt) || receiptAmt <= 0) throw new BadRequestException('Receipt Amount must be greater than 0.');
-    if (isBankMode(input.payMode) && !input.bankName?.trim()) throw new BadRequestException('Please select a Bank Name.');
+    if (requireBankName && isBankMode(input.payMode) && !input.bankName?.trim()) throw new BadRequestException('Please select a Bank Name.');
     if (input.payMode === 'CHEQUE' && !input.chequeNo?.trim()) throw new BadRequestException('Please select / enter Cheque No.');
     if (input.payMode === 'CASH' && !input.cashTransLocation?.trim()) throw new BadRequestException('Please enter Cash Transfer Location.');
     if (input.payMode === 'CASH' && !input.cashRecBy?.trim()) throw new BadRequestException('Please enter Cash Received By.');
@@ -454,7 +461,7 @@ export class PaymentsService {
     if (dto.adjMode === 'AGST REF' && !(dto.selectedInvNos?.length ?? 0)) {
       throw new BadRequestException('AGST REF mode requires selecting at least one invoice.');
     }
-    const { receiptAmt, recDate } = this.validateFigures(dto);
+    const { receiptAmt, recDate } = this.validateFigures(true, dto);
 
     const bankName = dto.bankName?.trim().toUpperCase() || null;
     const bankRef = dto.payMode === 'BANK' ? dto.bankRef?.trim().toUpperCase().replace(/[^A-Z0-9]/g, '') || null : null;
@@ -583,7 +590,7 @@ export class PaymentsService {
   /**
    * Correct an already-saved receipt's amount/date/mode/remarks. WHO it was
    * taken from and HOW it was adjusted (adjMode, ticked invoices) are kept
-   * exactly as originally recorded — only the figures change.
+   * exactly as originally recorded â€” only the figures change.
    *
    * A receipt's amount doesn't live in one place: it can fund old-advance
    * clearances, invoice allocations and a new advance spill, and every LATER
@@ -591,11 +598,11 @@ export class PaymentsService {
    * balances this one left behind. So editing this voucher means reversing it
    * AND every later voucher for the same party/agent (the only ones whose
    * numbers could actually depend on it), then replaying them in original
-   * order — the target with the corrected figures, everything after it exactly
+   * order â€” the target with the corrected figures, everything after it exactly
    * as it was. Voucher numbers and REC-/ADV- ref ids are always reused, never
    * regenerated, so nothing referencing them elsewhere goes stale.
    *
-   * Only possible when this voucher — and everything in its replay chain — was
+   * Only possible when this voucher â€” and everything in its replay chain â€” was
    * itself saved with enough captured detail to reconstruct (adjMode non-null;
    * see the AcctLedger columns added for this). Receipts saved before edit
    * support existed can't be edited.
@@ -603,8 +610,8 @@ export class PaymentsService {
    * Known scope limit: the replay chain is matched by custId (PARTY) or
    * agentName (AGENT) on the ledger row, which only follows a customer through
    * receipts taken the SAME way. A customer who normally pays directly but was
-   * later swept into an AGENT-mode receipt for their agent — after the voucher
-   * being edited — won't have that agent voucher caught by this chain.
+   * later swept into an AGENT-mode receipt for their agent â€” after the voucher
+   * being edited â€” won't have that agent voucher caught by this chain.
    */
   async editReceipt(id: number, dto: EditPaymentDto, userName?: string | null): Promise<EditPaymentResult> {
     const target = await this.prisma.acctLedger.findUnique({ where: { id } });
@@ -612,7 +619,7 @@ export class PaymentsService {
     if (target.voucherType !== 'RECEIPT') throw new BadRequestException('Only a receipt voucher can be edited here.');
     if (target.adjMode == null) throw new BadRequestException('This receipt predates edit support and cannot be edited.');
 
-    const { receiptAmt, recDate } = this.validateFigures(dto);
+    const { receiptAmt, recDate } = this.validateFigures(!!target.bankName, dto);
     const bankName = dto.bankName?.trim().toUpperCase() || null;
     const chequeNo = dto.payMode === 'CHEQUE' ? dto.chequeNo?.trim().toUpperCase() || null : null;
     const cashLoc = dto.payMode === 'CASH' ? dto.cashTransLocation?.trim().toUpperCase() || null : null;
@@ -626,7 +633,7 @@ export class PaymentsService {
       const entries = chain.map((r) => (r.id === target.id ? { ...entryOf(r), transDate: recDate, payMode: dto.payMode, amount: receiptAmt } : entryOf(r)));
       await this.claimExact(tx, target.custId, target.agentName, entries, claims);
 
-      // Replay each voucher in original order — the target with the corrected
+      // Replay each voucher in original order â€” the target with the corrected
       // figures, everything after it exactly as it was originally recorded.
       const corrected: ReplayOverride = {
         recDate,
@@ -654,7 +661,7 @@ export class PaymentsService {
    * Deleting is the same problem as editing (see {@link editReceipt}): the money
    * is spread across opening clearances, invoice allocations and an advance
    * spill, and every LATER receipt for the same party/agent allocated itself
-   * against the balances this one left behind. So it reuses the same machinery —
+   * against the balances this one left behind. So it reuses the same machinery â€”
    * reverse this voucher and every later one, then replay them all EXCEPT this
    * one. Not replaying it is what makes it a delete, and replaying the rest is
    * what re-points them at the invoices they should have paid all along.
@@ -670,7 +677,7 @@ export class PaymentsService {
     // Tally Reconciliation stamps the voucher it created onto the report row and
     // then refuses to enter that row again. Deleting the voucher out from under
     // that stamp would strand the row as "already entered as RN/x" against a
-    // receipt that no longer exists — and since voucher numbers are max+1 over
+    // receipt that no longer exists â€” and since voucher numbers are max+1 over
     // live rows, the number could later be handed to an unrelated receipt.
     const reconciled = await this.prisma.tallyReconRow.findFirst({
       where: { resolvedRef: target.voucherNo },
@@ -698,15 +705,15 @@ export class PaymentsService {
    * Remove several receipts in one transaction.
    *
    * Deliberately NOT a loop over {@link deleteReceipt}. That would reverse and
-   * replay the party's whole later-receipt chain once per target — five deletes
-   * meaning five full replays of the same rows — and it would not be atomic: a
+   * replay the party's whole later-receipt chain once per target â€” five deletes
+   * meaning five full replays of the same rows â€” and it would not be atomic: a
    * failure partway leaves some receipts gone, the others standing, and the
    * party's allocations rebuilt around a state nobody chose.
    *
    * Instead the targets are grouped by the chain they belong to (party, or agent
    * where there is no party), each group's chain is loaded ONCE from its
    * earliest target, reversed once, and every row replayed except the targets.
-   * Not replaying them IS the delete — the same mechanism as the single case, so
+   * Not replaying them IS the delete â€” the same mechanism as the single case, so
    * the arithmetic cannot differ between deleting one and deleting five.
    *
    * Every target is validated BEFORE anything is written. A set that contains
@@ -720,7 +727,7 @@ export class PaymentsService {
 
     const targets = await this.prisma.acctLedger.findMany({ where: { id: { in: unique } } });
     if (targets.length !== unique.length) {
-      throw new BadRequestException('One of those receipts no longer exists — reload the list and try again.');
+      throw new BadRequestException('One of those receipts no longer exists â€” reload the list and try again.');
     }
     for (const t of targets) {
       if (t.voucherType !== 'RECEIPT') throw new BadRequestException(`${t.voucherNo} is not a receipt, so it cannot be deleted here.`);
@@ -744,7 +751,7 @@ export class PaymentsService {
      * Group by the chain each target belongs to.
      *
      * `loadReplayChain` keys on custId, falling back to agentName for an
-     * agent-level voucher (custId 0) — so the group key has to be the same
+     * agent-level voucher (custId 0) â€” so the group key has to be the same
      * thing, or two targets in one chain would each drag that chain through a
      * separate reverse-and-replay.
      */
@@ -780,7 +787,7 @@ export class PaymentsService {
 
   /**
    * This voucher plus every RECEIPT for the same party (custId) or agent group
-   * (agentName) that settles after it in arrival order — the set whose
+   * (agentName) that settles after it in arrival order â€” the set whose
    * allocations could depend on it, and so the set that has to be reversed and
    * replayed together, in arrival order. An edit that moves the date starts
    * from whichever of the two dates is earlier, and sorts the target at its
@@ -806,7 +813,7 @@ export class PaymentsService {
       throw new BadRequestException(
         blocker.id === target.id
           ? `This receipt predates edit support and cannot be ${verb}.`
-          : `Receipt ${blocker.voucherNo} (saved after this one, for the same party/agent) predates edit support — this receipt can't be safely ${verb} until then.`,
+          : `Receipt ${blocker.voucherNo} (saved after this one, for the same party/agent) predates edit support â€” this receipt can't be safely ${verb} until then.`,
       );
     }
     return chain;
@@ -915,7 +922,7 @@ export class PaymentsService {
    * bill first, oldest money first, bank and cash kept apart. Runs after every
    * receipt change and every bill save, so a bill the party has already paid
    * for never shows as due. Each settlement is dated the later of the bill and
-   * the money — it was paid the moment both existed.
+   * the money â€” it was paid the moment both existed.
    *
    * Only money a receipt parked for this party is used: an agent's money is
    * spread over several parties, and notes manage what they park themselves.
@@ -972,17 +979,17 @@ export class PaymentsService {
    *
    * Two linkages, because the book has two generations of rows:
    *
-   *  - `sourceVoucherNo` — stamped by this system on everything it writes.
-   *  - `refRecId` — how the ORIGINAL Access app tied an allocation to its
+   *  - `sourceVoucherNo` â€” stamped by this system on everything it writes.
+   *  - `refRecId` â€” how the ORIGINAL Access app tied an allocation to its
    *    voucher. Its DeleteReceiptEverywhere deleted from ACCT PAYMENT RECEIPT /
    *    ACCT PARTY ADVANCE / ACCT OPENING TRANS on `[REF REC ID] = voucherNo`,
    *    which is exactly this. Imported rows have no `sourceVoucherNo`, so
    *    without this second clause a replay would leave the old allocations in
-   *    place and add a fresh set on top — the money would be spent twice.
+   *    place and add a fresh set on top â€” the money would be spent twice.
    *
    * Matching both is what lets an imported receipt be edited or deleted at all.
    * A row whose `refRecId` is an ADV- id (an allocation funded by an older
-   * advance rather than by this receipt) is deliberately NOT swept up — the
+   * advance rather than by this receipt) is deliberately NOT swept up â€” the
    * legacy app left those too, and the replay reads live invoice balances, so
    * whatever they still cover is simply seen as already paid.
    */
@@ -1041,7 +1048,7 @@ export class PaymentsService {
   }
 
   /**
-   * The legacy BtnSave waterfall — creates one ledger voucher plus whatever
+   * The legacy BtnSave waterfall â€” creates one ledger voucher plus whatever
    * opening-clearance / invoice-allocation / advance-spill rows its amount
    * covers. Shared by `save()` (fresh voucher, fresh ids) and `editReceipt()`
    * (reused voucher number + ref ids, so a correction never breaks anything
@@ -1052,7 +1059,7 @@ export class PaymentsService {
     const particulars =
       p.payMode === 'BANK' ? (p.bankName ?? '') : p.payMode === 'CHEQUE' ? `${p.bankName} ON CHEQUE: ${p.chequeNo}` : `CASH RECEIPT BY ${p.cashBy} / ${p.cashLoc}`;
 
-    // 1) Ledger voucher — money in = CREDIT on the mode's bucket. receiptRefId/
+    // 1) Ledger voucher â€” money in = CREDIT on the mode's bucket. receiptRefId/
     //    advanceRefId are filled in at the end, once known.
     const ledger = await tx.acctLedger.create({
       data: {
@@ -1154,22 +1161,22 @@ export class PaymentsService {
        *
        * `sizeLeft` is how much debt this voucher may clear: today's receipt PLUS
        * whatever the party already has on account. `remaining` is the cash, and
-       * only the receipt-funded portions spend it — what an old advance pays for
+       * only the receipt-funded portions spend it â€” what an old advance pays for
        * costs today's receipt nothing, and any cash left over at the end parks
        * as a new advance.
        *
        * The advance used to be left OUT of the sizing (`sizeLeft = remaining`),
        * faithfully to PaymentForm.vb. That made an advance unusable: it funded
        * part of the allocation, freeing exactly its own value of receipt, which
-       * then parked straight back as a new advance. A ₹1 advance stayed ₹1
+       * then parked straight back as a new advance. A â‚¹1 advance stayed â‚¹1
        * forever and never came off a bill. Including it here is what lets an
        * advance actually be spent.
        *
        * Sizing alone was not enough, though: while advances were still drained
        * BEFORE the receipt, a voucher for the exact invoice total kept freeing
-       * the advance's value straight back into a new advance, so the same ₹5
-       * rolled from voucher to voucher indefinitely. The order below — receipt
-       * first, advance only for the shortfall — is what actually ends that.
+       * the advance's value straight back into a new advance, so the same â‚¹5
+       * rolled from voucher to voucher indefinitely. The order below â€” receipt
+       * first, advance only for the shortfall â€” is what actually ends that.
        */
       const advTotal = r2(advRows.reduce((sum, a) => sum + (bankish ? a.bankBal : a.cashBal), 0));
       let sizeLeft = r2(remaining + advTotal);
@@ -1186,7 +1193,7 @@ export class PaymentsService {
         // Deliberately BEFORE the advances. Draining the advance first meant a
         // receipt for the exact invoice total always had the advance's value
         // left over, which parked straight back as a fresh advance of the same
-        // size — so one ₹5 overpayment rolled forward voucher after voucher,
+        // size â€” so one â‚¹5 overpayment rolled forward voucher after voucher,
         // putting an ADVANCE line on every invoice it touched and never
         // clearing. Spending today's money first leaves the advance untouched
         // when it is not needed, and still lets it settle a genuine shortfall
@@ -1281,7 +1288,7 @@ export class PaymentsService {
     }
 
     // Persist whichever ref ids actually got used, so a future edit can reuse
-    // them too. Always writes (even when unchanged from what was passed in) —
+    // them too. Always writes (even when unchanged from what was passed in) â€”
     // the initial create() above never sets these, so on a fresh save() they'd
     // otherwise be left null forever.
     await tx.acctLedger.update({ where: { id: ledger.id }, data: { receiptRefId, advanceRefId } });
@@ -1297,7 +1304,7 @@ export class PaymentsService {
     };
   }
 
-  /* ── Derivations (the legacy Access "…Summary" views) ─────────────────────── */
+  /* â”€â”€ Derivations (the legacy Access "â€¦Summary" views) â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€ */
 
   /**
    * PARTY: the one customer. AGENT: the agent's customers. Both judged for ONE
@@ -1340,12 +1347,12 @@ export class PaymentsService {
         `No parties send their ${money} through Agent: ${agent}. Set PAY BY (${money}) = AGENT on at least one of this agent's parties in the Customer master.`,
       );
     }
-    // Only the parties whose money in THIS bucket comes through the agent — one
+    // Only the parties whose money in THIS bucket comes through the agent â€” one
     // that settles this bucket directly is collected in Party mode, never here.
     return linked.map((c) => ({ id: c.id, name: c.partyName ?? `#${c.id}`, payBy: c.payBy }));
   }
 
-  /** InvPendingSummary: per CONFIRMED challan dated ≤ recDate, bank/cash pending.
+  /** InvPendingSummary: per CONFIRMED challan dated â‰¤ recDate, bank/cash pending.
    *  `skip`: vouchers whose settlements are left out (the later-dated receipts a
    *  back-dated one goes ahead of). */
   private async invoicePending(db: Db, customers: { id: number; name: string }[], recDate: Date, skip?: Set<string>): Promise<PendingInvoiceRow[]> {
@@ -1360,7 +1367,7 @@ export class PaymentsService {
     });
     if (!challans.length) return [];
     const codes = challans.map((c) => c.code);
-    // Pending = amount − Σ receipts − Σ discounts (Sales Discount reduces the
+    // Pending = amount âˆ’ Î£ receipts âˆ’ Î£ discounts (Sales Discount reduces the
     // same bank/cash bucket, so both screens reconcile).
     const [recs, discs] = await Promise.all([
       db.acctPaymentReceipt.findMany({ where: { invNo: { in: codes } }, select: { invNo: true, payMode: true, recAmt: true, sourceVoucherNo: true, refRecId: true } }),
@@ -1384,7 +1391,7 @@ export class PaymentsService {
       const bankBal = r2((c.b ?? 0) - (bankRec.get(c.code) ?? 0) - (bankDisc.get(c.code) ?? 0));
       const cashBal = r2((c.c ?? 0) - (cashRec.get(c.code) ?? 0) - (cashDisc.get(c.code) ?? 0));
       if (bankBal <= EPS && cashBal <= EPS) continue;
-      // Ageing is measured from the RECEIPT date, not from "now" — back-dating
+      // Ageing is measured from the RECEIPT date, not from "now" â€” back-dating
       // a receipt must show the due days as they stood on that day.
       const dd = dueTypeOf(c.invDate, c.dueDate, recDate);
       rows.push({
@@ -1405,7 +1412,7 @@ export class PaymentsService {
 
   /**
    * AdvPendingSummary: per advance REF ID, remaining bank/cash. FIFO by recDate.
-   * Only money on account by `upTo` — a receipt cannot be topped up from money
+   * Only money on account by `upTo` â€” a receipt cannot be topped up from money
    * that arrived after it. `skip` as in {@link invoicePending}.
    */
   private async advancePending(db: Db, customers: { id: number }[], upTo?: Date, skip?: Set<string>): Promise<PendingAdvanceRow[]> {
@@ -1442,7 +1449,7 @@ export class PaymentsService {
   }
 
   /**
-   * Receipts already entered for this party/agent on the SAME date — so the
+   * Receipts already entered for this party/agent on the SAME date â€” so the
    * form can warn before saving what looks like an accidental second entry of
    * the same amount (a double tap on Save, or two people entering the same
    * cheque). Returned with the context rather than as its own endpoint: the
@@ -1473,7 +1480,7 @@ export class PaymentsService {
     }));
   }
 
-  /** OpeningBalSummary: Σ OPENING DEBIT − Σ CLEARANCE per customer (CREDITs excluded). */
+  /** OpeningBalSummary: Î£ OPENING DEBIT âˆ’ Î£ CLEARANCE per customer (CREDITs excluded). */
   private async openingPending(db: Db, customers: { id: number; name: string }[], skip?: Set<string>): Promise<OpeningPendingRow[]> {
     const ids = customers.map((c) => c.id);
     const rows = (await db.acctOpeningTrans.findMany({ where: { custId: { in: ids } } })).filter(
@@ -1497,13 +1504,13 @@ export class PaymentsService {
       .filter((c) => c.pendingBank > EPS || c.pendingCash > EPS);
   }
 
-  /* ── Numbering ────────────────────────────────────────────────────────────── */
+  /* â”€â”€ Numbering â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€ */
 
   /**
    * Refuse a receipt that has already been entered.
    *
    * The Save button disables itself while saving, and the form warns about
-   * same-day receipts — but both live in the browser. A network retry, a
+   * same-day receipts â€” but both live in the browser. A network retry, a
    * second tab, or two people entering the same cheque all reached the server,
    * which accepted every copy. Two rules, each only as wide as its evidence:
    *
@@ -1557,7 +1564,7 @@ export class PaymentsService {
    * Next receipt number: RN/<n>, never reusing one.
    *
    * It was "highest number in use + 1". Deleting the newest receipt lowered
-   * the highest, so the next save was handed the deleted receipt's number —
+   * the highest, so the next save was handed the deleted receipt's number â€”
    * and a printout or bank note quoting RN/817 could then point at a
    * different receipt. The last number ever issued is now kept in `settings`
    * and only moves forward. It is updated in the same transaction as the
