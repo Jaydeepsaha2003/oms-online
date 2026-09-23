@@ -535,6 +535,13 @@ export const MENU: MenuNode[] = [
         permission: perm(RESOURCES.TALLY_RECON, ACTIONS.VIEW),
       },
       {
+        id: 'tally-sync',
+        label: 'Tally Sync Center',
+        to: '/account/tally-sync',
+        icon: 'Send',
+        permission: perm(RESOURCES.TALLY, ACTIONS.VIEW),
+      },
+      {
         id: 'bank-statement',
         label: 'Bank Reconciliation',
         to: '/account/bank-statement',

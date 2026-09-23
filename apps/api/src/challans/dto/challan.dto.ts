@@ -71,6 +71,7 @@ export class CreateChallanItemDto {
   @IsOptional() @IsNumber() price?: number | null;
   @IsOptional() @IsNumber() amount?: number | null;
   @IsOptional() @IsString() pCategory?: string | null;
+  @IsOptional() @IsNumber() gstRate?: number | null;
   @IsOptional() @IsString() comment?: string | null;
 }
 

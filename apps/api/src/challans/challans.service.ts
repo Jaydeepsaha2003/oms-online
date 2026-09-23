@@ -446,6 +446,7 @@ export class ChallansService {
             price: it.price ?? null,
             amount: it.amount ?? null,
             pCategory: it.pCategory ?? null,
+            gstRate: it.gstRate ?? null,
             comment: it.comment ?? null,
           })),
         },
@@ -481,9 +482,29 @@ export class ChallansService {
     );
   }
 
+  /**
+   * A bill OMS posted to Tally is frozen here: Tally holds the legal invoice
+   * (and usually its IRN), so a change in OMS alone would make the two disagree.
+   * Corrections go Tally-first (cancel / credit note); cancelling in OMS is
+   * allowed once the sweep has seen the Tally voucher cancelled. Bills typed
+   * into Tally by hand (source HISTORY) are not frozen — reconciliation watches those.
+   */
+  private async assertNotInTally(challanId: number, code: string, action: string, cancelling = false): Promise<void> {
+    const tv = await this.prisma.tallyVoucher.findUnique({ where: { challanId }, select: { status: true, source: true, vchNo: true, cancelled: true } });
+    if (!tv) return;
+    if (tv.status === 'POSTING' || tv.status === 'UNKNOWN') {
+      throw new BadRequestException(`${code} is being posted to Tally — wait until Tally Sync Center shows it posted or failed, then ${action}.`);
+    }
+    if (tv.status === 'POSTED' && tv.source === 'OMS' && !(cancelling && tv.cancelled)) {
+      throw new BadRequestException(
+        `${code} was posted to Tally as ${tv.vchNo}. Cancel it in Tally first (or give a credit note), press "Check now" in Tally Sync Center, then ${action}.`,
+      );
+    }
+  }
+
   /** Advance money applied to a bill, lifted off before the bill changes. */
-  private liftOnAccount(code: string) {
-    return this.prisma.acctPaymentReceipt.deleteMany({ where: { invNo: code, refRecId: { startsWith: 'ADV' } } });
+  private liftOnAccount(code: string, db: Prisma.TransactionClient = this.prisma) {
+    return db.acctPaymentReceipt.deleteMany({ where: { invNo: code, refRecId: { startsWith: 'ADV' } } });
   }
 
   /** Settle the party's open bills from its money on account (see PaymentsService.applyOnAccount).
@@ -1076,7 +1097,7 @@ export class ChallansService {
         amount: it.amount ?? 0,
         pCategory: it.pCategory,
         comment: it.comment,
-        gstRate: gstFor(cat) ?? n(challan.gst),
+        gstRate: it.gstRate ?? gstFor(cat) ?? n(challan.gst),
         freightRate: rateFor(cat, 'FREIGHT'),
         packingRate: rateFor(cat, 'PACKING'),
       };
@@ -1088,9 +1109,10 @@ export class ChallansService {
   async update(id: number, dto: CreateChallanDto): Promise<ChallanDto> {
     const existing = await this.prisma.challan.findUnique({
       where: { id },
-      select: { id: true, code: true, customerId: true, customerName: true, invDate: true, b: true, c: true, challanStatus: true },
+      select: { id: true, code: true, customerId: true, customerName: true, invDate: true, b: true, c: true, challanStatus: true, transaction: true },
     });
     if (!existing) throw new NotFoundException('Challan not found');
+    await this.assertNotInTally(id, existing.code, 'edit it');
     const scrap = isScrapCategory(dto.category);
     const { tcsPercent } = await this.settings.getTcsPercent();
     const invDate = dto.invDate ? new Date(dto.invDate) : undefined;
@@ -1102,9 +1124,6 @@ export class ChallansService {
     // number to not already belong to a different one.
     const manualCode = dto.code?.trim().toUpperCase();
     const code = manualCode && manualCode !== existing.code ? manualCode : undefined;
-    if (code) await this.assertCodeAvailable(code, id);
-    // Exclude the challan being edited, or every save would flag itself.
-    await this.assertNotDuplicate(dto, id);
     const touchesMoney =
       !!code ||
       dto.customerName.trim() !== existing.customerName ||
@@ -1114,10 +1133,19 @@ export class ChallansService {
       (dto.challanStatus ?? 'CONFIRMED') !== existing.challanStatus;
     if (touchesMoney) await this.assertNotPinned(existing.code, 'change its amount, number, party, date or status');
 
-    await this.prisma.$transaction([
-      ...(touchesMoney ? [this.liftOnAccount(existing.code)] : []),
-      this.prisma.challanItem.deleteMany({ where: { challanId: id } }),
-      this.prisma.challan.update({
+    // Checks and save in ONE transaction, for the reason given in create(). An
+    // edit can add dispatch lines, so it passes the same "not billed elsewhere"
+    // gate as a new challan — without it, editing billed the same goods twice.
+    await this.prisma.$transaction(async (tx) => {
+      if (code) await this.assertCodeAvailable(code, id, tx);
+      // Exclude the challan being edited, or every save would flag itself.
+      await this.assertNotDuplicate(dto, id, tx);
+      if (existing.transaction === 'SALES INVOICE' && (dto.challanStatus ?? 'CONFIRMED') !== 'CANCELLED') {
+        await this.assertDispatchesUnbilled(dto.items.map((it) => it.dispatchId ?? 0), tx, id);
+      }
+      if (touchesMoney) await this.liftOnAccount(existing.code, tx);
+      await tx.challanItem.deleteMany({ where: { challanId: id } });
+      await tx.challan.update({
         where: { id },
         data: {
           ...(code ? { code } : {}),
@@ -1158,12 +1186,13 @@ export class ChallansService {
               price: it.price ?? null,
               amount: it.amount ?? null,
               pCategory: it.pCategory ?? null,
+              gstRate: it.gstRate ?? null,
               comment: it.comment ?? null,
             })),
           },
         },
-      }),
-    ]);
+      });
+    });
     // Edited lines may add/remove dispatches from the pool → refresh open views.
     this.notifications.emitPendingChallansChanged();
     // Editing the lines changes the quantities commission is calculated on.
@@ -1174,11 +1203,20 @@ export class ChallansService {
 
   async updateStatus(id: number, status: string): Promise<ChallanDto> {
     const existing = await this.findOne(id);
-    if (status.toUpperCase() !== existing.challanStatus) {
+    const next = status.toUpperCase();
+    if (next !== existing.challanStatus) {
+      await this.assertNotInTally(id, existing.code, `mark it ${status.toLowerCase()}`, next === 'CANCELLED');
       await this.assertNotPinned(existing.code, `mark it ${status.toLowerCase()}`);
-      await this.liftOnAccount(existing.code);
     }
-    const row = await this.prisma.challan.update({ where: { id }, data: { challanStatus: status.toUpperCase() }, include: { items: true } });
+    const row = await this.prisma.$transaction(async (tx) => {
+      // Reinstating puts the lines back on a live invoice — refuse if they were
+      // re-billed meanwhile, which is the normal way a cancelled one is corrected.
+      if (existing.challanStatus === 'CANCELLED' && next !== 'CANCELLED' && existing.transaction === 'SALES INVOICE') {
+        await this.assertDispatchesUnbilled(existing.items.map((it) => it.dispatchId ?? 0), tx, id);
+      }
+      if (next !== existing.challanStatus) await this.liftOnAccount(existing.code, tx);
+      return tx.challan.update({ where: { id }, data: { challanStatus: next }, include: { items: true } });
+    });
     await this.settleOnAccount(row.customerId);
     // Cancelling/reinstating a challan moves its lines out of / back into the pool.
     this.notifications.emitPendingChallansChanged();
@@ -1210,6 +1248,7 @@ export class ChallansService {
 
   async remove(id: number): Promise<{ id: number }> {
     const existing = await this.findOne(id);
+    await this.assertNotInTally(id, existing.code, 'delete it');
     await this.assertNotPinned(existing.code, 'delete it');
     await this.liftOnAccount(existing.code);
     await this.prisma.challan.delete({ where: { id } }); // items cascade
@@ -1440,12 +1479,14 @@ export class ChallansService {
    * Cancelled invoices are excluded too — re-billing after a cancellation is
    * the normal way to correct one.
    */
-  private async assertDispatchesUnbilled(dispatchIds: number[], db: Prisma.TransactionClient): Promise<void> {
+  private async assertDispatchesUnbilled(dispatchIds: number[], db: Prisma.TransactionClient, excludeChallanId?: number): Promise<void> {
     const ids = [...new Set(dispatchIds.filter((id) => id > 0))];
     if (!ids.length) return;
     const billed = await db.challanItem.findMany({
       where: {
         dispatchId: { in: ids },
+        // The challan being edited/reinstated already holds its own lines.
+        ...(excludeChallanId ? { challanId: { not: excludeChallanId } } : {}),
         challan: { challanStatus: { not: 'CANCELLED' }, transaction: 'SALES INVOICE' },
       },
       select: { dispatchId: true, challan: { select: { code: true } } },
@@ -1702,6 +1743,7 @@ export class ChallansService {
         price: it.price,
         amount: it.amount,
         pCategory: it.pCategory,
+        gstRate: it.gstRate,
         comment: it.comment,
       })),
       createdAt: row.createdAt.toISOString(),

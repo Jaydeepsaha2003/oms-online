@@ -729,6 +729,7 @@ export function ChallanFormPage() {
         price: r.price,
         amount: r.amount,
         pCategory: r.pCategory,
+        gstRate: r.gstRate,
         comment: r.comment,
       })),
     };

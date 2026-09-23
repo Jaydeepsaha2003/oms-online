@@ -82,6 +82,7 @@ export interface ChallanItemDto {
   price: number | null;
   amount: number | null;
   pCategory: string | null;
+  gstRate: number | null;
   comment: string | null;
 }
 
@@ -442,6 +443,7 @@ export interface CreateChallanItemInput {
   price: number | null;
   amount: number | null;
   pCategory: string | null;
+  gstRate: number | null;
   comment: string | null;
 }
 

@@ -49,6 +49,7 @@ import { PartyLedgerModule } from './party-ledger/party-ledger.module';
 import { DaybookModule } from './daybook/daybook.module';
 import { BankStatementModule } from './bank-statement/bank-statement.module';
 import { TallyReconModule } from './tally-recon/tally-recon.module';
+import { TallyModule } from './tally/tally.module';
 import { AnalyticsModule } from './analytics/analytics.module';
 import { ReportsModule } from './reports/reports.module';
 import { UploadsModule } from './uploads/uploads.module';
@@ -110,6 +111,7 @@ import { AgentCommissionModule } from './agent-commission/agent-commission.modul
     PartyLedgerModule,
     DaybookModule,
     TallyReconModule,
+    TallyModule,
     BankStatementModule,
     AnalyticsModule,
     ReportsModule,

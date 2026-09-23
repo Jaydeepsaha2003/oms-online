@@ -68,6 +68,7 @@ const SettlementHistoryPage = lazy(() => import('@/features/agent-commission/set
 const CommissionLedgerPage = lazy(() => import('@/features/agent-commission/commission-ledger-page').then((m) => ({ default: m.CommissionLedgerPage })));
 const DaybookPage = lazy(() => import('@/features/account/daybook-page').then((m) => ({ default: m.DaybookPage })));
 const TallyReconPage = lazy(() => import('@/features/account/tally-recon-page').then((m) => ({ default: m.TallyReconPage })));
+const TallySyncPage = lazy(() => import('@/features/account/tally-sync-page').then((m) => ({ default: m.TallySyncPage })));
 const SettingsPage = lazy(() => import('@/features/settings/settings-page').then((m) => ({ default: m.SettingsPage })));
 const UsersPage = lazy(() => import('@/features/admin/users-page').then((m) => ({ default: m.UsersPage })));
 const UserFormPage = lazy(() => import('@/features/admin/user-form-page').then((m) => ({ default: m.UserFormPage })));
@@ -570,6 +571,14 @@ export function AppRoutes() {
             element={
               <RequirePermission permission={perm(RESOURCES.TALLY_RECON, ACTIONS.VIEW)}>
                 <TallyReconPage />
+              </RequirePermission>
+            }
+          />
+          <Route
+            path="/account/tally-sync"
+            element={
+              <RequirePermission permission={perm(RESOURCES.TALLY, ACTIONS.VIEW)}>
+                <TallySyncPage />
               </RequirePermission>
             }
           />

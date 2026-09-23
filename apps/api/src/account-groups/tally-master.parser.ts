@@ -13,7 +13,7 @@ export interface TallyMaster {
 }
 
 /** Tally writes XML as UTF-16 LE (with or without a BOM) or UTF-8. */
-function decode(buf: Buffer): string {
+export function decode(buf: Buffer): string {
   if (buf.length >= 2 && buf[0] === 0xff && buf[1] === 0xfe) return buf.subarray(2).toString('utf16le');
   if (buf.length >= 2 && buf[0] === 0xfe && buf[1] === 0xff) {
     const swapped = Buffer.from(buf.subarray(2));
@@ -41,7 +41,7 @@ function text(raw: string): string {
     .trim();
 }
 
-function tag(body: string, ...names: string[]): string | null {
+export function tag(body: string, ...names: string[]): string | null {
   for (const n of names) {
     const m = new RegExp(`<${n.replace('.', '\\.')}(?:\\s[^>]*)?>([\\s\\S]*?)</${n.replace('.', '\\.')}>`, 'i').exec(body);
     const v = m ? text(m[1]) : '';

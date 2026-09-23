@@ -102,6 +102,9 @@ export const RESOURCES = {
   DAYBOOK: 'daybook',
   /** Accounts → Reconciliation with Tally: upload a register, compare, fix gaps. */
   TALLY_RECON: 'tallyrecon',
+  /** Accounts → Tally Sync Center: live XML link to TallyPrime. `create` posts
+   *  invoices to Tally; `manage` changes settings and mapping, accepts differences. */
+  TALLY: 'tally',
   BANK_STATEMENT: 'bankstatement',
   REPORT: 'report',
   USER: 'user',
@@ -279,6 +282,7 @@ export const RESOURCE_DEFINITIONS: ResourceDef[] = [
     group: 'Accounts',
     actions: [ACTIONS.VIEW, ACTIONS.CREATE, ACTIONS.DELETE, ACTIONS.EXPORT],
   },
+  { resource: RESOURCES.TALLY, label: 'Tally Sync Center', group: 'Accounts', actions: [ACTIONS.VIEW, ACTIONS.CREATE, ACTIONS.MANAGE] },
   {
     resource: RESOURCES.BANK_STATEMENT,
     // CREATE uploads a statement and edits the working; UPDATE is the one that

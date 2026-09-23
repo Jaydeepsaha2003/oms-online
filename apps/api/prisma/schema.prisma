@@ -375,6 +375,14 @@ model Customer {
   createdAt     DateTime @default(now())
   updatedAt     DateTime @updatedAt
 
+  /// The Tally ledger this party is billed to, by GUID — it survives a rename.
+  /// Several parties may share one ledger (an agent's sub-parties billed to the
+  /// agent). Name + GSTIN are as the admin confirmed them: a later GSTIN change
+  /// in Tally usually means a new legal entity, so it is re-confirmed, not followed.
+  tallyLedgerGuid  String?
+  tallyLedgerName  String?
+  tallyGstin       String?
+
   /// Tally "Under" — the account group this ledger belongs to.
   groupId          Int?
   group            AccountGroup?             @relation(fields: [groupId], references: [id], onDelete: SetNull)
@@ -390,6 +398,7 @@ model Customer {
   @@index([category])
   @@index([transporterId])
   @@index([dispatchHold])
+  @@index([tallyLedgerGuid])
   @@map("customers")
 }
 
@@ -1005,6 +1014,7 @@ model Challan {
   items ChallanItem[]
 
   commissionAccruals AgentCommissionAccrual[]
+  tallyVoucher       TallyVoucher?
 
   @@index([customerName])
   @@index([invDate])
@@ -1049,6 +1059,8 @@ model ChallanItem {
   price       Float?
   amount      Float?
   pCategory   String?
+  /// GST rate at invoice creation; retained so billed kg eligibility doesn't change with later rate-master edits.
+  gstRate     Float?
   comment     String?
   userName    String?
   createdAt   DateTime @default(now())
@@ -2038,6 +2050,73 @@ model TallyReconBalance {
   @@index([runId])
   @@index([runId, matched])
   @@map("tally_recon_balance")
+}
+
+/// One OMS invoice ↔ one Tally Sales voucher. Written by the reconciliation sweep
+/// (which also links bills typed into Tally by hand) and, later, by posting.
+/// The two unique keys are the duplicate guard: an invoice can hold only one
+/// voucher, and a voucher can belong to only one invoice.
+model TallyVoucher {
+  id              Int       @id @default(autoincrement())
+  /// Null for a Tally sale with no OMS invoice behind it (or whose invoice was deleted).
+  challanId       Int?      @unique
+  challan         Challan?  @relation(fields: [challanId], references: [id], onDelete: SetNull)
+  companyGuid     String
+  /// NOT_POSTED | POSTED  (POSTING | UNKNOWN | FAILED arrive with posting)
+  status          String
+  /// HISTORY = linked by the sweep to a bill entered by hand; OMS = posted by OMS.
+  source          String    @default("HISTORY")
+  tallyGuid       String?   @unique
+  tallyMasterId   Int?
+  tallyAlterId    Int?
+  vchNo           String?
+  vchDate         DateTime?
+  partyLedger     String?
+  amount          Float?
+  cancelled       Boolean   @default(false)
+  irnAckNo        String?
+  /// OK | MISSING_IN_TALLY | CANCELLED_IN_TALLY | CANCELLED_IN_OMS |
+  /// AMOUNT_MISMATCH | PARTY_MISMATCH | DATE_MISMATCH | TALLY_ONLY
+  recon           String
+  reconNote       String?
+  /// A human accepted this exact difference. It stops counting only while both
+  /// the difference and the Tally voucher (AlterID) stay as they were.
+  acceptedRecon   String?
+  acceptedAlterId Int?
+  acceptedNote    String?
+  acceptedBy      String?
+  acceptedAt      DateTime?
+  checkedAt       DateTime
+  /// Set when OMS itself posted the voucher (source = OMS).
+  postedBy        String?
+  postedAt        DateTime?
+  /// Why the last post attempt failed / is unknown, in words.
+  lastError       String?
+  createdAt       DateTime  @default(now())
+  updatedAt       DateTime  @updatedAt
+
+  @@index([recon])
+  @@index([status])
+  @@map("tally_voucher")
+}
+
+/// Every attempt to post an invoice to Tally, with exactly what was sent and
+/// what came back — the evidence if a voucher is ever questioned.
+model TallyPostLog {
+  id          Int       @id @default(autoincrement())
+  challanId   Int
+  code        String
+  userName    String?
+  startedAt   DateTime  @default(now())
+  finishedAt  DateTime?
+  /// POSTED | FAILED | UNKNOWN | LINKED (already in Tally) | RESOLVED_POSTED | RESOLVED_FAILED
+  outcome     String?
+  requestXml  String?
+  responseXml String?
+  error       String?
+
+  @@index([challanId])
+  @@map("tally_post_log")
 }
 
 /// A review mark that outlives the run it was made on.
