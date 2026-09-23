@@ -52,6 +52,7 @@ import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from '@/components/ui/dialog';
 import { usePermissions } from '@/hooks/use-permissions';
+import { usePostToTally } from '@/features/account/use-tally-post';
 import { useChallanFields, useOrderQtyLayout } from '@/features/settings/use-settings';
 import { LiveLinePhotos } from '../orders/line-photos';
 import { useOrderItemPhotos } from '../orders/use-orders';
@@ -160,6 +161,7 @@ function ItemPhotosButton({ orderItemId }: { orderItemId: number }) {
 export function ChallanFormPage() {
   const navigate = useNavigate();
   const confirm = useConfirm();
+  const tallyPost = usePostToTally();
   const params = useParams();
   const editId = params.id ? Number(params.id) : null;
   const isEdit = editId != null;
@@ -741,6 +743,9 @@ export function ChallanFormPage() {
       toast.success(`Challan ${c.code} ${isEdit ? 'updated' : 'saved'}`);
       if (thenPrint) {
         navigate(`/challans/${c.id}/bill`, { state: { backTo: 'challan-pending-or-list', autoPrint: true } });
+      } else if (!isEdit && can('tally:create') && payload.challanStatus !== 'CANCELLED' && /^SSS\//i.test(c.code)) {
+        // A new SSS bill: offer to send it to Tally straight away (the server re-checks everything).
+        void tallyPost.post(c.code, `${payload.customerName} · B ₹${(payload.b ?? 0).toLocaleString('en-IN')}`);
       }
     };
     // Submits `body`; re-runnable so a confirmed near-duplicate can be resent

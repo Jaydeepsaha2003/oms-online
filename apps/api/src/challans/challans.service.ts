@@ -24,6 +24,7 @@ import { PaymentsService } from '../payments/payments.service';
 import { DispatchService } from '../dispatch/dispatch.service';
 import { CreateChallanDto, DraftChallanDto, ItemHistoryQueryDto, PendingChallanQueryDto, ChallanQueryDto } from './dto/challan.dto';
 import { isDebitNote, type ChallanReportNotes, type NoteReportRow } from './challan-report.builder';
+import { tallyVoucherNo } from '../tally/tally-parties.service';
 
 const PREFIX_KEY = 'CHALLAN_PREFIXES';
 const FALLBACK_PREFIX = 'SSS';
@@ -521,7 +522,13 @@ export class ChallansService {
   async findMany(q: ChallanQueryDto): Promise<Paginated<ChallanDto>> {
     const where = this.listWhere(q, await this.agentScope(q));
     const [rows, total] = await this.prisma.$transaction([
-      this.prisma.challan.findMany({ where, orderBy: [{ invDate: 'desc' }, { id: 'desc' }], skip: q.skip, take: q.pageSize, include: { items: true } }),
+      this.prisma.challan.findMany({
+        where,
+        orderBy: [{ invDate: 'desc' }, { id: 'desc' }],
+        skip: q.skip,
+        take: q.pageSize,
+        include: { items: true, tallyVoucher: { select: { status: true, vchNo: true } } },
+      }),
       this.prisma.challan.count({ where }),
     ]);
     const settled = await this.settlementFor(rows.map((r) => r.code));
@@ -530,7 +537,13 @@ export class ChallansService {
       const amount = r2((dto.b ?? 0) + (dto.c ?? 0));
       const received = settled.received.get(r.code) ?? 0;
       const discount = settled.discount.get(r.code) ?? 0;
-      return { ...dto, received, balance: r2(Math.max(0, amount - received - discount)) };
+      return {
+        ...dto,
+        received,
+        balance: r2(Math.max(0, amount - received - discount)),
+        tally: r.tallyVoucher as ChallanDto['tally'],
+        tallyEligible: r.transaction === 'SALES INVOICE' && tallyVoucherNo(r.code) != null,
+      };
     });
     return { items, total, page: q.page, pageSize: q.pageSize, totalPages: Math.max(1, Math.ceil(total / q.pageSize)) };
   }

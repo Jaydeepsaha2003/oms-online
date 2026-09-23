@@ -89,6 +89,10 @@ export interface ChallanItemDto {
 export interface ChallanDto {
   id: number;
   code: string;
+  /** Tally link, on list rows only: post status and the Tally voucher number. */
+  tally?: { status: 'NOT_POSTED' | 'POSTING' | 'POSTED' | 'FAILED' | 'UNKNOWN'; vchNo: string | null } | null;
+  /** List rows only: an SSS-series sales invoice, i.e. one that belongs in Tally at all. */
+  tallyEligible?: boolean;
   prefix: string | null;
   invDate: string;
   customerId: number | null;

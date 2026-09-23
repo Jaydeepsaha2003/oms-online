@@ -8,6 +8,8 @@ import {
   ChevronLeft,
   ChevronRight,
   EllipsisVertical,
+  Loader2,
+  Send,
   Eye,
   FileSearch,
   FileSpreadsheet,
@@ -45,6 +47,7 @@ import { Label } from '@/components/ui/label';
 import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover';
 import { Sheet, SheetContent, SheetFooter, SheetHeader, SheetTitle } from '@/components/ui/sheet';
 import { fetchAllChallans, useChallans, useChallanSummary, useDeleteChallan, useUpdateChallanStatus } from './use-challans';
+import { usePostToTally } from '@/features/account/use-tally-post';
 import { PRESETS, presetRange } from './date-presets';
 import { ChallanAnalyticsDialog } from './challan-analytics-dialog';
 import { ChallanBulkPrint } from './challan-bulk-print';
@@ -54,6 +57,23 @@ import { ReportDownloadOverlay, type ReportPhase } from './report-download-overl
 import { ReportNotesDialog, type ReportNoteChoice } from './report-notes-dialog';
 
 const money = (v: number | null) => `₹ ${(v ?? 0).toLocaleString('en-IN')}`;
+
+/** Tally link of one challan: posted (with its Tally number), waiting, or not a Tally bill at all. */
+function TallyChip({ r }: { r: ChallanDto }) {
+  if (!r.tallyEligible) return <span className="text-muted-foreground/60 text-[12px]">—</span>;
+  const s = r.tally?.status ?? 'NOT_POSTED';
+  const [text, tone] =
+    s === 'POSTED'
+      ? [r.tally?.vchNo ?? 'In Tally', 'bg-emerald-50 text-emerald-700 ring-emerald-200']
+      : s === 'POSTING'
+        ? ['Sending…', 'bg-sky-50 text-sky-700 ring-sky-200']
+        : s === 'UNKNOWN'
+          ? ['Not sure — Sync Center', 'bg-rose-50 text-rose-700 ring-rose-200']
+          : s === 'FAILED'
+            ? ['Tally refused', 'bg-rose-50 text-rose-700 ring-rose-200']
+            : ['Not in Tally', 'bg-amber-50 text-amber-800 ring-amber-200'];
+  return <span className={cn('inline-flex rounded-[4px] px-2 py-0.5 text-[11.5px] font-bold whitespace-nowrap ring-1 ring-inset', tone)}>{text}</span>;
+}
 
 /** Matches the Pending Challan grid: Inter, semibold, near-black. */
 const TEXT_CELL = 'text-[13px] font-semibold text-slate-800';
@@ -147,6 +167,8 @@ export function ChallansListPage() {
   const canUpdate = can('challan:update');
   const canDelete = can('challan:delete');
   const canPrint = can('challan:print');
+  const canPostTally = can('tally:create');
+  const tallyPost = usePostToTally();
   const [urlParams] = useSearchParams();
   const location = useLocation();
   // Read once: after this the filters are ordinary state the user drives.
@@ -514,6 +536,12 @@ export function ChallansListPage() {
           );
         },
       },
+      {
+        id: 'tally',
+        label: 'Tally',
+        sortValue: (r) => r.tally?.status ?? '',
+        cell: (r) => <TallyChip r={r} />,
+      },
     ],
     // The tick column reads the live selection, so it has to re-render when it
     // changes — with the empty array this memo shipped with, every checkbox
@@ -528,8 +556,23 @@ export function ChallansListPage() {
 
   const rowActions = (r: ChallanDto) => {
     const confirmed = r.challanStatus === 'CONFIRMED';
+    // Only an SSS bill not yet in Tally (or refused last time) — the server re-checks everything.
+    const postable = canPostTally && confirmed && r.tallyEligible && (!r.tally || r.tally.status === 'NOT_POSTED' || r.tally.status === 'FAILED');
     return (
-      <div className="flex justify-end">
+      <div className="flex items-center justify-end gap-1">
+        {postable && (
+          <Button
+            size="sm"
+            variant="outline"
+            className="h-7 gap-1 px-2 text-[11.5px] font-bold"
+            disabled={tallyPost.pendingCode === r.code}
+            onClick={() => tallyPost.post(r.code, `${r.customerName} · B ₹${(r.b ?? 0).toLocaleString('en-IN')}`)}
+            title="Post this bill to Tally"
+          >
+            {tallyPost.pendingCode === r.code ? <Loader2 className="size-3.5 animate-spin" /> : <Send className="size-3.5" />}
+            Post to Tally
+          </Button>
+        )}
         <DropdownMenu>
           <DropdownMenuTrigger asChild>
             <Button
