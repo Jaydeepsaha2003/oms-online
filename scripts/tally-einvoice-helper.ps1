@@ -41,6 +41,7 @@ if ($List) { return }
 $sh = New-Object -ComObject WScript.Shell
 foreach ($v in $pending | Select-Object -First $Max) {
   $no = "$($v.VOUCHERNUMBER)"
+  if ($no -notmatch '^SSS-\d+/\d\d-\d\d$') { throw "Odd bill number '$no' - stopped before asking Tally anything." }
   # Built plainly: quotes nested inside "$(...)" got dropped and sent Tally a broken formula.
   $byNo = '$VoucherNumber = "' + $no + '"'
   $date = [datetime]::ParseExact($v.DATE.'#text', 'yyyyMMdd', $null).ToString('d-M-yyyy')
