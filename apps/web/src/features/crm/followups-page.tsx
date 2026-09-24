@@ -10,7 +10,6 @@ import { usePermissions } from '@/hooks/use-permissions';
 import { useSaveShortcut } from '@/hooks/use-save-shortcut';
 import { useConfirm } from '@/components/common/confirm';
 import { Combobox, type ComboboxOption } from '@/components/ui/combobox';
-import { NativeSelect } from '@/components/common/combo';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
@@ -35,11 +34,12 @@ import {
   useUpdateFollowup,
   type OpenOrderItemHit,
 } from './use-crm';
-import { MobileHero, MobileKpiTile, MobileTabs, MobileWallpaper, MoneyCard, SKIN_TONE, type SkinTone } from '@/components/common/mobile-skin';
+import { MobileHero, MobileKpiTile, MobileTabs, MobileWallpaper, SKIN_TONE, type SkinTone } from '@/components/common/mobile-skin';
 import { Chip, initials, itemLine, UrgencyChip } from './crm-shared';
 import { ChecklistInput, type ChecklistDraftItem } from './checklist-input';
 import {
   balancesInView,
+  bookTotals,
   OwingPartiesWorklist,
   PartyBalancePanel,
   RecoveryMoneyStrip,
@@ -146,26 +146,29 @@ export function FollowupsPage({ kind = 'DELIVERY' }: { kind?: FollowupKind }) {
     setStatus(id === 'history' ? 'DONE' : 'OPEN');
   };
 
+  // The hero's figures, shared by the phone's and the desktop's. Collect reads
+  // the book (the same totals as the phone's money rail); the other two read
+  // the follow-up summary, or the closed list itself on History.
+  const book = useMemo(() => bookTotals(balances), [balances]);
+  const doneItems = useMemo(() => (showingDone ? groups.flatMap((g) => g.items) : []), [showingDone, groups]);
+  const overdueN = summary?.overdue ?? 0;
   const heroLabel = tab === 'collect' ? 'Total outstanding' : showingDone ? 'Completed' : isInquiry ? 'Open enquiries' : 'Open follow-ups';
-  const heroValue = tab === 'collect'
-    ? inrCompact(balances.reduce((t, b) => t + Math.max(0, b.outstanding), 0))
-    : String(showingDone ? groups.reduce((t, g) => t + g.items.length, 0) : summary?.openTotal ?? 0);
-  const overduePct = (() => {
-    const out = balances.reduce((t, b) => t + Math.max(0, b.outstanding), 0);
-    const od = balances.reduce((t, b) => t + Math.max(0, b.overdue), 0);
-    return out > 0 ? Math.round((od / out) * 100) : 0;
-  })();
+  const heroValue = tab === 'collect' ? inrCompact(book.outstanding) : String(showingDone ? doneItems.length : summary?.openTotal ?? 0);
+  const heroChip = tab === 'collect' ? `${book.overduePct}% overdue` : showingDone ? undefined : `${overdueN} overdue`;
+  const heroChipTone = (tab === 'collect' ? book.overduePct >= 40 : overdueN > 0) ? 'rose' : 'emerald';
+  const newLabel = isPay ? 'New payment follow-up' : isInquiry ? 'New inquiry' : 'New follow-up';
 
   return (
-    <div className="rp-page space-y-4">
+    <div className="rp-page pd-page space-y-4">
+      <div aria-hidden className="pd-backdrop max-sm:hidden" />
       {/* Phones: the mockup's blue header — the one figure that matters for the
           tab you are on, and the tabs themselves sitting on the blue. */}
       <MobileWallpaper />
       <MobileHero
         label={heroLabel}
         value={heroValue}
-        chip={tab === 'collect' ? `${overduePct}% overdue` : `${summary?.overdue ?? 0} overdue`}
-        chipTone={tab === 'collect' ? (overduePct >= 40 ? 'rose' : 'emerald') : (summary?.overdue ?? 0) > 0 ? 'rose' : 'emerald'}
+        chip={heroChip}
+        chipTone={heroChipTone}
         hint={tab === 'collect'
           ? `${balances.length} owing parties`
           : showingDone ? 'newest first' : `${summary?.activeNudges ?? 0} nudging now`}
@@ -174,118 +177,78 @@ export function FollowupsPage({ kind = 'DELIVERY' }: { kind?: FollowupKind }) {
       </MobileHero>
 
       {/*
-        * No title or icon here: the global header already shows this page's name.
-        * What is kept is the one line saying what the page is FOR, and the action
-        * — neither of which the topbar carries. Same cleanup as the other twelve
-        * pages and the eight reports.
+        * Desktop: the mockup's blue band. No page name or icon — the topbar has
+        * both — just the figure that matters for this tab, the four beside it,
+        * and the tabs and the page's one action along its foot.
         */}
-      <div className="flex flex-wrap items-center gap-3 max-sm:hidden">
-        <p className="text-muted-foreground mr-auto min-w-0 text-sm">
-          {isPay
-            ? 'Who to call next, what they owe, and every promise made — all in one place.'
-            : isInquiry
-              ? 'Every new enquiry that has not become an order yet, chased on the same reminder loop as any other promise.'
-              : "Every promise to a party, tracked until it's done — the system keeps nudging."}
-        </p>
-        {canEdit && (
-          <Button size="sm" className="h-9 shrink-0 font-semibold" onClick={() => openForm(null)}>
-            <Plus /> {isPay ? 'New payment follow-up' : isInquiry ? 'New inquiry' : 'New follow-up'}
-          </Button>
+      <DeskHero
+        label={heroLabel}
+        value={heroValue}
+        chip={heroChip}
+        chipTone={heroChipTone}
+        hint={tab === 'collect'
+          ? `${book.parties} owing part${book.parties === 1 ? 'y' : 'ies'} · ${ledgerView === 'ALL' ? 'Bank + Cash' : ledgerView === 'BANK' ? 'Bank only' : 'Cash only'}`
+          : showingDone ? 'newest first' : `${summary?.activeNudges ?? 0} nudging now`}
+        bar={tab === 'collect' && book.outstanding > 0 ? book.overduePct : undefined}
+        stats={tab === 'collect'
+          ? [
+              { label: 'Overdue', value: inrCompact(book.overdue), hint: `${book.overduePct}% of book`, dot: '#ff8fab' },
+              { label: 'Due in 15 days', value: inrCompact(book.dueSoon), hint: 'not yet overdue', dot: '#7dd3fc' },
+              { label: 'Promised to pay', value: inrCompact(book.promised), hint: `${book.dueToday} due today`, dot: '#c4b5fd' },
+              { label: 'Not contacted', value: String(book.notContacted), hint: 'start with these', dot: '#fcd34d' },
+            ]
+          : showingDone
+            ? historyStats(groups, doneItems)
+            : [
+                { label: 'Overdue', value: String(overdueN), hint: 'past promised date', dot: '#ff8fab' },
+                { label: 'Due today', value: String(summary?.dueToday ?? 0), hint: 'promised for today', dot: '#fcd34d' },
+                { label: 'Nudging now', value: String(summary?.activeNudges ?? 0), hint: 'reminders active', dot: '#c4b5fd' },
+                { label: 'Upcoming', value: String(summary?.upcoming ?? 0), hint: 'promised ahead', dot: '#7dd3fc' },
+              ]}
+        tabs={tabs}
+        tab={tab}
+        onTab={setTab}
+        action={canEdit && (
+          <button type="button" className="pd-hero-btn" onClick={() => openForm(null)}>
+            <Plus className="size-4" /> {newLabel}
+          </button>
         )}
-      </div>
+      />
 
       {canEdit && (
         <button type="button" className="rp-act rp-act-primary w-full justify-center sm:hidden" onClick={() => openForm(null)}>
-          <Plus className="size-4" /> {isPay ? 'New payment follow-up' : isInquiry ? 'New inquiry' : 'New follow-up'}
+          <Plus className="size-4" /> {newLabel}
         </button>
       )}
 
       {isPay && <RecoveryMoneyStrip balances={balances} />}
-
-      {/*
-        * Three tabs, because this page answers three different questions and
-        * stacking them made the last one a scroll away: the money strip, then a
-        * long worklist, and the follow-ups themselves right at the bottom — the
-        * thing you came to work on was the thing you had to hunt for.
-        *
-        *   Collect     — who owes money, worst first (payment desk only)
-        *   Follow-ups  — the open promises, which is the actual work
-        *   History     — what was closed, and what was said when it closed
-        *
-        * The counts sit in the tabs so you can see where the work is without
-        * opening each one. `Follow-ups` is the default on every kind except the
-        * payment desk, where deciding WHO to call comes first.
-        */}
-      <div
-        role="tablist"
-        aria-label="Section"
-        className="bg-muted/70 inline-flex flex-wrap gap-1 rounded-lg p-1 max-sm:hidden"
-      >
-        {tabs.map(({ id, label, icon: Icon, count }) => {
-          const on = tab === id;
-          return (
-            <button
-              key={id}
-              type="button"
-              role="tab"
-              aria-selected={on}
-              onClick={() => setTab(id)}
-              className={cn(
-                // h-9 keeps the target comfortable on a phone; the old pills were 28px.
-                'inline-flex h-9 cursor-pointer items-center gap-1.5 rounded-md px-3.5 text-sm font-semibold transition-colors duration-200 focus-visible:ring-2 focus-visible:ring-indigo-400 focus-visible:outline-none',
-                on ? 'bg-card text-foreground shadow-sm' : 'text-muted-foreground hover:text-foreground',
-              )}
-            >
-              <Icon className="size-4 shrink-0" />
-              {label}
-              {count != null && count > 0 && (
-                <span
-                  className={cn(
-                    'ml-0.5 rounded-full px-1.5 py-0.5 text-[10.5px] leading-none font-bold tabular-nums',
-                    on ? 'bg-indigo-600 text-white' : 'bg-muted-foreground/15 text-muted-foreground',
-                  )}
-                >
-                  {count}
-                </span>
-              )}
-            </button>
-          );
-        })}
-      </div>
 
       {/* Collect — the owing-parties worklist, payment desk only. */}
       {tab === 'collect' && <OwingPartiesWorklist view={ledgerView} onViewChange={setLedgerView} onCollect={openCollect} />}
 
       {/* Follow-up KPI strip — open work only; nothing here applies to closed items. */}
       {tab !== 'collect' && !showingDone && (
-        <>
-          {/* Phones: the mockup's glass tiles. Same four buckets, same taps. */}
-          <div className="grid grid-cols-2 gap-2.5 sm:hidden">
-            {([
-              ['Overdue', summary?.overdue ?? 0, 'rose', 'overdue', <TriangleAlert key="a" className="size-4" />],
-              ['Due today', summary?.dueToday ?? 0, 'amber', 'today', <Clock key="b" className="size-4" />],
-              ['Nudging now', summary?.activeNudges ?? 0, 'violet', 'attention', <AlarmClock key="c" className="size-4" />],
-              ['Open total', summary?.openTotal ?? 0, 'sky', '', <Bell key="d" className="size-4" />],
-            ] as const).map(([label, value, tone, b, icon], i) => (
-              <MobileKpiTile
-                key={label}
-                i={i}
-                label={label}
-                value={value}
-                tone={tone as SkinTone}
-                icon={icon}
-                active={bucket === b}
-                onClick={() => setBucket(bucket === b ? '' : b)}
-              />
-            ))}
-          </div>
-          <div className="hidden grid-cols-2 gap-3 sm:grid sm:grid-cols-4">
-            <Kpi label="Overdue" value={summary?.overdue ?? 0} tone="rose" icon={<TriangleAlert className="size-4" />} active={bucket === 'overdue'} onClick={() => setBucket(bucket === 'overdue' ? '' : 'overdue')} />
-            <Kpi label="Due today" value={summary?.dueToday ?? 0} tone="amber" icon={<Clock className="size-4" />} active={bucket === 'today'} onClick={() => setBucket(bucket === 'today' ? '' : 'today')} />
-            <Kpi label="Nudging now" value={summary?.activeNudges ?? 0} tone="violet" icon={<AlarmClock className="size-4" />} active={bucket === 'attention'} onClick={() => setBucket(bucket === 'attention' ? '' : 'attention')} />
-            <Kpi label="Open total" value={summary?.openTotal ?? 0} tone="sky" icon={<Bell className="size-4" />} active={bucket === ''} onClick={() => setBucket('')} />
-          </div>
-        </>
+        // Phones: the mockup's glass tiles. Same four buckets, same taps. On
+        // desktop these figures are in the hero and the chips below filter.
+        <div className="grid grid-cols-2 gap-2.5 sm:hidden">
+          {([
+            ['Overdue', summary?.overdue ?? 0, 'rose', 'overdue', <TriangleAlert key="a" className="size-4" />],
+            ['Due today', summary?.dueToday ?? 0, 'amber', 'today', <Clock key="b" className="size-4" />],
+            ['Nudging now', summary?.activeNudges ?? 0, 'violet', 'attention', <AlarmClock key="c" className="size-4" />],
+            ['Open total', summary?.openTotal ?? 0, 'sky', '', <Bell key="d" className="size-4" />],
+          ] as const).map(([label, value, tone, b, icon], i) => (
+            <MobileKpiTile
+              key={label}
+              i={i}
+              label={label}
+              value={value}
+              tone={tone as SkinTone}
+              icon={icon}
+              active={bucket === b}
+              onClick={() => setBucket(bucket === b ? '' : b)}
+            />
+          ))}
+        </div>
       )}
 
       {/* Filters and the board belong to Follow-ups / History. On Collect the
@@ -308,14 +271,26 @@ export function FollowupsPage({ kind = 'DELIVERY' }: { kind?: FollowupKind }) {
             ))}
           </div>
         )}
+        {/* Desktop: the mockup's chip row, each with its count where the
+            summary has one. */}
         {!showingDone && (
-          <div className="w-48 max-sm:hidden">
-            {/* Labelled options, not bare keys: the combobox shows the raw value in
-                its field unless the option carries a label, so picking a filter
-                used to read "attention" / "today" back at you. */}
-            <NativeSelect value={bucket} onChange={setBucket} options={BUCKETS.map((b) => ({ value: b.v, label: b.label }))} placeholder="All open" />
+          <div className="flex flex-wrap gap-2 max-sm:hidden">
+            {([
+              ['', 'All open', 'bg-slate-400', summary?.openTotal],
+              ['attention', 'Needs attention', 'bg-violet-500', undefined],
+              ['overdue', 'Overdue', 'bg-rose-600', summary?.overdue],
+              ['today', 'Due today', 'bg-amber-500', summary?.dueToday],
+              ['upcoming', 'Upcoming', 'bg-sky-500', summary?.upcoming],
+            ] as const).map(([v, label, dot, n]) => (
+              <button key={v || 'all'} type="button" className="pd-chip pd-chip-lg" data-on={bucket === v} onClick={() => setBucket(v)}>
+                <span className={cn('pd-dot', dot)} />
+                {label}
+                {n != null && <span className="pd-chip-n">{n}</span>}
+              </button>
+            ))}
           </div>
         )}
+        <span className="mr-auto max-sm:hidden" aria-hidden />
         {/* §8 — what agents promised, as opposed to what parties promised. */}
         {isPay && (
           <button type="button" className="rp-fpill sm:hidden" data-on={agentOnly} onClick={() => setAgentOnly((v) => !v)}>
@@ -323,16 +298,16 @@ export function FollowupsPage({ kind = 'DELIVERY' }: { kind?: FollowupKind }) {
           </button>
         )}
         {isPay && (
-          <Button
+          <button
             type="button"
-            variant={agentOnly ? 'default' : 'outline'}
-            size="sm"
-            className="h-9 max-sm:hidden"
+            className="pd-chip pd-chip-lg pd-chip-violet max-sm:hidden"
+            data-on={agentOnly}
+            aria-pressed={agentOnly}
             onClick={() => setAgentOnly((v) => !v)}
             title="Only commitments an agent made"
           >
             <Handshake className="size-4" /> Agent promises
-          </Button>
+          </button>
         )}
       </div>
 
@@ -345,11 +320,14 @@ export function FollowupsPage({ kind = 'DELIVERY' }: { kind?: FollowupKind }) {
           {showingDone ? 'Nothing completed yet — finished follow-ups will collect here.' : <>Nothing pending here. {canEdit && 'Log a new commitment with “New follow-up”.'}</>}
         </div>
       ) : (
-        <div className="grid gap-3 lg:grid-cols-2">
-          {groups.map((g) => (
-            <PartyCard key={g.partyName} group={g} canEdit={canEdit} onEdit={openForm} balance={balByParty.get(g.partyName.trim().toUpperCase())} done={showingDone} />
-          ))}
-        </div>
+        <>
+          {showingDone && <HistoryList items={doneItems} canEdit={canEdit} />}
+          <div className={cn('grid gap-3 sm:grid-cols-[repeat(auto-fill,minmax(400px,1fr))]', showingDone && 'sm:hidden')}>
+            {groups.map((g) => (
+              <PartyCard key={g.partyName} group={g} canEdit={canEdit} onEdit={openForm} balance={balByParty.get(g.partyName.trim().toUpperCase())} done={showingDone} />
+            ))}
+          </div>
+        </>
       )}
       </>
       )}
@@ -359,18 +337,134 @@ export function FollowupsPage({ kind = 'DELIVERY' }: { kind?: FollowupKind }) {
   );
 }
 
-function Kpi({ label, value, tone, icon, active, onClick }: { label: string; value: number; tone: string; icon: React.ReactNode; active: boolean; onClick: () => void }) {
-  const tones: Record<string, string> = {
-    rose: 'text-rose-600 ring-rose-200', amber: 'text-amber-600 ring-amber-200', violet: 'text-violet-600 ring-violet-200', sky: 'text-sky-600 ring-sky-200',
-  };
+type HeroStat = { label: string; value: string; hint: string; dot: string };
+
+/**
+ * The desktop hero: the tab's headline figure, four supporting ones beside it,
+ * and the tabs and the page's main action along its foot — the mockup's blue
+ * band. Phones get `MobileHero` instead, so this renders nothing there.
+ *
+ * Three tabs, because this page answers three different questions and stacking
+ * them made the last one a scroll away: Collect (who owes money, worst first —
+ * payment desk only), Follow-ups (the open promises, which is the actual work)
+ * and History (what was closed, and what was said when it closed). The counts
+ * sit in the tabs so you can see where the work is without opening each one.
+ */
+function DeskHero<T extends string>({ label, value, chip, chipTone, hint, bar, stats, tabs, tab, onTab, action }: {
+  label: string;
+  value: string;
+  chip?: string;
+  chipTone: 'rose' | 'emerald';
+  hint: string;
+  /** Percent of the book overdue — Collect only. */
+  bar?: number;
+  stats: HeroStat[];
+  tabs: readonly { id: T; label: string; count: number | null }[];
+  tab: T;
+  onTab: (id: T) => void;
+  action?: React.ReactNode;
+}) {
   return (
-    <button type="button" onClick={onClick} className={cn('bg-card flex items-center gap-3 rounded-xl border p-3 text-left transition-all hover:shadow-sm', active && 'ring-2', active && tones[tone])}>
-      <span className={cn('flex size-9 items-center justify-center rounded-lg ring-1 ring-inset', tones[tone])}>{icon}</span>
-      <div>
-        <div className={cn('text-2xl font-bold tabular-nums leading-none', tones[tone].split(' ')[0])}>{value}</div>
-        <div className="text-muted-foreground mt-0.5 text-xs font-medium">{label}</div>
+    <section className="pd-hero max-sm:hidden">
+      <div className="flex flex-wrap items-center gap-[18px]">
+        <div className="flex min-w-0 flex-[1_1_280px] flex-col gap-1.5">
+          <span className="pd-hero-label">{label}</span>
+          <div className="flex flex-wrap items-baseline gap-3.5">
+            <span className="pd-hero-value">{value}</span>
+            {chip && <span className={cn('pd-hero-chip', chipTone === 'rose' ? 'text-rose-700' : 'text-emerald-700')}>{chip}</span>}
+          </div>
+          <span className="pd-hero-hint">{hint}</span>
+          {bar != null && (
+            <div className="mt-0.5 flex max-w-[360px] items-center gap-2.5">
+              <div className="pd-hero-track"><span style={{ width: `${Math.min(100, bar)}%` }} /></div>
+              <span className="text-[11.5px] font-bold whitespace-nowrap text-white/85">of the book is overdue</span>
+            </div>
+          )}
+        </div>
+        <div className="grid flex-[2_1_520px] grid-cols-2 gap-2.5 lg:grid-cols-4">
+          {stats.map((s) => (
+            <div key={s.label} className="pd-hero-stat">
+              <div className="pd-hero-stat-label"><span className="size-[7px] shrink-0 rounded-full" style={{ background: s.dot }} />{s.label}</div>
+              <div className="pd-hero-stat-value">{s.value}</div>
+              <div className="pd-hero-stat-hint">{s.hint}</div>
+            </div>
+          ))}
+        </div>
       </div>
-    </button>
+      <div className="pd-hero-foot">
+        <div role="tablist" aria-label="Section" className="pd-tabs">
+          {tabs.map((t) => (
+            <button key={t.id} type="button" role="tab" aria-selected={tab === t.id} data-on={tab === t.id} className="pd-tab" onClick={() => onTab(t.id)}>
+              {t.label}
+              {t.count != null && t.count > 0 && <span className="pd-tab-count">{t.count}</span>}
+            </button>
+          ))}
+        </div>
+        <span className="mr-auto" aria-hidden />
+        {action}
+      </div>
+    </section>
+  );
+}
+
+/** History's four figures, from the closed follow-ups on screen. */
+function historyStats(groups: FollowupPartyGroup[], items: FollowupDto[]): HeroStat[] {
+  const closed = items.filter((f) => f.resolvedAt);
+  const avgDays = closed.length
+    ? closed.reduce((t, f) => t + (Date.parse(f.resolvedAt!) - Date.parse(f.createdAt)) / 86_400_000, 0) / closed.length
+    : null;
+  const withNote = items.filter((f) => resolutionNote(f)).length;
+  return [
+    { label: 'Completed', value: String(items.length), hint: 'follow-ups closed', dot: '#6ee7b7' },
+    { label: 'Parties', value: String(groups.length), hint: 'with closed work', dot: '#7dd3fc' },
+    { label: 'Avg. days to close', value: avgDays == null ? '—' : avgDays.toFixed(1), hint: 'opened to resolved', dot: '#fcd34d' },
+    { label: 'With comment', value: `${withNote} of ${items.length}`, hint: 'closing notes', dot: '#c4b5fd' },
+  ];
+}
+
+/** Desktop History: one flat list, newest first, each row saying what was
+ *  closed, why, and who closed it — the mockup's shape. Phones keep the
+ *  party cards. */
+function HistoryList({ items, canEdit }: { items: FollowupDto[]; canEdit: boolean }) {
+  const rows = [...items].sort((a, b) => (b.resolvedAt ?? '').localeCompare(a.resolvedAt ?? ''));
+  return (
+    <section className="pd-card overflow-hidden max-sm:hidden">
+      {rows.map((f, i) => <HistoryRow key={f.id} f={f} canEdit={canEdit} i={i} />)}
+    </section>
+  );
+}
+
+function HistoryRow({ f, canEdit, i }: { f: FollowupDto; canEdit: boolean; i: number }) {
+  const reopen = useReopenFollowup();
+  return (
+    <div id={`followup-${f.id}`} className="pd-hrow pd-rise" style={{ animationDelay: `${Math.min(i, 10) * 30}ms` }}>
+      <span className="flex size-9 shrink-0 items-center justify-center rounded-full bg-emerald-100 text-xs font-extrabold text-emerald-700 dark:bg-emerald-500/15 dark:text-emerald-300">
+        {initials(f.partyName)}
+      </span>
+      <div className="flex min-w-0 flex-1 flex-col gap-1">
+        <div className="flex flex-wrap items-center gap-x-2 gap-y-0.5">
+          <span className="text-sm font-extrabold">{f.partyName}</span>
+          <span className="pd-muted text-[13px]">{f.title}</span>
+        </div>
+        <span className="pd-note">{resolutionNote(f) ?? 'Closed with no comment.'}</span>
+      </div>
+      <div className="flex shrink-0 flex-col items-end gap-1.5">
+        <span className="pd-muted text-xs">
+          {f.resolvedAt ? formatDate(f.resolvedAt) : ''}
+          {f.resolvedByName ? ` · ${f.resolvedByName}` : ''}
+        </span>
+        {canEdit && (
+          <button
+            type="button"
+            className="pd-btn"
+            disabled={reopen.isPending}
+            onClick={() => reopen.mutate(f.id, { onSuccess: () => toast.success('Reopened'), onError: (e) => toast.error(getApiErrorMessage(e, 'Failed')) })}
+          >
+            <RotateCcw className="size-3.5" /> Reopen
+          </button>
+        )}
+      </div>
+    </div>
   );
 }
 
@@ -401,14 +495,14 @@ function PartyCard({ group, canEdit, onEdit, balance, done }: { group: FollowupP
     // The phone gets the mockup's glass card with its temperature rail; desktop
     // keeps the plain bordered section. Same structure either way — only the
     // surface changes, so the rows inside need no second rendering.
-    <section className="bg-card rp-party relative overflow-hidden rounded-xl border shadow-sm transition-shadow duration-200 hover:shadow-md max-sm:rounded-[22px] max-sm:border-0 max-sm:shadow-none">
-      <span className={cn('rp-rail absolute inset-y-0 left-0 w-1 max-sm:w-[5px]', RAIL[tone])} aria-hidden style={{ background: RAIL_GRAD[tone] }} />
-      <div className="rp-party-head flex items-center gap-2.5 border-b max-sm:flex-wrap bg-gradient-to-r from-slate-50/80 to-transparent py-2.5 pr-3 pl-4 max-sm:border-b-0 max-sm:bg-none dark:from-white/[0.03]">
-        <span className={cn('rp-avatar flex size-9 shrink-0 items-center justify-center rounded-full text-xs font-bold', AVATAR[tone])}>
+    <section className="bg-card rp-party pd-group relative overflow-hidden rounded-xl border shadow-sm transition-shadow duration-200 hover:shadow-md max-sm:rounded-[22px] max-sm:border-0 max-sm:shadow-none">
+      <span className={cn('rp-rail absolute inset-y-0 left-0 w-[5px]', RAIL[tone])} aria-hidden style={{ background: RAIL_GRAD[tone] }} />
+      <div className="rp-party-head flex items-center gap-2.5 border-b max-sm:flex-wrap bg-gradient-to-r from-slate-50/80 to-transparent py-2.5 pr-3 pl-4 max-sm:border-b-0 max-sm:bg-none sm:border-b-0 sm:bg-none sm:pt-3 sm:pr-3.5 sm:pb-2 sm:pl-5 dark:from-white/[0.03]">
+        <span className={cn('rp-avatar flex size-9 shrink-0 items-center justify-center rounded-full text-xs font-bold sm:size-[38px] sm:text-[12.5px] sm:font-extrabold', AVATAR[tone])}>
           {initials(group.partyName)}
         </span>
         <div className="min-w-0 flex-1">
-          <div className="rp-party-name truncate font-semibold">{group.partyName}</div>
+          <div className="rp-party-name truncate font-semibold sm:text-[15px] sm:font-extrabold">{group.partyName}</div>
           <div className="rp-party-sub text-muted-foreground mt-0.5 truncate text-xs">
             {done
               ? `${group.items.length} completed${lastDone ? ` · last ${formatDate(lastDone)}` : ''}`
@@ -431,7 +525,8 @@ function PartyCard({ group, canEdit, onEdit, balance, done }: { group: FollowupP
           )}
         </div>
       </div>
-      <div className="divide-y max-sm:divide-y-0">
+      {/* Desktop: each follow-up is its own tinted tile inside the card. */}
+      <div className="divide-y max-sm:divide-y-0 sm:flex sm:flex-col sm:gap-1.5 sm:divide-y-0 sm:px-3 sm:pb-3 sm:pl-[18px]">
         {group.items.map((f) => <FollowupRow key={f.id} f={f} canEdit={canEdit} onEdit={onEdit} done={done} />)}
       </div>
     </section>
@@ -449,18 +544,23 @@ function FollowupRow({ f, canEdit, onEdit, done }: { f: FollowupDto; canEdit: bo
   const del = useDeleteFollowup();
   const { can } = usePermissions();
   const line = itemLine(f);
+  const doSnooze = () =>
+    snooze.mutate(f.id, {
+      onSuccess: () => toast.success('Snoozed — will nudge again later'),
+      onError: (e) => toast.error(getApiErrorMessage(e, 'Failed')),
+    });
   const doDelete = async () => {
     if (!(await confirm({ title: 'Delete this follow-up?', description: `“${f.title}” for ${f.partyName} will be removed.`, confirmText: 'Delete', destructive: true }))) return;
     del.mutate(f.id, { onSuccess: () => toast.success('Deleted'), onError: (e) => toast.error(getApiErrorMessage(e, 'Failed')) });
   };
 
   return (
-    <div id={`followup-${f.id}`} className="rp-item rounded-md px-3 py-2.5 transition-shadow">
+    <div id={`followup-${f.id}`} className="rp-item pd-fitem rounded-md px-3 py-2.5 transition-shadow">
       <div className="flex items-start gap-2">
         <div className="min-w-0 flex-1">
           <div className="flex flex-wrap items-center gap-1.5">
-            {f.priority === 'URGENT' && <Chip tone="rose">URGENT</Chip>}
-            <span className="rp-item-title font-medium">{f.title}</span>
+            {f.priority === 'URGENT' && <Chip tone="rose" className="sm:bg-rose-600 sm:text-[10.5px] sm:font-extrabold sm:tracking-[0.04em] sm:text-white sm:ring-0">URGENT</Chip>}
+            <span className="rp-item-title font-medium sm:text-sm sm:font-bold">{f.title}</span>
             {f.stage && <Chip tone="slate">{f.stage}</Chip>}
           </div>
           <div className="text-muted-foreground mt-0.5 flex flex-wrap items-center gap-x-2 gap-y-0.5 text-xs">
@@ -534,7 +634,7 @@ function FollowupRow({ f, canEdit, onEdit, done }: { f: FollowupDto; canEdit: bo
       {(f.checklist ?? []).length > 0 && <ChecklistProgress f={f} canEdit={canEdit} />}
 
       {canEdit && (
-        <div className="mt-2 flex flex-wrap gap-1.5">
+        <div className="mt-2 flex flex-wrap items-center gap-1.5">
           {done ? (
             // Completed rows stay reviewable: reopen if it was closed too early.
             <Button
@@ -566,20 +666,31 @@ function FollowupRow({ f, canEdit, onEdit, done }: { f: FollowupDto; canEdit: bo
                 */}
               <Button
                 size="sm"
-                className="rp-act rp-act-primary h-8 cursor-pointer text-xs font-semibold"
+                className="rp-act rp-act-primary pd-btn pd-btn-resolve h-8 cursor-pointer text-xs font-semibold"
                 onClick={() => setDoneOpen(true)}
               >
                 <Check className="size-3.5" /> Resolved
               </Button>
-              <Button size="sm" variant="outline" className="rp-act rp-act-ghost h-8 cursor-pointer text-xs" onClick={() => setLogOpen(true)}>
+              <Button size="sm" variant="outline" className="rp-act rp-act-ghost pd-btn h-8 cursor-pointer text-xs" onClick={() => setLogOpen(true)}>
                 <MessageSquarePlus className="size-3.5" /> Update
+              </Button>
+              {/* Desktop has room for Snooze as a button, as in the mockup; on a
+                  phone it stays in the menu so the row keeps two buttons. */}
+              <Button
+                size="sm"
+                variant="outline"
+                className="pd-btn pd-btn-snooze h-8 cursor-pointer text-xs max-sm:hidden"
+                disabled={snooze.isPending}
+                onClick={doSnooze}
+              >
+                <AlarmClock className="size-3.5" /> Snooze
               </Button>
               <DropdownMenu>
                 <DropdownMenuTrigger asChild>
                   <Button
                     size="icon"
                     variant="ghost"
-                    className="rp-act rp-act-icon size-8 cursor-pointer"
+                    className="rp-act rp-act-icon pd-btn pd-btn-call size-8 cursor-pointer"
                     aria-label={`More actions for ${f.title}`}
                     title="More actions"
                   >
@@ -587,15 +698,7 @@ function FollowupRow({ f, canEdit, onEdit, done }: { f: FollowupDto; canEdit: bo
                   </Button>
                 </DropdownMenuTrigger>
                 <DropdownMenuContent align="end" className="w-52 font-sans">
-                  <DropdownMenuItem
-                    disabled={snooze.isPending}
-                    onSelect={() =>
-                      snooze.mutate(f.id, {
-                        onSuccess: () => toast.success('Snoozed — will nudge again later'),
-                        onError: (e) => toast.error(getApiErrorMessage(e, 'Failed')),
-                      })
-                    }
-                  >
+                  <DropdownMenuItem className="sm:hidden" disabled={snooze.isPending} onSelect={doSnooze}>
                     <AlarmClock className="text-amber-600" /> Snooze the reminder
                   </DropdownMenuItem>
                   {/* Seen acknowledges the nudge; Resolved is what actually closes it. */}
@@ -623,6 +726,7 @@ function FollowupRow({ f, canEdit, onEdit, done }: { f: FollowupDto; canEdit: bo
                   )}
                 </DropdownMenuContent>
               </DropdownMenu>
+              <span className="pd-muted ml-auto text-[11.5px] max-sm:hidden">{f.promisedAt ? `promised ${formatDate(f.promisedAt)}` : 'no date'}</span>
             </>
           )}
         </div>

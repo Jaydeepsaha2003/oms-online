@@ -324,6 +324,8 @@ export interface PartyBalanceSummary {
   customerId: number | null;
   partyName: string;
   agent: string | null;
+  /** The customer's mobile number, for the desk's Call button. */
+  mobile: string | null;
   /**
    * What the party actually owes, after their own advance is applied — the
    * Party Ledger's closing balance. Every money field here is net; `gross` is
