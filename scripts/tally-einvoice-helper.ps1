@@ -31,8 +31,7 @@ function Ask-Tally($filter) {
 }
 
 # Last 7 days only, so an old bill is never touched by accident.
-# Tally reads formulas strictly left to right, and a bad one freezes Tally behind an error box:
-# only these two exact shapes are proven on this Tally.
+# A bad formula freezes Tally behind an error box until someone presses OK — keep these exact shapes.
 $pending = @(Ask-Tally '$$IsEmpty:$IRN AND NOT $IsCancelled AND NOT $$IsEmpty:$PartyGSTIN' | Where-Object { "$($_.VOUCHERNUMBER)" -like 'SSS-*' } |
   Sort-Object { [int]"$($_.MASTERID.'#text')".Trim() })
 if (-not $pending.Count) { Write-Host 'Koi bill e-invoice ke liye baaki nahi.'; return }
@@ -42,6 +41,8 @@ if ($List) { return }
 $sh = New-Object -ComObject WScript.Shell
 foreach ($v in $pending | Select-Object -First $Max) {
   $no = "$($v.VOUCHERNUMBER)"
+  # Built plainly: quotes nested inside "$(...)" got dropped and sent Tally a broken formula.
+  $byNo = '$VoucherNumber = "' + $no + '"'
   $date = [datetime]::ParseExact($v.DATE.'#text', 'yyyyMMdd', $null).ToString('d-M-yyyy')
   Write-Host "`n== $no =="
   foreach ($k in $OpenAndSend) {
@@ -57,7 +58,7 @@ foreach ($v in $pending | Select-Object -First $Max) {
   foreach ($i in 1..40) {
     Start-Sleep -Seconds 3
     # Tally doesn't answer while a screen of its own is open — just keep waiting.
-    try { $irn = "$((Ask-Tally "`$VoucherNumber = `"$no`"").IRN.'#text')".Trim() } catch { }
+    try { $irn = "$((Ask-Tally $byNo).IRN.'#text')".Trim() } catch { }
     if ($irn) { break }
   }
   if (-not $irn) { [console]::Beep(800, 600); throw "$no : no IRN after 2 minutes (login screen or an error in Tally?). Not printed - stopped." }
