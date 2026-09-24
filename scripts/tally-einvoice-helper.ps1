@@ -19,6 +19,7 @@ $ErrorActionPreference = 'Stop'
 # ponytail: blind keystrokes, calibrated on this PC in step mode; if a Tally screen changes, fix the list here.
 # Checked on the Tally PC with SSS-747: Go To > Day Book > date > Ctrl+F "Look for" the number > open > save > "generate e-Invoice?" Yes.
 # 1.5 s after each key: at 0.8 s Tally was still opening the bill and swallowed Ctrl+A (SSS-750).
+# 1 s after bringing Tally to the front: sooner, and Alt of Alt+G was lost (opened Group Creation).
 $OpenAndSend = @('%g', 'Day Book~', '{F2}', '{DATE}~', '^f', '{NO}~', '~', '^a', 'y')
 # After a successful e-invoice Tally opens its own Print box (P: Print selected); copies are set in that box (C: Configure).
 # Duplex printer, so never "copies 2" on a bill alone (copy 2 would land on the back of copy 1):
@@ -67,7 +68,7 @@ foreach ($v in $pending | Select-Object -First $Max) {
     $k = $k.Replace('{DATE}', $date).Replace('{NO}', $no)
     if (-not $Auto) { Read-Host "Next key: $k   (Enter = send, Ctrl+C = stop)" | Out-Null }
     if (-not (Focus-Tally)) { throw 'TallyPrime window not found - stopped.' }
-    Start-Sleep -Milliseconds 400
+    Start-Sleep -Milliseconds 1000
     $sh.SendKeys($k)
     Start-Sleep -Milliseconds 1500
   }
@@ -92,7 +93,7 @@ foreach ($v in $pending | Select-Object -First $Max) {
   foreach ($k in $PrintKeys) {
     if (-not $Auto) { Read-Host "Next key: $k   (Enter = send, Ctrl+C = stop)" | Out-Null }
     if (-not (Focus-Tally)) { throw 'TallyPrime window not found - stopped before printing.' }
-    Start-Sleep -Milliseconds 400; $sh.SendKeys($k); Start-Sleep -Milliseconds 1500
+    Start-Sleep -Milliseconds 1000; $sh.SendKeys($k); Start-Sleep -Milliseconds 1500
   }
 }
 Write-Host "`nDone."
