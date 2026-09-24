@@ -16,7 +16,7 @@ import { formatDate } from '@/lib/date-format';
 import { Card, CardContent } from '@/components/ui/card';
 import { inrCompact, inrFull } from '@/features/dashboard/format';
 import { ReportFilterBar, useReportFilters } from './report-filters';
-import { ReportCard, ReportHeader, ReportSummary } from './report-kit';
+import { ReportCard, ReportDeskHero, ReportHeader, ReportSummary, type SummaryPoint } from './report-kit';
 import { useOrderJourney } from './use-reports';
 
 /* ── stage vocabulary ────────────────────────────────────────────────────────
@@ -144,6 +144,24 @@ function MetricRow({ label, children }: { label: string; children: ReactNode }) 
       <span className={T.rowVal}>{children}</span>
     </div>
   );
+}
+
+/**
+ * The desktop tile for one of the service's journey sentences: its leading
+ * figure as the headline, the rest as the line under it, and a tone read from
+ * what the sentence is about. A sentence without a figure (or a new wording the
+ * tones don't know) still shows, as a plain note.
+ */
+function journeyPoint(text: string): SummaryPoint {
+  const m = /^(\d[\d,.]*%?)\s+(.+)$/.exec(text);
+  const tone: SummaryPoint['tone'] = /waiting|credit note/.test(text)
+    ? 'warn'
+    : /Nothing came back/.test(text) || (/dispatched/.test(text) && parseFloat(text) >= 80)
+      ? 'good'
+      : /dispatched/.test(text)
+        ? 'warn'
+        : 'info';
+  return { text, tone, desk: m ? { value: m[1], text: m[2][0].toUpperCase() + m[2].slice(1) } : undefined };
 }
 
 const DASH = <span className="text-muted-foreground/40 font-normal">—</span>;
@@ -815,8 +833,41 @@ export function OrderJourneyPage() {
 
       <ReportFilterBar f={filters.f} setF={filters.setF} active={filters.active} onReset={filters.reset} />
 
+      {/* Desktop: the party's four beats on the blue, the scope switch in its foot. */}
+      {hasParty && j && (
+        <ReportDeskHero
+          hero={{
+            label: 'Orders followed',
+            value: String(j.orders.length),
+            hint: `${j.customerName} · ${activeOnly ? 'not started' : 'all orders'} · ${formatDate(filters.f.from)} → ${formatDate(filters.f.to)}`,
+            stats: j.stages.map((s, i) => ({ label: s.label, value: s.docs.toLocaleString('en-IN'), hint: DOC_NOUN[s.key], dot: ['#7dd3fc', '#c4b5fd', '#6ee7b7', '#ff8fab'][i % 4] })),
+          }}
+        >
+          <div className="pd-tabs" role="tablist" aria-label="Which orders">
+            {([[true, 'Not started'], [false, 'All orders']] as const).map(([val, label]) => (
+              <button key={label} type="button" role="tab" aria-selected={activeOnly === val} data-on={activeOnly === val} className="pd-tab" onClick={() => setActiveOnly(val)}>
+                {label}
+              </button>
+            ))}
+          </div>
+          <span className="pd-hero-hint">{activeOnly ? 'Orders with quantity still to dispatch.' : 'Everything in the range, including fully shipped and billed.'}</span>
+          <span className="mr-auto" aria-hidden />
+          {data?.activeWindow && (
+            <button
+              type="button"
+              className="pd-hero-btn"
+              onClick={() => filters.setF((prev) => ({ ...prev, from: data.activeWindow!.from, to: data.activeWindow!.to }))}
+              title="Set the range to span every order still open for this party"
+            >
+              Fit range to {data.activeWindow.orders} open order{data.activeWindow.orders === 1 ? '' : 's'} ({formatDate(data.activeWindow.from)} → {formatDate(data.activeWindow.to)})
+            </button>
+          )}
+        </ReportDeskHero>
+      )}
+
+      {/* Phone: the same switch as a bar (the desktop has it on the hero). */}
       {hasParty && (
-        <div className="flex flex-wrap items-center gap-2">
+        <div className="flex flex-wrap items-center gap-2 sm:hidden">
           <div className="flex items-center gap-1 rounded-[4px] border border-amber-300 bg-amber-50/40 p-0.5 dark:border-amber-400/40">
             {(
               [
@@ -886,10 +937,10 @@ export function OrderJourneyPage() {
             ))}
           </div>
 
-          <ReportSummary points={j.insights.map((text) => ({ text }))} />
+          <ReportSummary title="What stands out" points={j.insights.map(journeyPoint)} />
 
-          {/* ── detail ── */}
-          <div className="flex items-center gap-2">
+          {/* ── detail: tabs on a phone; side by side on desktop ── */}
+          <div className="flex items-center gap-2 sm:hidden">
           <div className="flex items-center gap-1 rounded-[4px] border border-amber-300 bg-amber-50/40 p-0.5 dark:border-amber-400/40 sm:w-auto">
             {(
               [
@@ -913,23 +964,26 @@ export function OrderJourneyPage() {
           {isFetching && <Loader2 className="text-muted-foreground size-4 animate-spin" />}
           </div>
 
-          {tab === 'orders' ? (
-            <ReportCard title={`Every order, followed through`}>
-              {j.orders.length === 0 ? (
-                <p className="text-muted-foreground py-8 text-center text-[13px]">No orders for this party in this window.</p>
-              ) : (
-                <div className="space-y-2">
-                  {j.orders.map((o, i) => (
-                    <OrderTrack key={o.orderId} o={o} unit={unit} index={i} />
-                  ))}
-                </div>
-              )}
-            </ReportCard>
-          ) : (
-            <ReportCard title="What happened, newest first">
-              <Timeline events={j.events} />
-            </ReportCard>
-          )}
+          <div className="grid gap-[14px] lg:grid-cols-2">
+            <div className={cn('flex flex-col', tab !== 'orders' && 'max-sm:hidden')}>
+              <ReportCard title="Every order, followed through" right={`${j.orders.length} order${j.orders.length === 1 ? '' : 's'} · click to expand`}>
+                {j.orders.length === 0 ? (
+                  <p className="text-muted-foreground py-8 text-center text-[13px]">No orders for this party in this window.</p>
+                ) : (
+                  <div className="space-y-2">
+                    {j.orders.map((o, i) => (
+                      <OrderTrack key={o.orderId} o={o} unit={unit} index={i} />
+                    ))}
+                  </div>
+                )}
+              </ReportCard>
+            </div>
+            <div className={cn('flex flex-col', tab !== 'timeline' && 'max-sm:hidden')}>
+              <ReportCard title="What happened, newest first" right={`${j.events.length} event${j.events.length === 1 ? '' : 's'}`}>
+                <Timeline events={j.events} />
+              </ReportCard>
+            </div>
+          </div>
         </>
       )}
     </div>
