@@ -20,7 +20,8 @@ $ErrorActionPreference = 'Stop'
 # Checked on the Tally PC with SSS-747: Go To > Day Book > date > Ctrl+F "Look for" the number > open > save > "generate e-Invoice?" Yes.
 # 1.5 s after each key: at 0.8 s Tally was still opening the bill and swallowed Ctrl+A (SSS-750).
 $OpenAndSend = @('%g', 'Day Book~', '{F2}', '{DATE}~', '^f', '{NO}~', '~', '^a', 'y')
-$PrintKeys = @('%p', '~', '^p')
+# After a successful e-invoice Tally opens its own Print box (P: Print selected); copies are set in that box (C: Configure).
+$PrintKeys = @('p')
 
 function Ask-Tally($filter) {
   $xml = "<ENVELOPE><HEADER><VERSION>1</VERSION><TALLYREQUEST>Export</TALLYREQUEST><TYPE>Collection</TYPE><ID>P</ID></HEADER><BODY><DESC>" +
