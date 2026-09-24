@@ -20,6 +20,14 @@ export const TALLY_NAMES = {
   itemScrap: 'S.S.SCRAP',
 };
 
+/** Dispatch-from for e-way bills — exactly as every Tally-generated e-way bill of S.S.STEEL has it. */
+const SHIP_FROM = {
+  address: 'J-6/ Balaji Industrial Premises Co-Op Soc Ltd,, Near Goddev Naka,B.P.Cross Road,, Bhayander (East) Thane',
+  place: 'BHAYANDER',
+  pincode: '401105',
+  state: 'Maharashtra',
+};
+
 export interface VoucherChallan {
   code: string;
   invDate: Date;
@@ -268,11 +276,20 @@ export function salesVoucherXml(v: SalesVoucher, p: VoucherParty, note?: { itemL
     el('BASICFINALDESTINATION', dest) +
     '<PERSISTEDVIEW>Invoice Voucher View</PERSISTEDVIEW><VCHENTRYMODE>Item Invoice</VCHENTRYMODE><ISINVOICE>Yes</ISINVOICE>' +
     (!note && v.deliveryNote ? `<INVOICEDELNOTES.LIST><BASICSHIPPINGDATE>${date}</BASICSHIPPINGDATE>${el('BASICSHIPDELIVERYNOTE', v.deliveryNote)}</INVOICEDELNOTES.LIST>` : '') +
-    // E-way bill Part-A transporter, where Tally keeps it (as on SSS-739) — the
+    // E-way bill Part-A, laid out as on Tally-entered bills (SSS-713) — the
     // accountant then only generates. No bill number: Tally/NIC fill that in.
-    (!note && shouldPrefillEWayBill(v.total) && v.transporterId
-      ? '<EWAYBILLDETAILS.LIST><DOCUMENTTYPE>Tax Invoice</DOCUMENTTYPE><SUBTYPE>Supply</SUBTYPE>' +
-        `<TRANSPORTDETAILS.LIST>${el('TRANSPORTERNAME', v.shippedBy)}${el('TRANSPORTERID', v.transporterId)}</TRANSPORTDETAILS.LIST></EWAYBILLDETAILS.LIST>`
+    // Place = last address line, as the accountant typed it (HARYANA, CHENNAI, DELHI…).
+    (!note && shouldPrefillEWayBill(v.total)
+      ? el('DISPATCHFROMNAME', 'S.S.STEEL') + el('DISPATCHFROMSTATENAME', SHIP_FROM.state) + el('DISPATCHFROMPINCODE', SHIP_FROM.pincode) + el('DISPATCHFROMPLACE', SHIP_FROM.place) +
+        '<EWAYBILLDETAILS.LIST>' +
+        list('CONSIGNORADDRESS', [SHIP_FROM.address]) +
+        list('CONSIGNEEADDRESS', p.address?.length ? [p.address.join(', ')] : undefined) +
+        '<DOCUMENTTYPE>Tax Invoice</DOCUMENTTYPE><SUBTYPE>Supply</SUBTYPE>' +
+        el('CONSIGNORPLACE', SHIP_FROM.place) + el('CONSIGNORPINCODE', SHIP_FROM.pincode) +
+        el('CONSIGNEEPLACE', (p.address?.at(-1) ?? p.city ?? '').replace(/[,\s]+$/, '').toUpperCase()) + el('CONSIGNEEPINCODE', p.pincode) +
+        el('SHIPPEDFROMSTATE', SHIP_FROM.state) + el('SHIPPEDTOSTATE', p.state) +
+        (v.transporterId ? `<TRANSPORTDETAILS.LIST>${el('TRANSPORTERNAME', v.shippedBy)}${el('TRANSPORTERID', v.transporterId)}</TRANSPORTDETAILS.LIST>` : '') +
+        '</EWAYBILLDETAILS.LIST>'
       : '') +
     lines +
     ledgers +
