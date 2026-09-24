@@ -10,5 +10,6 @@ function Invoke-WebRequest { param($Uri, $Method, $Body, [switch]$UseBasicParsin
   [pscustomobject]@{ Content = "<ENVELOPE><BODY><DATA><COLLECTION><VOUCHER><DATE TYPE=`"Date`">20260924</DATE><VOUCHERNUMBER>SSS-747/26-27</VOUCHERNUMBER><PARTYLEDGERNAME TYPE=`"String`">ANIL METAL</PARTYLEDGERNAME><MASTERID TYPE=`"Number`"> 23928</MASTERID>$irn</VOUCHER></COLLECTION></DATA></BODY></ENVELOPE>" }
 }
 function Start-Sleep {}
+function Get-Process { [pscustomobject]@{ ProcessName = 'tally'; MainWindowHandle = 1; Id = 4242 } }
 function New-Object { [pscustomobject]@{} | Add-Member -PassThru ScriptMethod AppActivate { $true } | Add-Member -PassThru ScriptMethod SendKeys { param($k) Write-Host "KEY: $k" } }
 & "$PSScriptRoot\tally-einvoice-helper.ps1" -Auto

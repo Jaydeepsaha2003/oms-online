@@ -46,6 +46,16 @@ $pending | ForEach-Object { Write-Host ("{0}  {1}  {2}" -f $_.DATE.'#text', $_.V
 if ($List) { return }
 
 $sh = New-Object -ComObject WScript.Shell
+# Bring Tally to the front by its program (tally.exe), not the window title — the title
+# changes with the screen, and "TallyPrime" alone was once not found. Keys only ever go to Tally.
+function Focus-Tally {
+  foreach ($try in 1..3) {
+    $p = Get-Process | Where-Object { $_.ProcessName -like 'tally*' -and $_.MainWindowHandle -ne 0 } | Select-Object -First 1
+    if ($p -and $sh.AppActivate($p.Id)) { return $true }
+    Start-Sleep -Milliseconds 700
+  }
+  $false
+}
 foreach ($v in $pending | Select-Object -First $Max) {
   $no = "$($v.VOUCHERNUMBER)"
   if ($no -notmatch '^SSS-\d+/\d\d-\d\d$') { throw "Odd bill number '$no' - stopped before asking Tally anything." }
@@ -56,7 +66,7 @@ foreach ($v in $pending | Select-Object -First $Max) {
   foreach ($k in $OpenAndSend) {
     $k = $k.Replace('{DATE}', $date).Replace('{NO}', $no)
     if (-not $Auto) { Read-Host "Next key: $k   (Enter = send, Ctrl+C = stop)" | Out-Null }
-    if (-not $sh.AppActivate('TallyPrime')) { throw 'TallyPrime window not found - stopped.' }
+    if (-not (Focus-Tally)) { throw 'TallyPrime window not found - stopped.' }
     Start-Sleep -Milliseconds 400
     $sh.SendKeys($k)
     Start-Sleep -Milliseconds 1500
@@ -81,7 +91,8 @@ foreach ($v in $pending | Select-Object -First $Max) {
   Write-Host "IRN ok: $irn  e-way: $(if ($ewb) { $ewb } else { 'none' }) - printing"
   foreach ($k in $PrintKeys) {
     if (-not $Auto) { Read-Host "Next key: $k   (Enter = send, Ctrl+C = stop)" | Out-Null }
-    [void]$sh.AppActivate('TallyPrime'); Start-Sleep -Milliseconds 400; $sh.SendKeys($k); Start-Sleep -Milliseconds 1500
+    if (-not (Focus-Tally)) { throw 'TallyPrime window not found - stopped before printing.' }
+    Start-Sleep -Milliseconds 400; $sh.SendKeys($k); Start-Sleep -Milliseconds 1500
   }
 }
 Write-Host "`nDone."
