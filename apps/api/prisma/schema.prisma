@@ -2060,9 +2060,14 @@ model TallyReconBalance {
 /// voucher, and a voucher can belong to only one invoice.
 model TallyVoucher {
   id              Int       @id @default(autoincrement())
-  /// Null for a Tally sale with no OMS invoice behind it (or whose invoice was deleted).
+  /// Sales | Credit Note | Debit Note — which Tally voucher type this row links.
+  vchType         String    @default("Sales")
+  /// The OMS invoice or debit note (both live in `challans`). Null for a Tally
+  /// voucher with no OMS document behind it (or whose document was deleted).
   challanId       Int?      @unique
   challan         Challan?  @relation(fields: [challanId], references: [id], onDelete: SetNull)
+  /// The OMS credit note, for vchType "Credit Note". Plain id: the sweep drops a row whose note is gone.
+  creditNoteId    Int?      @unique
   companyGuid     String
   /// NOT_POSTED | POSTED  (POSTING | UNKNOWN | FAILED arrive with posting)
   status          String
