@@ -482,6 +482,13 @@ export interface CreateChallanInput {
   /** Set by the client after the operator confirms a near-duplicate warning, to
    *  save it anyway. Omitted on a first attempt so the server can check. */
   confirmDuplicate?: boolean;
+  /** Set by a client that can ask the operator: when the party has an advance
+   *  this bill would use, the server answers 409 ADVANCE_CHOICE instead of
+   *  spending it. Omitted, the advance is spent as before. */
+  askAdvance?: boolean;
+  /** The operator's answer: true spends the advance on the party's open bills
+   *  now; false keeps it and holds this bill off it until a later "use it". */
+  useAdvance?: boolean;
   items: CreateChallanItemInput[];
 }
 

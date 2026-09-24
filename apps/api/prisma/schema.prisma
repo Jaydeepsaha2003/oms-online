@@ -1006,6 +1006,10 @@ model Challan {
   billingRate     Float?
   bpcRate         Float?
   noBill          Boolean   @default(false)
+  // "Keep the advance" was the answer on saving this bill: the party's money on
+  // account is then never spent on it automatically (applyOnAccount). A later
+  // save answered "use it" clears it.
+  skipAdvance     Boolean   @default(false)
   transaction     String    @default("SALES INVOICE")
   // CONFIRMED / CANCELLED.
   challanStatus   String    @default("CONFIRMED")

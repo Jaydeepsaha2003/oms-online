@@ -74,6 +74,9 @@ export class SaveNoteDto {
   @IsOptional() @IsBoolean() noBillWithoutGst?: boolean;
   /** CREDIT only — put the returned quantities back in the dispatch pending pool. */
   @IsOptional() @IsBoolean() markUndispatched?: boolean;
+  /** Debit notes: ask before spending the party's advance (see CreateChallanDto). */
+  @IsOptional() @IsBoolean() askAdvance?: boolean;
+  @IsOptional() @IsBoolean() useAdvance?: boolean;
   @IsOptional() @IsString() challanStatus?: string;
   @IsArray() @ValidateNested({ each: true }) @Type(() => NoteItemDto) items!: NoteItemDto[];
 }

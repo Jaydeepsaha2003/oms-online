@@ -398,6 +398,7 @@ export class ChallansService {
      * one's committed challan (and is refused below) or is rejected as busy —
      * it can no longer save a copy.
      */
+    await this.askAboutAdvance(dto, dto.customerId ?? null);
     const row = await this.prisma.$transaction(async (tx) => {
     const code = manualCode || (await this.nextCode(prefix, invDate, tx));
     if (manualCode) await this.assertCodeAvailable(manualCode, undefined, tx);
@@ -432,6 +433,7 @@ export class ChallansService {
         gst: dto.gst ?? null,
         billingRate: dto.billingRate ?? null,
         noBill: dto.noBill ?? false,
+        skipAdvance: dto.useAdvance === false,
         challanStatus: dto.challanStatus ?? 'CONFIRMED',
         transaction: 'SALES INVOICE',
         items: {
@@ -460,7 +462,7 @@ export class ChallansService {
     // ping open clients so their Pending Challan view refreshes live.
     this.notifications.emitPendingChallansChanged();
     await this.priceCommission(row.id);
-    await this.settleOnAccount(row.customerId);
+    if (dto.useAdvance !== false) await this.settleOnAccount(row.customerId);
     return this.map(row);
   }
 
@@ -516,6 +518,28 @@ export class ChallansService {
   /** Advance money applied to a bill, lifted off before the bill changes. */
   private liftOnAccount(code: string, db: Prisma.TransactionClient = this.prisma) {
     return db.acctPaymentReceipt.deleteMany({ where: { invNo: code, refRecId: { startsWith: 'ADV' } } });
+  }
+
+  /**
+   * Ask before this bill is paid from the party's advance.
+   *
+   * Every saved bill used to be settled from the party's money on account
+   * without a word (settleOnAccount), but that money may be meant for
+   * something else. A client that can ask sends `askAdvance`; when the advance
+   * would reach this bill it gets a 409 carrying the offer and re-sends with
+   * the answer in `useAdvance`. Nothing is saved before the answer. A client
+   * that does not ask keeps the old behaviour, and a cancelled bill owes
+   * nothing, so neither is asked.
+   */
+  private async askAboutAdvance(dto: CreateChallanDto, customerId: number | null): Promise<void> {
+    if (!dto.askAdvance || dto.useAdvance !== undefined || dto.challanStatus === 'CANCELLED') return;
+    const offer = await this.payments.advanceOffer(customerId, n(dto.b), n(dto.c));
+    if (!offer) return;
+    throw new ConflictException({
+      message: `${dto.customerName.trim()} has an advance of ₹${(offer.bank + offer.cash).toLocaleString('en-IN')} on account. Use it for this bill?`,
+      error: 'ADVANCE_CHOICE',
+      advance: offer,
+    });
   }
 
   /** Settle the party's open bills from its money on account (see PaymentsService.applyOnAccount).
@@ -1159,6 +1183,7 @@ export class ChallansService {
     // Checks and save in ONE transaction, for the reason given in create(). An
     // edit can add dispatch lines, so it passes the same "not billed elsewhere"
     // gate as a new challan — without it, editing billed the same goods twice.
+    await this.askAboutAdvance(dto, existing.customerId ?? null);
     await this.prisma.$transaction(async (tx) => {
       if (code) await this.assertCodeAvailable(code, id, tx);
       // Exclude the challan being edited, or every save would flag itself.
@@ -1166,7 +1191,8 @@ export class ChallansService {
       if (existing.transaction === 'SALES INVOICE' && (dto.challanStatus ?? 'CONFIRMED') !== 'CANCELLED') {
         await this.assertDispatchesUnbilled(dto.items.map((it) => it.dispatchId ?? 0), tx, id);
       }
-      if (touchesMoney) await this.liftOnAccount(existing.code, tx);
+      // "Keep the advance" on a bill it already paid takes that payment back off.
+      if (touchesMoney || dto.useAdvance === false) await this.liftOnAccount(existing.code, tx);
       await tx.challanItem.deleteMany({ where: { challanId: id } });
       await tx.challan.update({
         where: { id },
@@ -1195,6 +1221,7 @@ export class ChallansService {
           gst: dto.gst ?? null,
           billingRate: dto.billingRate ?? null,
           noBill: dto.noBill ?? false,
+          ...(dto.useAdvance !== undefined ? { skipAdvance: !dto.useAdvance } : {}),
           challanStatus: dto.challanStatus ?? 'CONFIRMED',
           items: {
             create: dto.items.map((it) => ({
@@ -1220,7 +1247,7 @@ export class ChallansService {
     this.notifications.emitPendingChallansChanged();
     // Editing the lines changes the quantities commission is calculated on.
     await this.priceCommission(id);
-    await this.settleOnAccount(existing.customerId);
+    if (dto.useAdvance !== false) await this.settleOnAccount(existing.customerId);
     return this.findOne(id);
   }
 

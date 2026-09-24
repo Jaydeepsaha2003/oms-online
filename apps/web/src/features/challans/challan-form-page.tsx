@@ -41,9 +41,9 @@ import {
   type QtyField,
 } from '@oms/shared';
 import { cn } from '@/lib/utils';
-import { getApiErrorMessage, getDuplicateMatch } from '@/lib/api';
+import { getAdvanceOffer, getApiErrorMessage, getDuplicateMatch } from '@/lib/api';
 import { formatDate } from '@/lib/date-format';
-import { useConfirm } from '@/components/common/confirm';
+import { askUseAdvance, useChoose, useConfirm } from '@/components/common/confirm';
 import { RecordHistory } from '@/components/common/record-history';
 import { Combo, NativeSelect } from '@/components/common/combo';
 import { Button } from '@/components/ui/button';
@@ -161,6 +161,7 @@ function ItemPhotosButton({ orderItemId }: { orderItemId: number }) {
 export function ChallanFormPage() {
   const navigate = useNavigate();
   const confirm = useConfirm();
+  const choose = useChoose();
   const tallyPost = usePostToTally();
   const params = useParams();
   const editId = params.id ? Number(params.id) : null;
@@ -719,6 +720,8 @@ export function ChallanFormPage() {
       billingRate: numOr(billingRate),
       noBill,
       challanStatus: status as CreateChallanInput['challanStatus'],
+      // The server asks before spending the party's advance on this bill.
+      askAdvance: true,
       items: rows.map((r) => ({
         dispatchId: r.dispatchId,
         productName: r.productName,
@@ -758,6 +761,13 @@ export function ChallanFormPage() {
       const onError = (e: unknown) => {
         const dup = getDuplicateMatch(e);
         if (dup) return void askDuplicate(dup, body, submit);
+        const offer = getAdvanceOffer(e);
+        if (offer) {
+          // Back keeps the form as it is; only an answer saves.
+          return void askUseAdvance(choose, offer, body.customerName.trim(), 'bill').then((use) => {
+            if (use !== null) submit({ ...body, useAdvance: use });
+          });
+        }
         toast.error(getApiErrorMessage(e, 'Failed to save challan'));
       };
       if (isEdit) updateChallan.mutate({ id: editId!, ...body }, { onSuccess, onError });

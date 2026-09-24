@@ -1,6 +1,7 @@
 ﻿import { BadRequestException, ConflictException, Injectable, NotFoundException } from '@nestjs/common';
 import { Prisma } from '@prisma/client';
 import {
+  type AdvanceOffer,
   type ChequeOptionRow,
   type BulkDeletePaymentResult,
   type DeletePaymentResult,
@@ -954,18 +955,17 @@ export class PaymentsService {
    */
   async applyOnAccount(tx: Db, custId: number): Promise<void> {
     if (!custId) return;
-    const c = await tx.customer.findUnique({ where: { id: custId }, select: { id: true, partyName: true } });
-    if (!c) return;
-    const customers = [{ id: c.id, name: c.partyName ?? `#${c.id}` }];
-    const [bills, money] = await Promise.all([this.invoicePending(tx, customers, FAR), this.advancePending(tx, customers)]);
-    const advs = money.filter((a) => a.takeAccOn !== 'AGENT');
-    if (!bills.length || !advs.length) return;
-    const parked = await tx.acctPartyAdvance.findMany({ where: { refId: { in: advs.map((a) => a.refId) } }, select: { refId: true, refRecId: true } });
-    const owners = new Set((await tx.acctLedger.findMany({ where: { voucherType: 'RECEIPT', voucherNo: { in: parked.map((p) => p.refRecId ?? '') } }, select: { voucherNo: true } })).map((v) => v.voucherNo));
-    const ownerOf = new Map(parked.filter((p) => p.refRecId && owners.has(p.refRecId)).map((p) => [p.refId, p.refRecId!]));
+    const onAccount = await this.onAccountMoney(tx, custId);
+    if (!onAccount?.money.length) return;
+    const { customers, money, ownerOf } = onAccount;
+    // A bill the operator chose to keep off the advance is not paid from it.
+    const open = await this.invoicePending(tx, customers, FAR);
+    const held = await this.heldBills(tx, open.map((b) => b.invNo));
+    const bills = open.filter((b) => !held.has(b.invNo));
+    if (!bills.length) return;
 
     for (const bank of [true, false]) {
-      const pots = advs.filter((a) => ownerOf.has(a.refId) || a.refId.startsWith(OPENING_CREDIT)).map((a) => ({ ...a, left: bank ? a.bankBal : a.cashBal })).filter((a) => a.left > EPS);
+      const pots = money.map((a) => ({ ...a, left: bank ? a.bankBal : a.cashBal })).filter((a) => a.left > EPS);
       let i = 0;
       for (const bill of bills) {
         let need = bank ? bill.bankBal : bill.cashBal;
@@ -993,6 +993,49 @@ export class PaymentsService {
         }
       }
     }
+  }
+
+  /**
+   * Bills the operator kept off the party's advance on saving them
+   * (Challan.skipAdvance). Both places that spend an advance on a bill —
+   * applyOnAccount and a receipt's shortfall step — leave these alone; new
+   * money still pays them.
+   */
+  private async heldBills(db: Db, codes: string[]): Promise<Set<string>> {
+    if (!codes.length) return new Set();
+    const rows = await db.challan.findMany({ where: { code: { in: codes }, skipAdvance: true }, select: { code: true } });
+    return new Set(rows.map((c) => c.code));
+  }
+
+  /**
+   * The money applyOnAccount may spend for a party: advances a receipt parked
+   * for it, plus a CREDIT opening, oldest first. Agent money and what notes
+   * park are left out (see applyOnAccount). Null for an unknown party.
+   */
+  private async onAccountMoney(db: Db, custId: number) {
+    const c = await db.customer.findUnique({ where: { id: custId }, select: { id: true, partyName: true } });
+    if (!c) return null;
+    const customers = [{ id: c.id, name: c.partyName ?? `#${c.id}` }];
+    const advs = (await this.advancePending(db, customers)).filter((a) => a.takeAccOn !== 'AGENT');
+    const parked = advs.length ? await db.acctPartyAdvance.findMany({ where: { refId: { in: advs.map((a) => a.refId) } }, select: { refId: true, refRecId: true } }) : [];
+    const owners = new Set((await db.acctLedger.findMany({ where: { voucherType: 'RECEIPT', voucherNo: { in: parked.map((p) => p.refRecId ?? '') } }, select: { voucherNo: true } })).map((v) => v.voucherNo));
+    const ownerOf = new Map(parked.filter((p) => p.refRecId && owners.has(p.refRecId)).map((p) => [p.refId, p.refRecId!]));
+    return { customers, ownerOf, money: advs.filter((a) => ownerOf.has(a.refId) || a.refId.startsWith(OPENING_CREDIT)) };
+  }
+
+  /**
+   * What a bill of `b` bank and `c` cash would take from the party's money on
+   * account if it were saved now — the figure the bill-save question offers.
+   * Bank money only meets the bank side and cash the cash side, as in
+   * applyOnAccount; null when a bill of this shape would take nothing.
+   */
+  async advanceOffer(custId: number | null | undefined, b: number, c: number): Promise<AdvanceOffer | null> {
+    if (!custId) return null;
+    const money = (await this.onAccountMoney(this.prisma, custId))?.money ?? [];
+    const bank = r2(money.reduce((t, a) => t + a.bankBal, 0));
+    const cash = r2(money.reduce((t, a) => t + a.cashBal, 0));
+    const use = r2(Math.min(bank, Math.max(0, b || 0)) + Math.min(cash, Math.max(0, c || 0)));
+    return use > EPS ? { bank, cash, use } : null;
   }
 
   /** Undo every row the chain's vouchers wrote, most-recent first. `sourceVoucherNo`
@@ -1203,10 +1246,12 @@ export class PaymentsService {
        */
       const advTotal = r2(advRows.reduce((sum, a) => sum + (bankish ? a.bankBal : a.cashBal), 0));
       let sizeLeft = r2(remaining + advTotal);
+      // Bills kept off the advance take only today's money (see heldBills).
+      const held = advRows.length ? await this.heldBills(tx, rows.map((r) => r.invNo)) : new Set<string>();
       for (const inv of rows) {
         if (sizeLeft <= EPS) break;
         const pend = bankish ? inv.bankBal : inv.cashBal;
-        let need = r2(Math.min(pend, sizeLeft));
+        let need = r2(Math.min(pend, sizeLeft, held.has(inv.invNo) ? remaining : Infinity));
         if (need <= EPS) continue;
         sizeLeft = r2(sizeLeft - need);
         invoicesCleared = r2(invoicesCleared + need);
@@ -1249,7 +1294,7 @@ export class PaymentsService {
         }
 
         // Step 2: old advances FIFO, for whatever today's receipt did not cover.
-        while (need > EPS && advIdx < advRows.length) {
+        while (!held.has(inv.invNo) && need > EPS && advIdx < advRows.length) {
           if (advLeft <= EPS) {
             advIdx += 1;
             advLeft = advIdx < advRows.length ? (bankish ? advRows[advIdx].bankBal : advRows[advIdx].cashBal) : 0;

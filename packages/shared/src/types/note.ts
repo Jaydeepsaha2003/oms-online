@@ -155,6 +155,9 @@ export interface SaveNoteInput {
   /** CREDIT only. Put the returned quantities back into the dispatch pending
    *  pool, so the goods can be dispatched again. */
   markUndispatched?: boolean;
+  /** Debit notes only — the same question as a challan save (CreateChallanInput). */
+  askAdvance?: boolean;
+  useAdvance?: boolean;
   items: NoteItemInput[];
 }
 

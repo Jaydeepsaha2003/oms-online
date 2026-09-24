@@ -1,4 +1,4 @@
-import { BadRequestException, Injectable, NotFoundException } from '@nestjs/common';
+import { BadRequestException, ConflictException, Injectable, NotFoundException } from '@nestjs/common';
 import { Prisma } from '@prisma/client';
 import type { TDocumentDefinitions } from 'pdfmake/interfaces';
 import {
@@ -401,6 +401,34 @@ export class NotesService {
       await this.clearUndispatch(code);
     }
 
+    /*
+     * A Debit Note squares itself off from the party's advances on save (see
+     * insertDebitNoteLedger) — the same silent spend a challan save had. It now
+     * asks first, as a challan does (ChallansService.askAboutAdvance), with the
+     * figure its own square-off would take. "Keep" skips the square-off and
+     * holds the note off the advance for later receipts too. A re-save
+     * recreates the row, so an earlier "keep" carries over unless answered anew.
+     */
+    let skipAdvance = false;
+    if (mode === 'DEBIT') {
+      if (dto.askAdvance && dto.useAdvance === undefined && dto.challanStatus?.trim() !== 'CANCELLED') {
+        const advs = await this.debitNoteAdvances(this.prisma, dto.customerId);
+        const bank = r2(advs.reduce((t, a) => t + a.bankBal, 0));
+        const cash = r2(advs.reduce((t, a) => t + a.cashBal, 0));
+        const use = r2(Math.min(bank, Math.max(0, b)) + Math.min(cash, Math.max(0, c)));
+        const offer = use > EPS ? { bank, cash, use } : null;
+        if (offer) {
+          throw new ConflictException({
+            message: `${dto.customerName.trim()} has an advance of ₹${(offer.bank + offer.cash).toLocaleString('en-IN')} on account. Use it for this debit note?`,
+            error: 'ADVANCE_CHOICE',
+            advance: offer,
+          });
+        }
+      }
+      const before = dto.code?.trim() ? await this.prisma.challan.findUnique({ where: { code }, select: { skipAdvance: true } }) : null;
+      skipAdvance = dto.useAdvance !== undefined ? !dto.useAdvance : (before?.skipAdvance ?? false);
+    }
+
     await this.prisma.$transaction(async (tx) => {
       if (isCreditLike(mode)) {
         await tx.creditNote.deleteMany({ where: { code } });
@@ -478,6 +506,7 @@ export class NotesService {
             billingRate: dto.billingRate ?? null,
             bpcRate: dto.bpcRate ?? null,
             noBill: dto.noBill ?? false,
+            skipAdvance,
             transaction: 'DEBIT NOTE',
             challanStatus: dto.challanStatus?.trim() || 'CONFIRMED',
             userName: userName ?? null,
@@ -494,7 +523,7 @@ export class NotesService {
       await this.reverseCreditNote(code, ledgerType);
       clearance = await this.applyCreditNote(code, invDate, dto.customerId, dto.customerName, b, c, dto.items, userName ?? null, ledgerType);
     } else {
-      await this.insertDebitNoteLedger(code, invDate, dto.customerId, dto.customerName, b, c, dto.items, userName ?? null);
+      await this.insertDebitNoteLedger(code, invDate, dto.customerId, dto.customerName, b, c, dto.items, userName ?? null, !skipAdvance);
     }
 
     // 3) "Undispatched" — credit-side notes only. The previous run's reversals were
@@ -681,6 +710,8 @@ export class NotesService {
     cAmt: number,
     items: SaveNoteDto['items'],
     userName: string | null,
+    /** False when the operator chose to keep the party's advance for later. */
+    squareOff = true,
   ): Promise<void> {
     if (bAmt <= 0 && cAmt <= 0) return;
     const { payBy, agentName } = await this.readPayBy(custId);
@@ -711,6 +742,7 @@ export class NotesService {
       });
 
       // Auto square-off from advances FIFO — BANK then CASH.
+      if (!squareOff) return;
       let receiptId: string | null = null;
       const advs = payBy === 'AGENT' && agentName ? await this.agentAdvancePending(tx, agentName) : await this.advancePending(tx, custId);
       let bankNeed = r2(Math.max(0, bAmt));
@@ -739,6 +771,13 @@ export class NotesService {
         cashNeed = r2(cashNeed - use);
       }
     });
+  }
+
+  /** The advances a Debit Note for this party squares off from: the agent's
+   *  when the party pays through one, else the party's own. */
+  private async debitNoteAdvances(db: Db, custId: number) {
+    const { payBy, agentName } = await this.readPayBy(custId);
+    return payBy === 'AGENT' && agentName ? this.agentAdvancePending(db, agentName) : this.advancePending(db, custId);
   }
 
   private debitParticulars(items: SaveNoteDto['items']): string {

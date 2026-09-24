@@ -1,6 +1,6 @@
 import axios, { AxiosError, type AxiosRequestConfig, type AxiosResponse } from 'axios';
 import { getDeviceId } from './device-id';
-import type { AuthResult, DuplicateDispatch, DuplicateMatch, UploadedFileDto } from '@oms/shared';
+import type { AdvanceOffer, AuthResult, DuplicateDispatch, DuplicateMatch, UploadedFileDto } from '@oms/shared';
 import { recordNetEvent, shortUrl } from './net-diagnostics';
 import { useAuthStore } from '@/stores/auth-store';
 
@@ -348,6 +348,14 @@ export function getDuplicateMatch(error: unknown): DuplicateMatch | null {
   if (!axios.isAxiosError(error) || error.response?.status !== 409) return null;
   const data = error.response?.data as { error?: string; duplicate?: DuplicateMatch } | undefined;
   return data?.error === 'DUPLICATE_CHALLAN' && data.duplicate ? data.duplicate : null;
+}
+
+/** The party advance a bill save would spend (409 ADVANCE_CHOICE), or null for
+ *  any other error — the save is waiting for the operator's answer. */
+export function getAdvanceOffer(error: unknown): AdvanceOffer | null {
+  if (!axios.isAxiosError(error) || error.response?.status !== 409) return null;
+  const data = error.response?.data as { error?: string; advance?: AdvanceOffer } | undefined;
+  return data?.error === 'ADVANCE_CHOICE' && data.advance ? data.advance : null;
 }
 
 /** The dispatch a duplicate attempt collided with, or null for any other error. */
