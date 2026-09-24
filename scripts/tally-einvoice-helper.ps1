@@ -21,13 +21,17 @@ $ErrorActionPreference = 'Stop'
 # 1.5 s after each key: at 0.8 s Tally was still opening the bill and swallowed Ctrl+A (SSS-750).
 $OpenAndSend = @('%g', 'Day Book~', '{F2}', '{DATE}~', '^f', '{NO}~', '~', '^a', 'y')
 # After a successful e-invoice Tally opens its own Print box (P: Print selected); copies are set in that box (C: Configure).
-$PrintKeys = @('p')
+# Duplex printer, so never "copies 2" on a bill alone (copy 2 would land on the back of copy 1):
+#  with e-way bill : F5 > copies 2 > Type of Copy as is > e-Way copies 2 > accept > P   (seen on the owner's screen)
+#  e-invoice only  : P, then open the bill again and print a second time   (to check in step mode)
+$PrintWithEway = @('{F5}', '2~', '~', '2', '^a', 'p')
+$PrintInvoiceOnly = @('p', '~', '%p', 'p', '{ESC}')
 
 function Ask-Tally($filter) {
   $xml = "<ENVELOPE><HEADER><VERSION>1</VERSION><TALLYREQUEST>Export</TALLYREQUEST><TYPE>Collection</TYPE><ID>P</ID></HEADER><BODY><DESC>" +
     "<STATICVARIABLES><SVEXPORTFORMAT>`$`$SysName:XML</SVEXPORTFORMAT><SVCURRENTCOMPANY>S.S.STEEL</SVCURRENTCOMPANY>" +
     "<SVFROMDATE>$((Get-Date).AddDays(-7).ToString('yyyyMMdd'))</SVFROMDATE><SVTODATE>$((Get-Date).ToString('yyyyMMdd'))</SVTODATE></STATICVARIABLES>" +
-    "<TDL><TDLMESSAGE><COLLECTION NAME=`"P`"><TYPE>Voucher</TYPE><FILTER>F</FILTER><FETCH>Date,VoucherNumber,PartyLedgerName,MasterID,IRN</FETCH></COLLECTION>" +
+    "<TDL><TDLMESSAGE><COLLECTION NAME=`"P`"><TYPE>Voucher</TYPE><FILTER>F</FILTER><FETCH>Date,VoucherNumber,PartyLedgerName,MasterID,IRN,EWayBillDetails.BillNumber</FETCH></COLLECTION>" +
     "<SYSTEM TYPE=`"Formulae`" NAME=`"F`">`$VoucherTypeName = `"Sales`" AND $filter</SYSTEM></TDLMESSAGE></TDL></DESC></BODY></ENVELOPE>"
   $r = Invoke-WebRequest -Uri $Tally -Method Post -Body $xml -UseBasicParsing -TimeoutSec 30
   ([xml]($r.Content -replace '&#4;', '')).ENVELOPE.BODY.DATA.COLLECTION.VOUCHER
@@ -66,7 +70,15 @@ foreach ($v in $pending | Select-Object -First $Max) {
     if ($irn) { break }
   }
   if (-not $irn) { [console]::Beep(800, 600); throw "$no : no IRN after 2 minutes (login screen or an error in Tally?). Not printed - stopped." }
-  Write-Host "IRN ok: $irn - printing"
+  # Tally makes the e-way bill (if any) right after the IRN; give it a few seconds to show up.
+  $ewb = ''
+  foreach ($i in 1..5) {
+    try { $ewb = "$((Ask-Tally $byNo).'EWAYBILLDETAILS.LIST'.BILLNUMBER)".Trim() } catch { }
+    if ($ewb) { break }
+    Start-Sleep -Seconds 3
+  }
+  $PrintKeys = if ($ewb) { $PrintWithEway } else { $PrintInvoiceOnly }
+  Write-Host "IRN ok: $irn  e-way: $(if ($ewb) { $ewb } else { 'none' }) - printing"
   foreach ($k in $PrintKeys) {
     if (-not $Auto) { Read-Host "Next key: $k   (Enter = send, Ctrl+C = stop)" | Out-Null }
     [void]$sh.AppActivate('TallyPrime'); Start-Sleep -Milliseconds 400; $sh.SendKeys($k); Start-Sleep -Milliseconds 1500
