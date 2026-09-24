@@ -490,8 +490,9 @@ export class ChallansService {
    * allowed once the sweep has seen the Tally voucher cancelled. Bills typed
    * into Tally by hand (source HISTORY) are not frozen — reconciliation watches those.
    */
-  private async assertNotInTally(challanId: number, code: string, action: string, cancelling = false): Promise<void> {
-    const tv = await this.prisma.tallyVoucher.findUnique({ where: { challanId }, select: { status: true, source: true, vchNo: true, cancelled: true, irnAckNo: true } });
+  /** `newB`: an edit's new B amount — allowed on an e-invoiced bill only when it matches Tally (bringing OMS in line). */
+  private async assertNotInTally(challanId: number, code: string, action: string, cancelling = false, newB?: number | null): Promise<void> {
+    const tv = await this.prisma.tallyVoucher.findUnique({ where: { challanId }, select: { status: true, source: true, vchNo: true, cancelled: true, irnAckNo: true, amount: true } });
     if (!tv) return;
     if (tv.status === 'POSTING' || tv.status === 'UNKNOWN') {
       throw new BadRequestException(`${code} is being posted to Tally — wait until Tally Sync Center shows it posted or failed, then ${action}.`);
@@ -499,6 +500,13 @@ export class ChallansService {
     // Until the e-invoice is made the Tally bill can still be altered, so OMS may change too;
     // Bill check then shows the difference until Tally is changed to match. With an IRN it's final.
     if (tv.status === 'POSTED' && tv.source === 'OMS' && tv.irnAckNo && !(cancelling && tv.cancelled)) {
+      // The e-invoiced Tally bill is final; OMS may still be corrected TO it (SSS-753: freight removed in Tally).
+      if (newB != null && tv.amount != null) {
+        if (Math.abs(newB - tv.amount) <= 1) return;
+        throw new BadRequestException(
+          `${code} has its e-invoice in Tally (${tv.vchNo}) for ₹${tv.amount.toLocaleString('en-IN')}. You can edit it only to match Tally — this edit makes B ₹${newB.toLocaleString('en-IN')}.`,
+        );
+      }
       throw new BadRequestException(
         `${code} has its e-invoice in Tally (${tv.vchNo}). Cancel it in Tally first (or give a credit note), press "Check now" in Tally Sync Center, then ${action}.`,
       );
@@ -1127,7 +1135,7 @@ export class ChallansService {
       select: { id: true, code: true, customerId: true, customerName: true, invDate: true, b: true, c: true, challanStatus: true, transaction: true },
     });
     if (!existing) throw new NotFoundException('Challan not found');
-    await this.assertNotInTally(id, existing.code, 'edit it');
+    await this.assertNotInTally(id, existing.code, 'edit it', false, dto.b ?? null);
     const scrap = isScrapCategory(dto.category);
     const { tcsPercent } = await this.settings.getTcsPercent();
     const invDate = dto.invDate ? new Date(dto.invDate) : undefined;
