@@ -61,6 +61,38 @@ function Focus-Tally {
   }
   $false
 }
+# Eyes on Tally: a photo of the Tally window after every key (helper-log, next to this script),
+# and Windows' own OCR reads it before anything is saved. (A slipped step once opened SSS-738
+# instead of SSS-752 — blind Ctrl+A there would have saved the wrong bill.)
+$log = Join-Path $PSScriptRoot 'helper-log'
+[void](New-Item -ItemType Directory -Force $log); Remove-Item "$log\*.png" -ErrorAction SilentlyContinue
+$script:shot = 0
+if (-not $function:Snap) {
+  Add-Type -AssemblyName System.Drawing
+  Add-Type 'using System; using System.Runtime.InteropServices; public static class Win { public struct R { public int L, T, Rt, B; } [DllImport("user32.dll")] public static extern bool GetWindowRect(IntPtr h, out R r); }'
+  function Snap($name) {
+    $p = Get-Process | Where-Object { $_.ProcessName -like 'tally*' -and $_.MainWindowHandle -ne 0 } | Select-Object -First 1
+    $r = New-Object Win+R; [void][Win]::GetWindowRect($p.MainWindowHandle, [ref]$r)
+    $bmp = New-Object System.Drawing.Bitmap ($r.Rt - $r.L), ($r.B - $r.T)
+    [System.Drawing.Graphics]::FromImage($bmp).CopyFromScreen($r.L, $r.T, 0, 0, $bmp.Size)
+    $script:shot++; $png = Join-Path $log ('{0:d2}-{1}.png' -f $script:shot, ($name -replace '[^\w-]', '_'))
+    $bmp.Save($png, [System.Drawing.Imaging.ImageFormat]::Png); $bmp.Dispose(); $png
+  }
+  Add-Type -AssemblyName System.Runtime.WindowsRuntime
+  $null = [Windows.Storage.StorageFile, Windows.Storage, ContentType = WindowsRuntime]
+  $null = [Windows.Media.Ocr.OcrEngine, Windows.Foundation, ContentType = WindowsRuntime]
+  $null = [Windows.Graphics.Imaging.BitmapDecoder, Windows.Graphics, ContentType = WindowsRuntime]
+  $asTask = ([System.WindowsRuntimeSystemExtensions].GetMethods() | Where-Object { $_.Name -eq 'AsTask' -and $_.GetParameters().Count -eq 1 -and $_.GetParameters()[0].ParameterType.Name -eq 'IAsyncOperation`1' })[0]
+  function Await($op, [Type]$t) { $task = $asTask.MakeGenericMethod($t).Invoke($null, @($op)); [void]$task.Wait(-1); $task.Result }
+  function Read-Screen($png) {
+    $file = Await ([Windows.Storage.StorageFile]::GetFileFromPathAsync($png)) ([Windows.Storage.StorageFile])
+    $stream = Await ($file.OpenAsync([Windows.Storage.FileAccessMode]::Read)) ([Windows.Storage.Streams.IRandomAccessStream])
+    $bitmap = Await ((Await ([Windows.Graphics.Imaging.BitmapDecoder]::CreateAsync($stream)) ([Windows.Graphics.Imaging.BitmapDecoder])).GetSoftwareBitmapAsync()) ([Windows.Graphics.Imaging.SoftwareBitmap])
+    $text = (Await ([Windows.Media.Ocr.OcrEngine]::TryCreateFromUserProfileLanguages().RecognizeAsync($bitmap)) ([Windows.Media.Ocr.OcrResult])).Text
+    $stream.Dispose(); $text
+  }
+}
+
 foreach ($v in $pending | Select-Object -First $Max) {
   $no = "$($v.VOUCHERNUMBER)"
   if ($no -notmatch '^SSS-\d+/\d\d-\d\d$') { throw "Odd bill number '$no' - stopped before asking Tally anything." }
@@ -73,8 +105,18 @@ foreach ($v in $pending | Select-Object -First $Max) {
     if (-not $Auto) { Read-Host "Next key: $k   (Enter = send, Ctrl+C = stop)" | Out-Null }
     if (-not (Focus-Tally)) { throw 'TallyPrime window not found - stopped.' }
     Start-Sleep -Milliseconds 1000
+    if ($k -eq '^a') {
+      # Save only if Tally really shows this bill open (number + "Party A/c name" of the bill screen).
+      $seen = Read-Screen (Snap 'before-save') -replace '\s', ''
+      # OCR may read S as 5, so match the number part (752/26-27) and a label of the bill screen.
+      if ($seen -notlike ('*' + ($no -replace '^SSS-', '') + '*') -or $seen -notmatch 'Party|ledger') {
+        [console]::Beep(800, 600)
+        throw "$no is not open in Tally - stopped BEFORE saving anything. Press Esc in Tally (don't save). Photos: $log"
+      }
+    }
     $sh.SendKeys($k)
     Start-Sleep -Milliseconds 1500
+    try { [void](Snap "after $k") } catch { }
     Back-To-Helper
   }
   Write-Host 'Waiting for the IRN (up to 2 min)...'
@@ -99,6 +141,7 @@ foreach ($v in $pending | Select-Object -First $Max) {
     if (-not $Auto) { Read-Host "Next key: $k   (Enter = send, Ctrl+C = stop)" | Out-Null }
     if (-not (Focus-Tally)) { throw 'TallyPrime window not found - stopped before printing.' }
     Start-Sleep -Milliseconds 1000; $sh.SendKeys($k); Start-Sleep -Milliseconds 1500
+    try { [void](Snap "print $k") } catch { }
     Back-To-Helper
   }
 }

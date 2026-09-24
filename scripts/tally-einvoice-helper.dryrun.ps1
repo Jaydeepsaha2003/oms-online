@@ -11,5 +11,8 @@ function Invoke-WebRequest { param($Uri, $Method, $Body, [switch]$UseBasicParsin
 }
 function Start-Sleep {}
 function Get-Process { [pscustomobject]@{ ProcessName = 'tally'; MainWindowHandle = 1; Id = 4242 } }
+# Fake Tally screen. $env:DRY_WRONG=1 -> another bill is open (the helper must stop before Ctrl+A).
+function Snap($name) { Write-Host "PHOTO: $name"; "fake.png" }
+function Read-Screen($png) { if ($env:DRY_WRONG) { 'Sales No. SSS-738/26-27 Party Alc name: MUKTI KITCHENWARE' } else { 'Sales No. SSS-747/26-27 Party Alc name: ANIL METAL' } }
 function New-Object { [pscustomobject]@{} | Add-Member -PassThru ScriptMethod AppActivate { $true } | Add-Member -PassThru ScriptMethod SendKeys { param($k) Write-Host "KEY: $k" } }
 & "$PSScriptRoot\tally-einvoice-helper.ps1" -Auto
