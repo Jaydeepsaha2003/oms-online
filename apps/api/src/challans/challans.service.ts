@@ -491,14 +491,16 @@ export class ChallansService {
    * into Tally by hand (source HISTORY) are not frozen — reconciliation watches those.
    */
   private async assertNotInTally(challanId: number, code: string, action: string, cancelling = false): Promise<void> {
-    const tv = await this.prisma.tallyVoucher.findUnique({ where: { challanId }, select: { status: true, source: true, vchNo: true, cancelled: true } });
+    const tv = await this.prisma.tallyVoucher.findUnique({ where: { challanId }, select: { status: true, source: true, vchNo: true, cancelled: true, irnAckNo: true } });
     if (!tv) return;
     if (tv.status === 'POSTING' || tv.status === 'UNKNOWN') {
       throw new BadRequestException(`${code} is being posted to Tally — wait until Tally Sync Center shows it posted or failed, then ${action}.`);
     }
-    if (tv.status === 'POSTED' && tv.source === 'OMS' && !(cancelling && tv.cancelled)) {
+    // Until the e-invoice is made the Tally bill can still be altered, so OMS may change too;
+    // Bill check then shows the difference until Tally is changed to match. With an IRN it's final.
+    if (tv.status === 'POSTED' && tv.source === 'OMS' && tv.irnAckNo && !(cancelling && tv.cancelled)) {
       throw new BadRequestException(
-        `${code} was posted to Tally as ${tv.vchNo}. Cancel it in Tally first (or give a credit note), press "Check now" in Tally Sync Center, then ${action}.`,
+        `${code} has its e-invoice in Tally (${tv.vchNo}). Cancel it in Tally first (or give a credit note), press "Check now" in Tally Sync Center, then ${action}.`,
       );
     }
   }
