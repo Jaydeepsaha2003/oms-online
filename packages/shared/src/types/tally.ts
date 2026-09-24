@@ -166,6 +166,8 @@ export type TallyRecon =
 
 export interface TallyReconRow {
   id: number;
+  /** Sales | Credit Note | Debit Note */
+  vchType: string;
   recon: TallyRecon;
   /** Every difference found, in words. */
   note: string | null;

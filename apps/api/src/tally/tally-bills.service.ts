@@ -1,4 +1,5 @@
 import { Injectable, NotFoundException } from '@nestjs/common';
+import type { Prisma } from '@prisma/client';
 import type { TallyRecon, TallyReconResult, TallyReconRow } from '@oms/shared';
 import { PrismaService } from '../prisma/prisma.service';
 import { tag } from '../account-groups/tally-master.parser';
@@ -9,6 +10,12 @@ import { currentFy, DEBTORS_TDL, parseLedgers, tallyVoucherNo } from './tally-pa
 const SALES_TDL =
   '<COLLECTION NAME="OmsSales"><TYPE>Voucher</TYPE><FETCH>GUID,MasterId,AlterId,VoucherNumber,Date,PartyLedgerName,Amount,IsCancelled,IRNAckNo</FETCH>' +
   '<FILTER>OmsIsSale</FILTER></COLLECTION><SYSTEM TYPE="Formulae" NAME="OmsIsSale">$VoucherTypeName = "Sales"</SYSTEM>';
+
+/** This FY's credit and debit notes — matched to OMS by party + amount + date, as their numbers never paired. */
+const NOTES_TDL =
+  '<COLLECTION NAME="OmsNotes"><TYPE>Voucher</TYPE><FETCH>GUID,MasterId,AlterId,VoucherTypeName,VoucherNumber,Date,PartyLedgerName,Amount,IsCancelled,IRNAckNo</FETCH>' +
+  '<FILTER>OmsIsNote</FILTER></COLLECTION><SYSTEM TYPE="Formulae" NAME="OmsIsNote">$VoucherTypeName = "Credit Note" OR $VoucherTypeName = "Debit Note"</SYSTEM>';
+const NOTE_WINDOW_DAYS = 15;
 
 /** Tally "20260401" → local midnight. */
 const tallyDate = (s: string | null) => (s && /^\d{8}$/.test(s) ? new Date(+s.slice(0, 4), +s.slice(4, 6) - 1, +s.slice(6, 8)) : null);
@@ -146,9 +153,9 @@ export class TallyBillsService {
       async (tx) => {
         // Tally-only rows are rebuilt each run; carry their acceptances across.
         const kept = new Map(
-          (await tx.tallyVoucher.findMany({ where: { challanId: null, acceptedRecon: { not: null } } })).map((r) => [r.tallyGuid, r]),
+          (await tx.tallyVoucher.findMany({ where: { vchType: 'Sales', challanId: null, acceptedRecon: { not: null } } })).map((r) => [r.tallyGuid, r]),
         );
-        await tx.tallyVoucher.deleteMany({ where: { challanId: null } });
+        await tx.tallyVoucher.deleteMany({ where: { vchType: 'Sales', challanId: null } });
         // Free every GUID first: a renumbered invoice may now own another's voucher.
         await tx.tallyVoucher.updateMany({ where: { challanId: { in: linkRows.map((r) => r.challanId) } }, data: { tallyGuid: null } });
         for (const r of linkRows) {
@@ -166,7 +173,111 @@ export class TallyBillsService {
       },
       { timeout: 60_000 },
     );
+    await this.syncNotes(fy, companyGuid ?? '', (customerId) => {
+      if (customerId == null || !mapped.get(customerId)) return null;
+      return new Set([mapped.get(customerId)!, ...(aliases.get(customerId) ?? [])]);
+    });
     return this.result();
+  }
+
+  /**
+   * Credit / debit notes. Their OMS and Tally numbers never paired (CN/14 in OMS
+   * is 2 in Tally), so a note is linked by party + amount (±₹1) + date within
+   * NOTE_WINDOW_DAYS, nearest date first, each Tally note used once. Only notes
+   * with a billed part (B > 0) belong in Tally. Rows are rebuilt every run;
+   * acceptances carry over by Tally voucher (or by the OMS note when unlinked).
+   */
+  private async syncNotes(fy: ReturnType<typeof currentFy>, companyGuid: string, allowedFor: (customerId: number | null) => Set<string> | null) {
+    const xml = await this.tally.exportFromCompany(
+      'OmsNotes',
+      NOTES_TDL,
+      `<SVFROMDATE TYPE="Date">${fy.from}</SVFROMDATE><SVTODATE TYPE="Date">${fy.to}</SVTODATE>`,
+    );
+    const tally = [...xml.matchAll(/<VOUCHER [^>]*>([^]*?)<\/VOUCHER>/g)]
+      .map(([, v]) => ({
+        type: tag(v, 'VOUCHERTYPENAME') ?? '',
+        guid: tag(v, 'GUID') ?? '',
+        masterId: int(tag(v, 'MASTERID')),
+        alterId: int(tag(v, 'ALTERID')),
+        vchNo: tag(v, 'VOUCHERNUMBER'),
+        date: tallyDate(tag(v, 'DATE')),
+        party: tag(v, 'PARTYLEDGERNAME'),
+        amount: Math.abs(Number(tag(v, 'AMOUNT') ?? 0)),
+        cancelled: tag(v, 'ISCANCELLED') === 'Yes',
+        irnAckNo: tag(v, 'IRNACKNO'),
+      }))
+      .filter((v) => v.guid);
+    const [cns, dns] = await Promise.all([
+      this.prisma.creditNote.findMany({ where: { invDate: { gte: fy.start }, b: { gt: 0 } }, select: { id: true, invDate: true, customerId: true, b: true } }),
+      this.prisma.challan.findMany({
+        where: { transaction: 'DEBIT NOTE', challanStatus: 'CONFIRMED', invDate: { gte: fy.start }, b: { gt: 0 } },
+        select: { id: true, invDate: true, customerId: true, b: true },
+      }),
+    ]);
+    const oms = [
+      ...cns.map((n) => ({ ...n, type: 'Credit Note', key: `cn:${n.id}`, creditNoteId: n.id, challanId: null as number | null })),
+      ...dns.map((n) => ({ ...n, type: 'Debit Note', key: `dn:${n.id}`, creditNoteId: null as number | null, challanId: n.id })),
+    ].sort((a, b) => a.invDate.getTime() - b.invDate.getTime());
+
+    const now = new Date();
+    const used = new Set<string>();
+    const window = NOTE_WINDOW_DAYS * 86_400_000;
+    const rows: { key: string; data: Prisma.TallyVoucherUncheckedCreateInput }[] = oms.map((o) => {
+      const allowed = allowedFor(o.customerId);
+      const t = tally
+        .filter((v) => v.type === o.type && !v.cancelled && !used.has(v.guid) && v.date && Math.abs(v.amount - (o.b ?? 0)) <= 1.01)
+        .filter((v) => (!allowed || allowed.has(v.party ?? '')) && Math.abs(v.date!.getTime() - o.invDate.getTime()) <= window)
+        .sort((a, b) => Math.abs(a.date!.getTime() - o.invDate.getTime()) - Math.abs(b.date!.getTime() - o.invDate.getTime()))[0];
+      if (t) used.add(t.guid);
+      const issues: [TallyRecon, string][] = !t
+        ? [['MISSING_IN_TALLY', `No Tally ${o.type.toLowerCase()} of ${rupees(o.b ?? 0)} for this party within ${NOTE_WINDOW_DAYS} days`]]
+        : t.date && dayKey(t.date) !== dayKey(o.invDate)
+          ? [['DATE_MISMATCH', `Tally ${dmy(t.date)}, OMS ${dmy(o.invDate)}`]]
+          : [];
+      return {
+        key: t?.guid ?? o.key,
+        data: {
+          vchType: o.type, challanId: o.challanId, creditNoteId: o.creditNoteId, companyGuid,
+          status: t ? 'POSTED' : 'NOT_POSTED', tallyGuid: t?.guid ?? null, tallyMasterId: t?.masterId ?? null, tallyAlterId: t?.alterId ?? null,
+          vchNo: t?.vchNo ?? null, vchDate: t?.date ?? null, partyLedger: t?.party ?? null, amount: t?.amount ?? null,
+          cancelled: false, irnAckNo: t?.irnAckNo ?? null, recon: issues[0]?.[0] ?? 'OK', reconNote: issues[0]?.[1] ?? null, checkedAt: now,
+        },
+      };
+    });
+    for (const t of tally.filter((v) => !used.has(v.guid))) {
+      rows.push({
+        key: t.guid,
+        data: {
+          vchType: t.type, challanId: null, creditNoteId: null, companyGuid, status: 'POSTED', tallyGuid: t.guid, tallyMasterId: t.masterId,
+          tallyAlterId: t.alterId, vchNo: t.vchNo, vchDate: t.date, partyLedger: t.party, amount: t.amount, cancelled: t.cancelled,
+          irnAckNo: t.irnAckNo, recon: t.cancelled ? 'OK' : 'TALLY_ONLY',
+          reconNote: t.cancelled ? null : `No OMS ${t.type.toLowerCase()} for this party and amount`, checkedAt: now,
+        },
+      });
+    }
+
+    await this.prisma.$transaction(
+      async (tx) => {
+        const notes = { vchType: { in: ['Credit Note', 'Debit Note'] } };
+        const kept = new Map(
+          (await tx.tallyVoucher.findMany({ where: { ...notes, acceptedRecon: { not: null } } })).map((r) => [
+            r.tallyGuid ?? (r.creditNoteId ? `cn:${r.creditNoteId}` : `dn:${r.challanId}`),
+            r,
+          ]),
+        );
+        await tx.tallyVoucher.deleteMany({ where: notes });
+        for (const r of rows) {
+          const a = kept.get(r.key);
+          await tx.tallyVoucher.create({
+            data: {
+              ...r.data,
+              ...(a && { acceptedRecon: a.acceptedRecon, acceptedAlterId: a.acceptedAlterId, acceptedNote: a.acceptedNote, acceptedBy: a.acceptedBy, acceptedAt: a.acceptedAt }),
+            },
+          });
+        }
+      },
+      { timeout: 60_000 },
+    );
   }
 
   async result(): Promise<TallyReconResult> {
@@ -178,10 +289,18 @@ export class TallyBillsService {
         include: { challan: { select: { id: true, code: true, invDate: true, customerName: true, b: true, challanStatus: true } } },
         orderBy: [{ vchDate: 'desc' }, { id: 'desc' }],
       }),
-      this.prisma.tallyVoucher.count({ where: { ...where, challanId: { not: null }, tallyGuid: { not: null } } }),
-      this.prisma.tallyVoucher.count({ where: { ...where, challanId: { not: null }, recon: 'OK' } }),
+      this.prisma.tallyVoucher.count({ where: { ...where, vchType: 'Sales', challanId: { not: null }, tallyGuid: { not: null } } }),
+      this.prisma.tallyVoucher.count({ where: { ...where, vchType: 'Sales', challanId: { not: null }, recon: 'OK' } }),
       this.prisma.tallyVoucher.aggregate({ where, _max: { checkedAt: true } }),
     ]);
+    const notes = new Map(
+      (
+        await this.prisma.creditNote.findMany({
+          where: { id: { in: rows.map((r) => r.creditNoteId).filter((id): id is number => id != null) } },
+          select: { id: true, code: true, invDate: true, customerName: true, b: true, status: true },
+        })
+      ).map((n) => [n.id, n]),
+    );
     return {
       checkedAt: last._max.checkedAt?.toISOString() ?? null,
       linked,
@@ -194,9 +313,12 @@ export class TallyBillsService {
           accepted: r.acceptedRecon === r.recon && r.acceptedAlterId === r.tallyAlterId,
           acceptedNote: r.acceptedNote,
           acceptedBy: r.acceptedBy,
+          vchType: r.vchType,
           oms: r.challan
             ? { challanId: r.challan.id, code: r.challan.code, date: r.challan.invDate.toISOString(), customerName: r.challan.customerName, amount: r.challan.b, status: r.challan.challanStatus }
-            : null,
+            : r.creditNoteId && notes.get(r.creditNoteId)
+              ? (({ id, code, invDate, customerName, b, status }) => ({ challanId: id, code, date: invDate.toISOString(), customerName, amount: b, status }))(notes.get(r.creditNoteId)!)
+              : null,
           tally: r.tallyGuid
             ? { vchNo: r.vchNo, date: r.vchDate?.toISOString() ?? null, party: r.partyLedger, amount: r.amount, cancelled: r.cancelled, irn: !!r.irnAckNo }
             : null,

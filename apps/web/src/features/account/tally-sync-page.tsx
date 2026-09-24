@@ -103,7 +103,7 @@ function BillCheck({ canManage }: { canManage: boolean }) {
     <Card>
       <CardHeader className="flex flex-row flex-wrap items-start justify-between gap-3">
         <div>
-          <CardTitle>Bills: OMS ↔ Tally (this year)</CardTitle>
+          <CardTitle>Bills & credit/debit notes: OMS ↔ Tally (this year)</CardTitle>
           <CardDescription>
             {data?.checkedAt
               ? `${data.linked} bills linked · ${data.ok} match · ${open.length} to look at · checked ${formatDateTime(data.checkedAt)}`
@@ -145,7 +145,10 @@ function BillCheck({ canManage }: { canManage: boolean }) {
                       <td className="py-2 pr-2">
                         {r.oms ? (
                           <>
-                            <div className="font-semibold">{r.oms.code}</div>
+                            <div className="font-semibold">
+                              {r.vchType !== 'Sales' && <span className={cn(CHIP, BLUE, 'mr-1')}>{r.vchType}</span>}
+                              {r.oms.code}
+                            </div>
                             <div className="text-muted-foreground text-xs">
                               {formatDate(r.oms.date)} · {r.oms.customerName} · B {rs(r.oms.amount)}
                               {r.oms.status === 'CANCELLED' && ' · cancelled'}
@@ -158,7 +161,10 @@ function BillCheck({ canManage }: { canManage: boolean }) {
                       <td className="py-2 pr-2">
                         {r.tally ? (
                           <>
-                            <div className="font-semibold">{r.tally.vchNo}</div>
+                            <div className="font-semibold">
+                              {r.vchType !== 'Sales' && !r.oms && <span className={cn(CHIP, BLUE, 'mr-1')}>{r.vchType}</span>}
+                              {r.tally.vchNo}
+                            </div>
                             <div className="text-muted-foreground text-xs">
                               {r.tally.date ? formatDate(r.tally.date) : '—'} · {r.tally.party} · {rs(r.tally.amount)}
                               {r.tally.cancelled && ' · cancelled'}
