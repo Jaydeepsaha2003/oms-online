@@ -251,7 +251,22 @@ export function salesVoucherXml(v: SalesVoucher, p: VoucherParty, note?: { itemL
   const ledgers =
     `<LEDGERENTRIES.LIST>${el('LEDGERNAME', v.party)}<ISDEEMEDPOSITIVE>${note ? 'No' : 'Yes'}</ISDEEMEDPOSITIVE><ISPARTYLEDGER>Yes</ISPARTYLEDGER><AMOUNT>${amt(-sg * v.total)}</AMOUNT></LEDGERENTRIES.LIST>` +
     // Credit side, signed — a negative round-off stays "No" with a minus amount, as Tally stores it.
-    v.ledgers.map((l) => `<LEDGERENTRIES.LIST>${el('LEDGERNAME', l.name)}<ISDEEMEDPOSITIVE>${dp}</ISDEEMEDPOSITIVE><AMOUNT>${amt(sg * l.amount)}</AMOUNT></LEDGERENTRIES.LIST>`).join('');
+    // GST markers as on Tally-entered bills (SSS-687, 739): without them Tally leaves
+    // packing/box out of the taxable value and refuses the e-invoice (SSS-749).
+    v.ledgers
+      .map((l) => {
+        const charge = l.name === TALLY_NAMES.packing || l.name === TALLY_NAMES.box;
+        const igstRate = Object.entries(TALLY_NAMES.igst).find(([, name]) => name === l.name)?.[0];
+        return (
+          '<LEDGERENTRIES.LIST>' +
+          (charge ? '<APPROPRIATEFOR>GST</APPROPRIATEFOR><GSTAPPROPRIATETO>Goods and Services</GSTAPPROPRIATETO><EXCISEALLOCTYPE>Based on Value</EXCISEALLOCTYPE>' : '') +
+          (igstRate ? `<RATEOFINVOICETAX.LIST TYPE="Number"><RATEOFINVOICETAX>${igstRate}</RATEOFINVOICETAX></RATEOFINVOICETAX.LIST><ROUNDTYPE>Normal Rounding</ROUNDTYPE>` : '') +
+          `${el('LEDGERNAME', l.name)}<ISDEEMEDPOSITIVE>${dp}</ISDEEMEDPOSITIVE><AMOUNT>${amt(sg * l.amount)}</AMOUNT>` +
+          (charge ? `<VATEXPAMOUNT>${amt(sg * l.amount)}</VATEXPAMOUNT>` : '') +
+          '</LEDGERENTRIES.LIST>'
+        );
+      })
+      .join('');
   return (
     `<VOUCHER VCHTYPE="${note ? 'Credit Note' : 'Sales'}" ACTION="Create" OBJVIEW="Invoice Voucher View">` +
     list('ADDRESS', p.address) +

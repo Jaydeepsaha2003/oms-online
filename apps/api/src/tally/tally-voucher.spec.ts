@@ -162,3 +162,18 @@ test('every bill carries the e-invoice dispatch-from and bill-to place, even und
   assert.match(x, /<BILLTOPLACE>MUMBAI<\/BILLTOPLACE><SHIPTOPLACE>MUMBAI<\/SHIPTOPLACE>/);
   assert.doesNotMatch(x, /EWAYBILLDETAILS/);
 });
+
+test('packing/box are marked for GST and IGST carries its rate, as on Tally-entered bills (SSS-749 tax mismatch)', () => {
+  const { salesVoucherXml } = require('./tally-voucher.ts');
+  const x = salesVoucherXml(
+    {
+      vchNo: 'SSS-749/26-27', date: new Date(2026, 8, 24), party: 'WINCHEF INTERNATIONAL', total: 56_571, shippedBy: null, deliveryNote: null,
+      lines: [{ item: 'S.S.UTENSILS/GLASS', unit: 'KGS', qty: 131.3, rate: 405, amount: 53176.5 }],
+      ledgers: [{ name: 'PACKING CHARGES', amount: 700 }, { name: 'IGST 5%', amount: 2693.83 }, { name: 'ROUND OFF', amount: 0.67 }],
+    },
+    { name: 'WINCHEF INTERNATIONAL', state: 'Haryana' },
+  );
+  assert.match(x, /<LEDGERENTRIES\.LIST><APPROPRIATEFOR>GST<\/APPROPRIATEFOR><GSTAPPROPRIATETO>Goods and Services<\/GSTAPPROPRIATETO><EXCISEALLOCTYPE>Based on Value<\/EXCISEALLOCTYPE><LEDGERNAME>PACKING CHARGES<\/LEDGERNAME><ISDEEMEDPOSITIVE>No<\/ISDEEMEDPOSITIVE><AMOUNT>700\.00<\/AMOUNT><VATEXPAMOUNT>700\.00<\/VATEXPAMOUNT><\/LEDGERENTRIES\.LIST>/);
+  assert.match(x, /<RATEOFINVOICETAX\.LIST TYPE="Number"><RATEOFINVOICETAX>5<\/RATEOFINVOICETAX><\/RATEOFINVOICETAX\.LIST><ROUNDTYPE>Normal Rounding<\/ROUNDTYPE><LEDGERNAME>IGST 5%<\/LEDGERNAME>/);
+  assert.match(x, /<LEDGERENTRIES\.LIST><LEDGERNAME>ROUND OFF<\/LEDGERNAME>/);
+});
