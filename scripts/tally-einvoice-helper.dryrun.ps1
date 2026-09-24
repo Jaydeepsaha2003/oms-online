@@ -4,7 +4,8 @@ $script:calls = 0
 function Invoke-WebRequest { param($Uri, $Method, $Body, [switch]$UseBasicParsing, $TimeoutSec)
   $script:calls++
   Write-Host ("TALLY FORMULA: " + [regex]::Match($Body, '<SYSTEM[^>]*>(.*)</SYSTEM>').Groups[1].Value)
-  $irn = if ($script:calls -ge 3) { '<IRN TYPE="String">abc123</IRN>' } else { '' }
+  # $env:DRY_DONE=1 -> the IRN was already made by hand before the helper saves (it must stop).
+  $irn = if ($script:calls -ge 3 -or ($env:DRY_DONE -and $script:calls -ge 2)) { '<IRN TYPE="String">abc123</IRN>' } else { '' }
   # $env:DRY_EWB=1 -> the bill also gets an e-way bill (tests the 2-2 print path)
   if ($irn -and $env:DRY_EWB) { $irn += '<EWAYBILLDETAILS.LIST><BILLNUMBER>202294394122</BILLNUMBER></EWAYBILLDETAILS.LIST>' }
   [pscustomobject]@{ Content = "<ENVELOPE><BODY><DATA><COLLECTION><VOUCHER><DATE TYPE=`"Date`">20260924</DATE><VOUCHERNUMBER>SSS-747/26-27</VOUCHERNUMBER><PARTYLEDGERNAME TYPE=`"String`">ANIL METAL</PARTYLEDGERNAME><MASTERID TYPE=`"Number`"> 23928</MASTERID>$irn</VOUCHER></COLLECTION></DATA></BODY></ENVELOPE>" }

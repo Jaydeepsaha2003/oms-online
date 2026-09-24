@@ -106,6 +106,11 @@ foreach ($v in $pending | Select-Object -First $Max) {
     if (-not (Focus-Tally)) { throw 'TallyPrime window not found - stopped.' }
     Start-Sleep -Milliseconds 1000
     if ($k -eq '^a') {
+      # Made by hand meanwhile? (SSS-752 was, while an old list still offered it.) Never re-save a bill that has an IRN.
+      if ("$((Ask-Tally $byNo).IRN.'#text')".Trim()) {
+        [console]::Beep(800, 600)
+        throw "$no already has its e-invoice (made by hand?) - stopped, nothing saved. Press Esc in Tally, then run the helper again for the rest."
+      }
       # Save only if Tally really shows this bill open (number + "Party A/c name" of the bill screen).
       $seen = Read-Screen (Snap 'before-save') -replace '\s', ''
       # OCR may read S as 5, so match the number part (752/26-27) and a label of the bill screen.
