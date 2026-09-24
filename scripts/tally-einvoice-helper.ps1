@@ -18,6 +18,7 @@ $ErrorActionPreference = 'Stop'
 # Tally keys (SendKeys: % = Alt, ^ = Ctrl, ~ = Enter). {DATE} and {NO} are filled in per bill.
 # ponytail: blind keystrokes, calibrated on this PC in step mode; if a Tally screen changes, fix the list here.
 # Checked on the Tally PC with SSS-747: Go To > Day Book > date > Ctrl+F "Look for" the number > open > save > "generate e-Invoice?" Yes.
+# 1.5 s after each key: at 0.8 s Tally was still opening the bill and swallowed Ctrl+A (SSS-750).
 $OpenAndSend = @('%g', 'Day Book~', '{F2}', '{DATE}~', '^f', '{NO}~', '~', '^a', 'y')
 $PrintKeys = @('%p', '~', '^p')
 
@@ -53,7 +54,7 @@ foreach ($v in $pending | Select-Object -First $Max) {
     if (-not $sh.AppActivate('TallyPrime')) { throw 'TallyPrime window not found - stopped.' }
     Start-Sleep -Milliseconds 400
     $sh.SendKeys($k)
-    Start-Sleep -Milliseconds 800
+    Start-Sleep -Milliseconds 1500
   }
   Write-Host 'Waiting for the IRN (up to 2 min)...'
   $irn = $null
@@ -67,7 +68,7 @@ foreach ($v in $pending | Select-Object -First $Max) {
   Write-Host "IRN ok: $irn - printing"
   foreach ($k in $PrintKeys) {
     if (-not $Auto) { Read-Host "Next key: $k   (Enter = send, Ctrl+C = stop)" | Out-Null }
-    [void]$sh.AppActivate('TallyPrime'); Start-Sleep -Milliseconds 400; $sh.SendKeys($k); Start-Sleep -Milliseconds 800
+    [void]$sh.AppActivate('TallyPrime'); Start-Sleep -Milliseconds 400; $sh.SendKeys($k); Start-Sleep -Milliseconds 1500
   }
 }
 Write-Host "`nDone."
