@@ -723,7 +723,8 @@ export function ChallansListPage() {
             </p>
           </div>
         </div>
-        <div className="flex items-center justify-end border-t pt-2" onClick={(e) => e.stopPropagation()}>
+        <div className="flex items-center justify-between gap-2 border-t pt-2" onClick={(e) => e.stopPropagation()}>
+          <TallyChip r={r} />
           {rowActions(r)}
         </div>
       </div>
