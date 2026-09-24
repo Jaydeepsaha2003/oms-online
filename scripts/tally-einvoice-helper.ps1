@@ -47,6 +47,10 @@ $pending | ForEach-Object { Write-Host ("{0}  {1}  {2}" -f $_.DATE.'#text', $_.V
 if ($List) { return }
 
 $sh = New-Object -ComObject WScript.Shell
+# Step mode: after each key, bring this window back so the next Enter reaches the helper, not Tally
+# (an Enter that went to Tally opened "Bills Payable - GST" from the Go To list).
+$Host.UI.RawUI.WindowTitle = 'e-invoice helper'
+function Back-To-Helper { if (-not $Auto) { Start-Sleep -Milliseconds 300; [void]$sh.AppActivate('e-invoice helper') } }
 # Bring Tally to the front by its program (tally.exe), not the window title — the title
 # changes with the screen, and "TallyPrime" alone was once not found. Keys only ever go to Tally.
 function Focus-Tally {
@@ -71,6 +75,7 @@ foreach ($v in $pending | Select-Object -First $Max) {
     Start-Sleep -Milliseconds 1000
     $sh.SendKeys($k)
     Start-Sleep -Milliseconds 1500
+    Back-To-Helper
   }
   Write-Host 'Waiting for the IRN (up to 2 min)...'
   $irn = $null
@@ -94,6 +99,7 @@ foreach ($v in $pending | Select-Object -First $Max) {
     if (-not $Auto) { Read-Host "Next key: $k   (Enter = send, Ctrl+C = stop)" | Out-Null }
     if (-not (Focus-Tally)) { throw 'TallyPrime window not found - stopped before printing.' }
     Start-Sleep -Milliseconds 1000; $sh.SendKeys($k); Start-Sleep -Milliseconds 1500
+    Back-To-Helper
   }
 }
 Write-Host "`nDone."
