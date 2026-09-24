@@ -25,13 +25,15 @@ function Ask-Tally($filter) {
     "<STATICVARIABLES><SVEXPORTFORMAT>`$`$SysName:XML</SVEXPORTFORMAT><SVCURRENTCOMPANY>S.S.STEEL</SVCURRENTCOMPANY>" +
     "<SVFROMDATE>$((Get-Date).AddDays(-7).ToString('yyyyMMdd'))</SVFROMDATE><SVTODATE>$((Get-Date).ToString('yyyyMMdd'))</SVTODATE></STATICVARIABLES>" +
     "<TDL><TDLMESSAGE><COLLECTION NAME=`"P`"><TYPE>Voucher</TYPE><FILTER>F</FILTER><FETCH>Date,VoucherNumber,PartyLedgerName,MasterID,IRN</FETCH></COLLECTION>" +
-    "<SYSTEM TYPE=`"Formulae`" NAME=`"F`">`$VoucherTypeName = `"Sales`" AND NOT `$IsCancelled AND $filter</SYSTEM></TDLMESSAGE></TDL></DESC></BODY></ENVELOPE>"
+    "<SYSTEM TYPE=`"Formulae`" NAME=`"F`">`$VoucherTypeName = `"Sales`" AND $filter</SYSTEM></TDLMESSAGE></TDL></DESC></BODY></ENVELOPE>"
   $r = Invoke-WebRequest -Uri $Tally -Method Post -Body $xml -UseBasicParsing -TimeoutSec 30
   ([xml]($r.Content -replace '&#4;', '')).ENVELOPE.BODY.DATA.COLLECTION.VOUCHER
 }
 
 # Last 7 days only, so an old bill is never touched by accident.
-$pending = @(Ask-Tally '$$IsEmpty:$IRN AND NOT $$IsEmpty:$PartyGSTIN' | Where-Object { "$($_.VOUCHERNUMBER)" -like 'SSS-*' } |
+# Tally reads formulas strictly left to right, and a bad one freezes Tally behind an error box:
+# only these two exact shapes are proven on this Tally.
+$pending = @(Ask-Tally '$$IsEmpty:$IRN AND NOT $IsCancelled AND NOT $$IsEmpty:$PartyGSTIN' | Where-Object { "$($_.VOUCHERNUMBER)" -like 'SSS-*' } |
   Sort-Object { [int]"$($_.MASTERID.'#text')".Trim() })
 if (-not $pending.Count) { Write-Host 'Koi bill e-invoice ke liye baaki nahi.'; return }
 $pending | ForEach-Object { Write-Host ("{0}  {1}  {2}" -f $_.DATE.'#text', $_.VOUCHERNUMBER, $_.PARTYLEDGERNAME.'#text') }
