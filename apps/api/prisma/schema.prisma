@@ -2082,6 +2082,7 @@ model TallyVoucher {
   amount          Float?
   cancelled       Boolean   @default(false)
   irnAckNo        String?
+  eWayBillNo      String?
   /// OK | MISSING_IN_TALLY | CANCELLED_IN_TALLY | CANCELLED_IN_OMS |
   /// AMOUNT_MISMATCH | PARTY_MISMATCH | DATE_MISMATCH | TALLY_ONLY
   recon           String

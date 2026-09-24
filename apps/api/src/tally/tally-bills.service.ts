@@ -5,10 +5,11 @@ import { PrismaService } from '../prisma/prisma.service';
 import { tag } from '../account-groups/tally-master.parser';
 import { TallyService } from './tally.service';
 import { currentFy, DEBTORS_TDL, parseLedgers, tallyVoucherNo } from './tally-parties.service';
+import { eWayBillNo } from './tally-eway';
 
 /** This FY's Sales vouchers, cancelled ones included — explicit fields only. */
 const SALES_TDL =
-  '<COLLECTION NAME="OmsSales"><TYPE>Voucher</TYPE><FETCH>GUID,MasterId,AlterId,VoucherNumber,Date,PartyLedgerName,Amount,IsCancelled,IRNAckNo</FETCH>' +
+  '<COLLECTION NAME="OmsSales"><TYPE>Voucher</TYPE><FETCH>GUID,MasterId,AlterId,VoucherNumber,Date,PartyLedgerName,Amount,IsCancelled,IRNAckNo,EWayBillDetails.BillNumber,EWayBillDetails.IsCancelled</FETCH>' +
   '<FILTER>OmsIsSale</FILTER></COLLECTION><SYSTEM TYPE="Formulae" NAME="OmsIsSale">$VoucherTypeName = "Sales"</SYSTEM>';
 
 /** This FY's credit and debit notes — matched to OMS by party + amount + date, as their numbers never paired. */
@@ -56,6 +57,7 @@ export class TallyBillsService {
         amount: Math.abs(Number(tag(v, 'AMOUNT') ?? 0)),
         cancelled: tag(v, 'ISCANCELLED') === 'Yes',
         irnAckNo: tag(v, 'IRNACKNO'),
+        eWayBillNo: eWayBillNo(v),
       }))
       .filter((v) => v.guid);
     const byNo = new Map(vouchers.map((v) => [v.vchNo, v]));
@@ -122,6 +124,7 @@ export class TallyBillsService {
           amount: v?.amount ?? null,
           cancelled: v?.cancelled ?? false,
           irnAckNo: v?.irnAckNo ?? null,
+          eWayBillNo: v?.eWayBillNo ?? null,
           recon: issues[0]?.[0] ?? 'OK',
           reconNote: issues.map((i) => i[1]).join('; ') || null,
           checkedAt: now,
@@ -144,6 +147,7 @@ export class TallyBillsService {
         amount: v.amount,
         cancelled: v.cancelled,
         irnAckNo: v.irnAckNo,
+        eWayBillNo: v.eWayBillNo,
         recon: v.cancelled ? 'OK' : 'TALLY_ONLY',
         reconNote: v.cancelled ? null : 'No OMS invoice with this number',
         checkedAt: now,

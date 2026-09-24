@@ -72,7 +72,17 @@ function TallyChip({ r }: { r: ChallanDto }) {
           : s === 'FAILED'
             ? ['Tally refused', 'bg-rose-50 text-rose-700 ring-rose-200']
             : ['Not in Tally', 'bg-amber-50 text-amber-800 ring-amber-200'];
-  return <span className={cn('inline-flex rounded-[4px] px-2 py-0.5 text-[11.5px] font-bold whitespace-nowrap ring-1 ring-inset', tone)}>{text}</span>;
+  return (
+    <span className="inline-flex flex-col items-start gap-1">
+      <span className={cn('inline-flex rounded-[4px] px-2 py-0.5 text-[11.5px] font-bold whitespace-nowrap ring-1 ring-inset', tone)}>{text}</span>
+      {s === 'POSTED' && (r.tally?.irnAckNo || r.tally?.eWayBillNo) && (
+        <span className="inline-flex flex-wrap gap-x-2 text-[11px] font-semibold text-emerald-700 dark:text-emerald-300">
+          {r.tally?.irnAckNo && <span title={`IRN acknowledgement ${r.tally.irnAckNo}`}>IRN issued ✓</span>}
+          {r.tally?.eWayBillNo && <span title={`E-way bill ${r.tally.eWayBillNo}`}>E-way issued ✓</span>}
+        </span>
+      )}
+    </span>
+  );
 }
 
 /** Matches the Pending Challan grid: Inter, semibold, near-black. */

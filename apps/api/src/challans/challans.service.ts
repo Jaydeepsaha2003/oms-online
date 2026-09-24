@@ -527,7 +527,7 @@ export class ChallansService {
         orderBy: [{ invDate: 'desc' }, { id: 'desc' }],
         skip: q.skip,
         take: q.pageSize,
-        include: { items: true, tallyVoucher: { select: { status: true, vchNo: true } } },
+        include: { items: true, tallyVoucher: { select: { status: true, vchNo: true, irnAckNo: true, eWayBillNo: true } } },
       }),
       this.prisma.challan.count({ where }),
     ]);

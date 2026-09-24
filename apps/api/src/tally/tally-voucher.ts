@@ -75,6 +75,9 @@ export interface SalesVoucher {
   transporterId?: string | null;
 }
 
+/** For ordinary Sales bills, prefill e-way details only above the ₹50,000 invoice value. */
+export const shouldPrefillEWayBill = (total: number) => total > 50_000;
+
 const r2 = (x: number) => Math.round((x + Number.EPSILON) * 100) / 100;
 const r3 = (x: number) => Math.round((x + Number.EPSILON) * 1000) / 1000;
 const n = (v: number | null | undefined) => (Number.isFinite(v as number) ? (v as number) : 0);
@@ -267,7 +270,7 @@ export function salesVoucherXml(v: SalesVoucher, p: VoucherParty, note?: { itemL
     (!note && v.deliveryNote ? `<INVOICEDELNOTES.LIST><BASICSHIPPINGDATE>${date}</BASICSHIPPINGDATE>${el('BASICSHIPDELIVERYNOTE', v.deliveryNote)}</INVOICEDELNOTES.LIST>` : '') +
     // E-way bill Part-A transporter, where Tally keeps it (as on SSS-739) — the
     // accountant then only generates. No bill number: Tally/NIC fill that in.
-    (!note && v.transporterId
+    (!note && shouldPrefillEWayBill(v.total) && v.transporterId
       ? '<EWAYBILLDETAILS.LIST><DOCUMENTTYPE>Tax Invoice</DOCUMENTTYPE><SUBTYPE>Supply</SUBTYPE>' +
         `<TRANSPORTDETAILS.LIST>${el('TRANSPORTERNAME', v.shippedBy)}${el('TRANSPORTERID', v.transporterId)}</TRANSPORTDETAILS.LIST></EWAYBILLDETAILS.LIST>`
       : '') +

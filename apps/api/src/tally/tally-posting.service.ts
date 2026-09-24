@@ -5,12 +5,13 @@ import { PrismaService } from '../prisma/prisma.service';
 import { tag } from '../account-groups/tally-master.parser';
 import { TallyService } from './tally.service';
 import { currentFy, DEBTORS_TDL, parseLedgers, TALLY_PREFIX, tallyVoucherNo } from './tally-parties.service';
-import { buildSalesVoucher, salesVoucherXml, type SalesVoucher, type VoucherParty } from './tally-voucher';
+import { buildSalesVoucher, salesVoucherXml, shouldPrefillEWayBill, type SalesVoucher, type VoucherParty } from './tally-voucher';
+import { eWayBillNo } from './tally-eway';
 
 /** Sales vouchers with their stock and ledger lines (cancelled ones included). */
 export const LINES_TDL = (filter: string, vchType = 'Sales') =>
   '<COLLECTION NAME="OmsSaleLines"><TYPE>Voucher</TYPE>' +
-  '<FETCH>GUID,MasterId,AlterId,VoucherNumber,Date,PartyLedgerName,PartyGSTIN,IsCancelled,IRNAckNo,EWayBillDetails.List,AllInventoryEntries.List,LedgerEntries.List</FETCH>' +
+  '<FETCH>GUID,MasterId,AlterId,VoucherNumber,Date,PartyLedgerName,PartyGSTIN,IsCancelled,IRNAckNo,EWayBillDetails.BillNumber,EWayBillDetails.IsCancelled,AllInventoryEntries.List,LedgerEntries.List</FETCH>' +
   `<FILTER>OmsPick</FILTER></COLLECTION><SYSTEM TYPE="Formulae" NAME="OmsPick">$VoucherTypeName = "${vchType}"${filter}</SYSTEM>`;
 
 
@@ -59,6 +60,7 @@ export interface Actual {
   transporterId: string | null;
   cancelled: boolean;
   irnAckNo: string | null;
+  eWayBillNo: string | null;
   items: Map<string, { qty: number; amount: number }>;
   ledgers: Map<string, number>;
   /** Ledger the stock lines are booked to (SALES, SALES RETURN, RATE DIFFERANCE…). */
@@ -93,6 +95,7 @@ export function parseActual(xml: string): Actual[] {
       transporterId: tag(v, 'TRANSPORTERID'),
       cancelled: tag(head, 'ISCANCELLED') === 'Yes',
       irnAckNo: tag(head, 'IRNACKNO'),
+      eWayBillNo: eWayBillNo(v),
       items,
       ledgers,
       itemLedger: tag(/<ACCOUNTINGALLOCATIONS\.LIST>([^]*?)<\/ACCOUNTINGALLOCATIONS\.LIST>/.exec(v)?.[1] ?? '', 'LEDGERNAME'),
@@ -252,6 +255,7 @@ export class TallyPostingService {
       amount: Math.abs(a.ledgers.get(a.party) ?? 0),
       cancelled: a.cancelled,
       irnAckNo: a.irnAckNo,
+      eWayBillNo: a.eWayBillNo,
       recon: a.cancelled ? 'CANCELLED_IN_TALLY' : diffs.length ? 'AMOUNT_MISMATCH' : 'OK',
       reconNote: a.cancelled ? 'Cancelled in Tally but live in OMS' : diffs.join('; ') || null,
       checkedAt: new Date(),
@@ -384,10 +388,10 @@ export class TallyPostingService {
       const warnings = [...diffs];
       if (found.vchNo !== b.built.vchNo) warnings.unshift(`Tally gave it number ${found.vchNo}, not ${b.built.vchNo}. Do not make the e-invoice — tell the developer.`);
       if (b.party.gstin && !found.partyGstin) warnings.push('The party GSTIN is not on the Tally voucher — open it in Tally and check before the e-invoice.');
-      if (b.built.transporterId && found.transporterId !== b.built.transporterId) {
+      if (shouldPrefillEWayBill(b.built.total) && b.built.transporterId && found.transporterId !== b.built.transporterId) {
         warnings.push(`Transporter ID ${b.built.transporterId} did not reach Tally's e-way bill details — fill it in there before the e-way bill.`);
       }
-      if (!b.built.transporterId && b.built.shippedBy) {
+      if (shouldPrefillEWayBill(b.built.total) && !b.built.transporterId && b.built.shippedBy) {
         warnings.push(`Transporter ${b.built.shippedBy} has no GSTIN in OMS (Masters → Transporters) — fill it in Tally's e-way bill screen this time.`);
       }
       await this.prisma.tallyPostLog.update({ where: { id: log.id }, data: { finishedAt: new Date(), outcome: 'POSTED', responseXml } });

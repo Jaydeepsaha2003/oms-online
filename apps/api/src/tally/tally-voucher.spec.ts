@@ -109,12 +109,32 @@ test('billing-rate bill posts billed KGS at billing rate; C and unbilled charges
   assert.ok(neg.blocks.some((b: string) => b.includes('negative')));
 });
 
-test('transporter ID goes into the e-way bill details; none sent when OMS has no ID', () => {
+test('e-way prefill is limited to sales bills above ₹50,000', () => {
   const { salesVoucherXml } = require('./tally-voucher.ts');
-  const v = { vchNo: 'SSS-740/26-27', date: new Date(2026, 8, 23), party: 'BAPU STEEL', lines: [], ledgers: [], total: 1, shippedBy: 'BEST ROADWAYS', deliveryNote: null };
+  const v = { vchNo: 'SSS-740/26-27', date: new Date(2026, 8, 23), party: 'BAPU STEEL', lines: [], ledgers: [], total: 50_001, shippedBy: 'BEST ROADWAYS', deliveryNote: null };
   const withId = salesVoucherXml({ ...v, transporterId: '88AAACB4214A1ZJ' }, { name: 'BAPU STEEL', state: 'Maharashtra' });
   assert.match(withId, /<EWAYBILLDETAILS\.LIST>.*<TRANSPORTERNAME>BEST ROADWAYS<\/TRANSPORTERNAME><TRANSPORTERID>88AAACB4214A1ZJ<\/TRANSPORTERID>.*<\/EWAYBILLDETAILS\.LIST>/);
   assert.doesNotMatch(salesVoucherXml({ ...v, transporterId: null }, { name: 'BAPU STEEL', state: 'Maharashtra' }), /EWAYBILLDETAILS/);
+  assert.doesNotMatch(salesVoucherXml({ ...v, total: 50_000, transporterId: '88AAACB4214A1ZJ' }, { name: 'BAPU STEEL', state: 'Maharashtra' }), /EWAYBILLDETAILS/);
+  assert.doesNotMatch(salesVoucherXml({ ...v, total: 15_687, transporterId: '88AAACB4214A1ZJ' }, { name: 'BAPU STEEL', state: 'Maharashtra' }), /EWAYBILLDETAILS/);
+});
+
+test('e-way details carry the same dispatch and delivery address fields as a Tally-entered bill', () => {
+  const { salesVoucherXml } = require('./tally-voucher.ts');
+  const xml = salesVoucherXml(
+    {
+      vchNo: 'SSS-749/26-27', date: new Date(2026, 8, 24), party: 'WINCHEF INTERNATIONAL', lines: [], ledgers: [], total: 56_571,
+      shippedBy: 'KARTAR CARRERS', deliveryNote: null, transporterId: '07AAACK0250D1Z8',
+      shipFrom: { address: 'J-6/ Balaji Industrial Premises, Bhayander (East) Thane', place: 'BHAYANDER', pincode: '401105', state: 'Maharashtra' },
+    },
+    { name: 'WINCHEF INTERNATIONAL', state: 'Haryana', gstin: '06ALTPR4851N1Z6', address: ['58, BEHIND PNB,', 'DURGA NAGAR, AMBALA CITY,', 'HARYANA'], pincode: '134003', city: 'AMBALA CITY' },
+  );
+  const eway = xml.match(/<EWAYBILLDETAILS\.LIST>([\s\S]*?)<\/EWAYBILLDETAILS\.LIST>/)?.[1] ?? '';
+  assert.match(eway, /<CONSIGNORADDRESS\.LIST TYPE="String"><CONSIGNORADDRESS>J-6\/ Balaji Industrial Premises, Bhayander \(East\) Thane<\/CONSIGNORADDRESS><\/CONSIGNORADDRESS\.LIST>/);
+  assert.match(eway, /<CONSIGNORPLACE>BHAYANDER<\/CONSIGNORPLACE><CONSIGNORPINCODE>401105<\/CONSIGNORPINCODE>/);
+  assert.match(eway, /<CONSIGNEEADDRESS\.LIST TYPE="String"><CONSIGNEEADDRESS>58, BEHIND PNB,, DURGA NAGAR, AMBALA CITY,, HARYANA<\/CONSIGNEEADDRESS><\/CONSIGNEEADDRESS\.LIST>/);
+  assert.match(eway, /<CONSIGNEEPLACE>HARYANA<\/CONSIGNEEPLACE><CONSIGNEEPINCODE>134003<\/CONSIGNEEPINCODE>/);
+  assert.match(eway, /<SHIPPEDFROMSTATE>Maharashtra<\/SHIPPEDFROMSTATE><SHIPPEDTOSTATE>Haryana<\/SHIPPEDTOSTATE>/);
 });
 
 test('credit note mirrors a sale: party credited, returns ledger debited, no OMS text or e-way bill', () => {
