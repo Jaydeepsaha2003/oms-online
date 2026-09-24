@@ -16,6 +16,7 @@ process.env.DATABASE_URL = `file:${dbPath.replaceAll('\\', '/')}`;
 require('ts-node').register({ project: path.join(root, 'apps/api/tsconfig.json'), transpileOnly: true });
 const { PrismaClient } = require('@prisma/client');
 const { PaymentsService } = require('../apps/api/src/payments/payments.service.ts');
+const { OpeningBalancesService } = require('../apps/api/src/opening-balances/opening-balances.service.ts');
 
 const sql = spawnSync(
   process.execPath,
@@ -197,6 +198,33 @@ test('an old spend of a receipt\'s money on account goes when that receipt re-se
   }
   const paid10 = (await prisma.acctPaymentReceipt.aggregate({ where: { invNo: 'DV-10JAN' }, _sum: { recAmt: true } }))._sum.recAmt;
   assert.equal(paid10, 50, 'DV-10JAN paid once, from money that exists');
+});
+
+test('a credit opening (party money held from day one) settles bills like money on account', async () => {
+  const p = await party('MINAL METAL');
+  await prisma.acctOpeningTrans.create({ data: { kind: 'OPENING', drCr: 'CREDIT', customerName: p.partyName, custId: p.id, transDate: new Date('2025-04-01'), bankAmt: 300, cashAmt: 0 } });
+  await bill(p, 'M-01JAN', '2026-01-01', 200);
+  await bill(p, 'M-02JAN', '2026-01-02', 200);
+  await prisma.$transaction((tx) => svc.applyOnAccount(tx, p.id));
+  const ctx = await svc.context({ customerId: p.id, recDate: '2026-01-05', payMode: 'BANK' });
+  assert.deepEqual(ctx.invoices.map((i) => [i.invNo, i.bankBal]), [['M-02JAN', 100]], 'credit clears the oldest bill, then part of the next');
+  const r = await receive(p, '2026-01-05', 100);
+  assert.equal((await prisma.acctPaymentReceipt.findFirst({ where: { sourceVoucherNo: r.voucherNo } })).invNo, 'M-02JAN');
+  await prisma.$transaction((tx) => svc.applyOnAccount(tx, p.id));
+  assert.equal((await prisma.acctPaymentReceipt.aggregate({ where: { custId: p.id }, _sum: { recAmt: true } }))._sum.recAmt, 400, 'no bill is paid twice');
+});
+
+test('raising an opening balance re-settles the receipts: the opening is paid first (RANJITHAM)', async () => {
+  const p = await party('RANJITHAM METAL STORES');
+  const openings = new OpeningBalancesService(prisma, svc);
+  const o = await openings.create({ customerId: p.id, transDate: '2025-06-26', bankAmt: 300, cashAmt: 0, drCr: 'DEBIT' }, 'Tester');
+  await bill(p, 'RJ-01JAN', '2026-01-01', 200);
+  await receive(p, '2026-01-05', 500); // clears opening 300, then the bill 200
+  await openings.update(o.id, { customerId: p.id, transDate: '2025-06-26', bankAmt: 400, cashAmt: 0, drCr: 'DEBIT' });
+  const cleared = await prisma.acctOpeningTrans.aggregate({ where: { custId: p.id, kind: 'CLEARANCE' }, _sum: { bankAmt: true } });
+  assert.equal(cleared._sum.bankAmt, 400, 'the bigger opening is cleared first');
+  const onBill = await prisma.acctPaymentReceipt.aggregate({ where: { invNo: 'RJ-01JAN' }, _sum: { recAmt: true } });
+  assert.equal(onBill._sum.recAmt, 100, 'so only 100 is left for the bill');
 });
 
 test('a named receipt whose bills are all paid is still refused when typed in', async () => {

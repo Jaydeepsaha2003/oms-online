@@ -263,6 +263,22 @@ test('a row that is not an opening is refused', async () => {
   assert.match(res.failed[0].reason, /opening balance row/i);
 });
 
+test('Match opening with no OMS opening record adds the difference, and the old bill settles (RIDDHI SIDDHI)', async () => {
+  const p = await party('RIDDHI SIDDHI ENTERPRISES (SCRAP)');
+  await prisma.challan.create({ data: { code: 'SCR/1', prefix: 'SCR', invDate: new Date('2026-02-10'), customerId: p.id, customerName: p.partyName, challanStatus: 'CONFIRMED', b: 1000, c: 0, total: 1000 } });
+  const r = await run();
+  const row = await openingRow(r.id, p, { dr: 200, omsAmount: 1000 });
+  const res = await svc.matchOpenings({ rowIds: [row.id] }, 'Tester');
+  assert.equal(res.failed.length, 0, res.failed[0]?.reason);
+  const [o] = await openingsOf(p.id);
+  assert.equal(o.drCr, 'CREDIT');
+  assert.equal(o.bankAmt, 800, 'only the difference is added');
+  assert.equal(o.transDate.getFullYear(), 2025, 'dated at the start of the old bill year, so the bill still counts');
+  const paid = await prisma.acctPaymentReceipt.aggregate({ where: { invNo: 'SCR/1' }, _sum: { recAmt: true } });
+  assert.equal(paid._sum.recAmt, 800, 'the credit settles the old bill; 200 stays due, as in Tally');
+  assert.equal((await prisma.tallyReconRow.findUnique({ where: { id: row.id } })).status, 'MATCHED');
+});
+
 (async () => {
   let failures = 0;
   try {

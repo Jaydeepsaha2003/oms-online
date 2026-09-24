@@ -17,11 +17,12 @@ import type {
   UnmappedLedger,
   UnmappedLedgers,
 } from '@oms/shared';
+import { payByFor } from '@oms/shared';
 import { PrismaService } from '../prisma/prisma.service';
 import { loadLedgerGroups, type LedgerGroups } from '../account-groups/ledger-groups';
 import { PaymentsService } from '../payments/payments.service';
 import { OpeningBalancesService } from '../opening-balances/opening-balances.service';
-import { parseTallyRegister, type ParsedLedger, type ParsedRegister } from './tally-register.parser';
+import { omsCodeCandidates, parseTallyRegister, type ParsedLedger, type ParsedRegister } from './tally-register.parser';
 import { exactKey, nameKey, reconcileParty, type MatchRow, type OmsParty } from './tally-recon.matcher';
 
 const DAY = 86_400_000;
@@ -264,6 +265,24 @@ export class TallyReconService {
       });
     }
 
+    // Receipts taken against the AGENT of a party whose bank money comes
+    // through one — matchable, never counted as the party's own (see viaAgent).
+    const routed = (await this.prisma.customer.findMany({ where: { id: { in: custIds } }, select: { id: true, payBy: true, payByModes: true, agentName: true } }))
+      .filter((c) => c.agentName?.trim() && payByFor(c, 'bank') === 'AGENT');
+    const agents = [...new Set(routed.map((c) => c.agentName!.trim()))];
+    if (agents.length) {
+      const agentVouchers = await this.prisma.acctLedger.findMany({
+        where: { custId: 0, agentName: { in: agents }, voucherType: 'RECEIPT', bankCredit: { gt: 0 }, transDate: { gte: from, lt: toExclusive } },
+        select: { voucherNo: true, transDate: true, particulars: true, bankCredit: true, agentName: true },
+      });
+      for (const c of routed) {
+        const book = books.get(c.id);
+        for (const v of agentVouchers.filter((a) => a.agentName === c.agentName!.trim())) {
+          book?.vouchers.push({ voucherNo: v.voucherNo, transDate: v.transDate, voucherType: 'RECEIPT', particulars: v.particulars, bankDr: 0, bankCr: r2(v.bankCredit), cashDr: 0, cashCr: 0, viaAgent: v.agentName! });
+        }
+      }
+    }
+
     await this.applyOpenings(books, from);
 
     for (const book of books.values()) {
@@ -367,40 +386,6 @@ export class TallyReconService {
    *
    * Bank leg only, like everything else here — the register has no cash side.
    */
-  /**
-   * For every OMS customer with MORE THAN ONE Tally ledger name aliased to it,
-   * find the one ledger that actually carries the opening — if exactly one
-   * does. Returns, per ledger name WITH NO opening of its own, the sibling
-   * ledger's name that has it. Ambiguous groups (none of them carry an
-   * opening, or more than one does) are left out entirely: with two real,
-   * possibly-conflicting numbers, guessing which is "the" opening would hide a
-   * genuine problem instead of explaining a non-problem.
-   */
-  private findOpeningCarriers(
-    ledgers: ParsedLedger[],
-    resolved: Map<string, { id: number; name: string } | null>,
-  ): Map<string, string> {
-    const byCustomer = new Map<number, ParsedLedger[]>();
-    for (const l of ledgers) {
-      const hit = resolved.get(l.ledgerName);
-      if (!hit) continue;
-      const arr = byCustomer.get(hit.id) ?? [];
-      arr.push(l);
-      byCustomer.set(hit.id, arr);
-    }
-    const carriedBy = new Map<string, string>();
-    for (const group of byCustomer.values()) {
-      if (group.length < 2) continue;
-      const withOpening = group.filter((l) => l.openingNet != null);
-      if (withOpening.length !== 1) continue;
-      const carrier = withOpening[0].ledgerName;
-      for (const l of group) {
-        if (l.openingNet == null) carriedBy.set(l.ledgerName, carrier);
-      }
-    }
-    return carriedBy;
-  }
-
   private balanceFor(
     ledger: ParsedLedger,
     oms: OmsParty,
@@ -416,7 +401,7 @@ export class TallyReconService {
     const tallyMoves = ledger.vouchers.map((v) => ({ on: v.txnDate, amt: r2(v.debit - v.credit) }));
     const omsMoves = [
       ...oms.invoices.filter((i) => Math.abs(i.bank) > 0.004).map((i) => ({ on: i.invDate, amt: r2(i.bank) })),
-      ...oms.vouchers.map((v) => ({ on: v.transDate, amt: r2(v.bankDr - v.bankCr) })),
+      ...oms.vouchers.filter((v) => !v.viaAgent).map((v) => ({ on: v.transDate, amt: r2(v.bankDr - v.bankCr) })),
     ].filter((m) => Math.abs(m.amt) > 0.004);
 
     const sum = (moves: { on: Date; amt: number }[], upto?: Date) =>
@@ -430,7 +415,7 @@ export class TallyReconService {
 
     // The last receipt the user recorded inside the period.
     const receipts = oms.vouchers
-      .filter((v) => v.voucherType.trim().toUpperCase() === 'RECEIPT' && Math.abs(v.bankDr - v.bankCr) > 0.004)
+      .filter((v) => !v.viaAgent && v.voucherType.trim().toUpperCase() === 'RECEIPT' && Math.abs(v.bankDr - v.bankCr) > 0.004)
       .filter((v) => v.transDate >= from && v.transDate < toExclusive)
       .sort((a, b) => a.transDate.getTime() - b.transDate.getTime());
     const last = receipts.length ? receipts[receipts.length - 1] : null;
@@ -480,11 +465,11 @@ export class TallyReconService {
 
   /**
    * Combines 2+ Tally ledger names for the SAME OMS customer into one
-   * ParsedLedger-shaped position, so balanceFor produces exactly one
-   * (correct) balance for the party instead of one (wrong) balance per name.
+   * ParsedLedger-shaped position, so the party gets exactly one (correct)
+   * balance and one voucher match, instead of one (wrong) of each per name.
    *
    * openingNet: summed across whichever ledgers actually carry one — the
-   * usual case is exactly one does (see findOpeningCarriers), but this adds
+   * usual case is exactly one does, but this adds
    * correctly even if more than one genuinely does.
    * closingNet: left null on purpose rather than trying to combine each
    * ledger's own STATED closing — those aren't independently meaningful once
@@ -599,19 +584,40 @@ export class TallyReconService {
     const custIds = [...new Set([...resolved.values()].filter(Boolean).map((r) => r!.id))];
     const books = await this.loadOmsBooks(custIds, from, toExclusive);
     const groups = await loadLedgerGroups(this.prisma);
-    // A party renamed in Tally (GST re-registration, address change...) can
-    // have TWO ledger names in one register, both aliased to the same OMS
-    // customer — see reconcileParty's `openingCarriedBySibling` doc. Detect
-    // that here, where every ledger for a customer is visible at once; the
-    // matcher only ever sees one ledger at a time.
-    const openingCarriedBy = this.findOpeningCarriers(register.ledgers, resolved);
 
+    /*
+     * Every Tally ledger mapped to the same OMS customer is matched as ONE
+     * ledger (PNB: "PNB KITCHENMATE LTD BAHALGARH" and "... PVT. LTD. (OLD)").
+     * Matching each on its own handed both the whole OMS book, so an entry
+     * Tally keeps under the other ledger was reported missing — once per
+     * ledger. Each Tally row still shows under its own ledger name.
+     */
     const rows: MatchRow[] = [];
+    const done = new Set<string>();
     for (const ledger of register.ledgers) {
+      if (done.has(ledger.ledgerName)) continue;
       const hit = resolved.get(ledger.ledgerName) ?? null;
-      const group = hit ? null : groups.groupOf(ledger.ledgerName);
-      const notParty = group && !groups.isParty(group) ? group : null;
-      rows.push(...reconcileParty(ledger, hit ? books.get(hit.id) ?? null : null, from, notParty, openingCarriedBy.get(ledger.ledgerName) ?? null));
+      if (hit) {
+        const siblings = register.ledgers.filter((l) => resolved.get(l.ledgerName)?.id === hit.id);
+        for (const l of siblings) done.add(l.ledgerName);
+        rows.push(...reconcileParty(siblings.length > 1 ? this.mergeLedgersForBalance(siblings) : ledger, books.get(hit.id) ?? null, from));
+        continue;
+      }
+      const group = groups.groupOf(ledger.ledgerName);
+      rows.push(...reconcileParty(ledger, null, from, group && !groups.isParty(group) ? group : null));
+    }
+
+    // A bill Tally keeps under this party but OMS under another: say whose, so
+    // the fix is a party correction, not re-keying a bill that already exists.
+    const lost = rows.filter((r) => r.status === 'MISSING_IN_OMS' && r.vchType === 'SALES' && r.customerId);
+    if (lost.length) {
+      const codes = [...new Set(lost.flatMap((r) => omsCodeCandidates(r.vchNo)))];
+      const elsewhere = new Map((await this.prisma.challan.findMany({ where: { code: { in: codes } }, select: { code: true, customerId: true, customerName: true, challanStatus: true } })).map((c) => [c.code, c]));
+      for (const r of lost) {
+        const c = omsCodeCandidates(r.vchNo).map((k) => elsewhere.get(k)).find(Boolean);
+        if (c && c.customerId !== r.customerId) r.note = `${c.code} is in OMS under ${c.customerName}${c.challanStatus !== 'CONFIRMED' ? ` (${c.challanStatus.toLowerCase()})` : ''} — Tally has it under this party. Correct the party on one side.`;
+        else if (c && c.challanStatus !== 'CONFIRMED') r.note = `${c.code} is in OMS but ${c.challanStatus.toLowerCase()}.`;
+      }
     }
 
     // Per-party balance verdicts — only possible where the ledger maps to a customer.
@@ -1075,13 +1081,49 @@ export class TallyReconService {
       const isCash = /^cash$/i.test(particulars);
       const bankName = input.bankName?.trim() || (isCash ? null : particulars || null);
 
+      // Collected the way Receive Payment would: a party whose money comes
+      // through its agent is receipted on the agent (the same rule Bank Reco uses).
+      const customer = await this.prisma.customer.findUnique({ where: { id: row.customerId }, select: { payBy: true, payByModes: true, agentName: true } });
+      const agentName = customer?.agentName?.trim() || null;
+      const viaAgent = !!customer && !!agentName && payByFor(customer, isCash ? 'cash' : 'bank') === 'AGENT';
+
+      /*
+       * Never a second copy of money already in OMS. The report only compares
+       * this party's own receipts, so a payment taken against the agent or a
+       * sister party of the same agent (BK METAL's 29 May ₹95,800 sits under
+       * agent B KUMAR as RN/869) reads as missing here. Same amount within
+       * 3 days is refused, naming the receipt to look at.
+       */
+      const sisters = agentName ? (await this.prisma.customer.findMany({ where: { agentName }, select: { id: true } })).map((c) => c.id) : [];
+      const twin = await this.prisma.acctLedger.findFirst({
+        where: {
+          voucherType: 'RECEIPT',
+          OR: [{ bankCredit: { gte: amount - 0.5, lte: amount + 0.5 } }, { cashCredit: { gte: amount - 0.5, lte: amount + 0.5 } }],
+          transDate: { gte: new Date(row.txnDate.getTime() - 3 * DAY), lte: new Date(row.txnDate.getTime() + 3 * DAY) },
+          AND: [{ OR: [{ custId: row.customerId }, ...(agentName ? [{ custId: 0, agentName }, { custId: { in: sisters } }] : [])] }],
+        },
+        select: { voucherNo: true, transDate: true, customerName: true, custId: true },
+      });
+      if (twin) {
+        failed.push({
+          rowId: id,
+          reason: `${twin.voucherNo} (${ymd(twin.transDate)}, ${amount.toFixed(2)}) is already in OMS${twin.custId === 0 ? ` under agent ${twin.customerName}` : twin.custId !== row.customerId ? ` for ${twin.customerName}` : ''} — most likely this same payment, so it was not entered again. If it really is a different payment, enter it in Receive Payment.`,
+        });
+        continue;
+      }
+
       try {
         const res = await this.payments.save(
           {
-            takeAccOn: 'PARTY',
-            customerId: row.customerId,
+            takeAccOn: viaAgent ? 'AGENT' : 'PARTY',
+            customerId: viaAgent ? undefined : row.customerId,
+            agentName: viaAgent ? agentName : undefined,
             payMode: isCash ? 'CASH' : 'BANK',
             bankName: isCash ? null : bankName,
+            // Receive Payment asks where cash was handed over and to whom; the
+            // register only says "Cash", so say where this one came from.
+            cashTransLocation: isCash ? 'AS PER TALLY' : null,
+            cashRecBy: isCash ? (userName?.trim() || 'TALLY RECON') : null,
             adjMode: input.adjMode?.trim() || 'AUTOMATIC',
             receiptAmt: amount,
             recDate: ymd(row.txnDate),
@@ -1298,11 +1340,8 @@ export class TallyReconService {
           orderBy: { id: 'asc' },
         });
         const effective = allOpenings.filter((o) => fyStart(o.transDate) <= row.run.fromDate);
-        if (effective.length !== 1) {
-          const reason = effective.length
-            ? 'Multiple OMS opening records affect this period. Edit them in Opening Balance so the system does not guess which record to change.'
-            : 'No existing OMS opening record affects this period. Use Add opening instead.';
-          failed.push({ rowId: id, reason });
+        if (effective.length > 1) {
+          failed.push({ rowId: id, reason: 'Multiple OMS opening records affect this period. Edit them in Opening Balance so the system does not guess which record to change.' });
           continue;
         }
 
@@ -1316,8 +1355,54 @@ export class TallyReconService {
           continue;
         }
 
-        const opening = effective[0];
         const tallyAmount = r2((row.dr || 0) - (row.cr || 0));
+        if (!effective.length) {
+          /*
+           * No opening record: OMS's brought-forward figure is its own bills and
+           * receipts from before the period (RIDDHI SIDDHI's two scrap bills).
+           * Record the difference as an opening dated at the start of the year
+           * of the party's EARLIEST document, so none of those documents drops
+           * out of the arithmetic — the brought-forward then equals Tally's.
+           * An opening in our favour (Cr) is money on account and settles the
+           * old bills; one in the party's (Dr) is cleared by the next receipts.
+           */
+          const diff = r2(tallyAmount - currentAmount);
+          const [firstBill, firstVoucher] = await Promise.all([
+            this.prisma.challan.findFirst({ where: { customerId: row.customerId, challanStatus: 'CONFIRMED', invDate: { lt: row.run.fromDate } }, orderBy: { invDate: 'asc' }, select: { invDate: true } }),
+            this.prisma.acctLedger.findFirst({ where: { custId: row.customerId, transDate: { lt: row.run.fromDate } }, orderBy: { transDate: 'asc' }, select: { transDate: true } }),
+          ]);
+          const earliest = [firstBill?.invDate, firstVoucher?.transDate].filter((d): d is Date => !!d).sort((a, b) => +a - +b)[0] ?? new Date(row.run.fromDate.getTime() - DAY);
+          await this.prisma.$transaction(async (tx) => {
+            await tx.acctOpeningTrans.create({
+              data: {
+                kind: 'OPENING',
+                custId: row.customerId!,
+                customerName: row.customerName ?? row.ledgerName,
+                transDate: fyStart(earliest),
+                bankAmt: Math.abs(diff),
+                cashAmt: 0,
+                drCr: diff > 0 ? 'DEBIT' : 'CREDIT',
+                remarks: `Tally recon — brings OMS to Tally's opening of ${tallyAmount.toFixed(2)} on ${ymd(row.run.fromDate)} (${row.ledgerName})`,
+                userName: userName ?? null,
+              },
+            });
+            const rowWrite = await tx.tallyReconRow.updateMany({
+              where: { id: row.id, status: 'AMOUNT_MISMATCH', resolvedAt: null, omsAmount: row.omsAmount },
+              data: {
+                status: 'MATCHED', resolvedAt: new Date(), resolvedRef: 'Opening Balance', review: 'SOLVED',
+                reviewNote: 'Opening difference added to OMS from the report.', reviewedAt: new Date(), reviewedBy: userName ?? null,
+                omsAmount: tallyAmount, omsDate: row.txnDate,
+                note: `OMS had no opening record; ${Math.abs(diff).toFixed(2)} ${diff > 0 ? 'Dr' : 'Cr'} added so it matches Tally's ${tallyAmount.toFixed(2)}.`,
+              },
+            });
+            if (rowWrite.count !== 1) throw new Error('This reconciliation row changed. Re-check the report, then try again.');
+            await this.payments.resettleParty(tx, row.customerId!);
+          }, { timeout: 120_000 });
+          updated.push({ rowId: row.id, customerName: row.customerName ?? row.ledgerName, previousAmount: currentAmount, amount: tallyAmount, drCr: tallyAmount >= 0 ? 'DEBIT' : 'CREDIT' });
+          touchedRuns.set(row.runId, !!row.run.registerJson);
+          continue;
+        }
+        const opening = effective[0];
         const openingSign = (opening.drCr ?? 'DEBIT').toUpperCase() === 'CREDIT' ? -1 : 1;
         const storedBank = r2(openingSign * (opening.bankAmt ?? 0));
         const nextStoredBank = r2(storedBank + (tallyAmount - currentAmount));
@@ -1366,7 +1451,9 @@ export class TallyReconService {
             },
           });
           if (rowWrite.count !== 1) throw new Error('This reconciliation row changed. Re-check the report, then try again.');
-        });
+          // The opening moved under the receipts that cleared it — settle them again.
+          await this.payments.resettleParty(tx, row.customerId!);
+        }, { timeout: 120_000 });
 
         updated.push({
           rowId: row.id,

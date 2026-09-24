@@ -265,6 +265,9 @@ export function Combobox({
     scored.sort((a, b) => a.score - b.score);
     return scored.map((s) => s.row);
   }, [opts, dirty, ql]);
+  // The blur timer needs the CURRENT search result, same reason as textRef.
+  const matchesRef = React.useRef(matches);
+  matchesRef.current = matches;
   const visible = matches.slice(0, RENDER_LIMIT);
   const hiddenCount = matches.length - visible.length;
   const showCreate = creatable && q !== '' && !opts.some((o) => o.value.toLowerCase() === ql);
@@ -496,16 +499,39 @@ export function Combobox({
     if (creatable) onChange(value); // free text is the value, live
   };
 
+  // Set when a click focuses the field: that click's mouse-up would drop the
+  // caret into the middle of the selected name, so typing landed INSIDE the old
+  // party's name ("…(BHstarlinesIWANDI)"), matched nothing, and the old party
+  // came back. The first mouse-up keeps the whole name selected instead.
+  const keepSelectionOnUp = React.useRef(false);
+
   const onFocus = () => {
     if (swappingKeyboard.current) return; // mid-edit keyboard swap, not a real focus
+    keepSelectionOnUp.current = true;
     focused.current = true;
     setDirty(false);
     setOpen(true);
     requestAnimationFrame(() => inputRef.current?.select());
   };
 
+  /** A name typed out in full, or a search narrowed to one row: that is the pick. */
+  const typedPick = () => {
+    const typed = textRef.current.trim().toLowerCase();
+    if (!typed || typed === labelForRef.current(valueRef.current).toLowerCase()) return undefined;
+    return matchesRef.current.find((o) => o.label.toLowerCase() === typed) ?? (matchesRef.current.length === 1 ? matchesRef.current[0] : undefined);
+  };
+
   const onBlur = () => {
     if (swappingKeyboard.current) return; // mid-edit keyboard swap, not a real blur
+    // Committed NOW, not in the timer below: typing a party and pressing Save
+    // straight away runs Save's click before the timer fires, and it saved the
+    // party that was there before.
+    const pick = !creatable && dirty && !draggingList.current && !justCommitted.current ? typedPick() : undefined;
+    if (pick) {
+      onChange(pick.value);
+      setText(pick.label);
+      justCommitted.current = true;
+    }
     blurTimer.current = setTimeout(() => {
       // Blur caused by pressing inside the list (scrollbar drag, etc.): keep the
       // dropdown open and hand focus straight back to the field.
@@ -538,11 +564,24 @@ export function Combobox({
           // the box did nothing. Treat it the same as picking the blank option.
           if (valueRef.current !== '') onChange('');
           setText(''); // normalizes whitespace-only input too, not just a literal ''
-        } else {
-          if (typed.toLowerCase() !== committed.toLowerCase() && !opts.some((o) => o.label.toLowerCase() === typed.toLowerCase())) {
+        } else if (typed.toLowerCase() !== committed.toLowerCase()) {
+          /*
+           * Typed, then clicked away without picking a row. A name typed out in
+           * full, or a search narrowed to a single row, IS the choice — this
+           * used to put the OLD value back without a word, so typing another
+           * party and pressing Save kept the party that was already there.
+           * Anything else is still refused and reverted.
+           */
+          const pick = typedPick();
+          if (pick) {
+            onChange(pick.value);
+            setText(pick.label);
+          } else {
             onInvalidEntry?.(typed);
+            setText(committed); // revert filter text to the chosen value
           }
-          setText(committed); // revert filter text to the chosen value
+        } else {
+          setText(committed);
         }
       }
       setDirty(false);
@@ -568,6 +607,7 @@ export function Combobox({
   }, []);
 
   const onKeyDown = (e: React.KeyboardEvent<HTMLInputElement>) => {
+    keepSelectionOnUp.current = false; // focused by keyboard: a later click places the caret as usual
     if (e.key === 'ArrowDown') {
       e.preventDefault();
       navByKey.current = true;
@@ -624,6 +664,12 @@ export function Combobox({
             onChange={(e) => onInputChange(e.target.value)}
             onFocus={onFocus}
             onBlur={onBlur}
+            onMouseUp={(e) => {
+              if (!keepSelectionOnUp.current) return;
+              keepSelectionOnUp.current = false;
+              e.preventDefault();
+              e.currentTarget.select();
+            }}
             onKeyDown={onKeyDown}
             onClick={() => setOpen(true)}
             placeholder={placeholder}

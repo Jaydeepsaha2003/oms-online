@@ -49,6 +49,15 @@ export interface OmsVoucher {
   bankCr: number;
   cashDr: number;
   cashCr: number;
+  /**
+   * Set on a receipt taken against the party's AGENT (custId 0): the agent's
+   * name. Tally credits the party that paid; OMS books the money to the agent
+   * and spreads it over the agent's parties. Such a receipt may still be the
+   * one a Tally line describes, so it is offered for matching — but it is not
+   * this party's own movement, so it never counts in the party's balance and
+   * is never reported as missing from the party's Tally ledger.
+   */
+  viaAgent?: string;
 }
 
 export interface OmsParty {
@@ -194,23 +203,12 @@ const fmtDate = (d: Date) => `${String(d.getDate()).padStart(2, '0')}-${d.toLoca
  * @param notPartyGroup set only when `oms` is null and the ledger's Tally group
  *                 is outside Sundry Debtors: that group's name. Reported as
  *                 NOT_APPLICABLE instead of UNMATCHED_PARTY.
- * @param openingCarriedBySibling set only when TWO OR MORE Tally ledger names
- *                 are aliased to the SAME OMS customer (a party renamed in
- *                 Tally — e.g. after a GST/address change — keeps both the old
- *                 and new ledger in one register) AND this specific ledger's
- *                 own opening is nil: the OTHER aliased ledger's name, the one
- *                 that actually carries the opening. Without this, EVERY
- *                 sibling ledger got compared against the customer's ONE OMS
- *                 opening independently, so the ledger that genuinely never
- *                 held an opening of its own was flagged MISSING_IN_TALLY —
- *                 real money nowhere, reported as if it were unaccounted for.
  */
 export function reconcileParty(
   ledger: ParsedLedger,
   oms: OmsParty | null,
   periodFrom: Date,
   notPartyGroup: string | null = null,
-  openingCarriedBySibling: string | null = null,
 ): MatchRow[] {
   const out: MatchRow[] = [];
   const base = {
@@ -247,6 +245,7 @@ export function reconcileParty(
     for (const v of ledger.vouchers) {
       out.push({
         ...base,
+        ledgerName: v.ledgerName || ledger.ledgerName,
         source: 'TALLY',
         txnDate: v.txnDate,
         omsBank: null,
@@ -291,19 +290,9 @@ export function reconcileParty(
       note: null,
     };
     if (ledger.openingNet == null) {
-      if (openingCarriedBySibling) {
-        // Not a discrepancy — this Tally ledger is one half of a renamed
-        // party, and the other half already accounts for the opening (see
-        // the param doc above). NOT_APPLICABLE: nothing to compare, nothing
-        // wrong, so it must not count toward "needs attention".
-        row.status = 'NOT_APPLICABLE';
-        row.source = 'TALLY';
-        row.note = `This ledger carries no opening of its own — the party's opening is on "${openingCarriedBySibling}" (also mapped to this customer), where it matches.`;
-      } else {
-        row.status = 'MISSING_IN_TALLY';
-        row.source = 'OMS';
-        row.note = `OMS carries a bank opening of ${o.toFixed(2)}; the register shows none.`;
-      }
+      row.status = 'MISSING_IN_TALLY';
+      row.source = 'OMS';
+      row.note = `OMS carries a bank opening of ${o.toFixed(2)}; the register shows none.`;
     } else if (!oms.hasOpening) {
       row.status = 'MISSING_IN_OMS';
       // State the Tally figure, not just that one exists — the same clarity
@@ -343,6 +332,7 @@ export function reconcileParty(
     }
     const row: MatchRow = {
       ...base,
+      ledgerName: v.ledgerName || ledger.ledgerName,
       source: 'TALLY',
       txnDate: v.txnDate,
       vchType: 'SALES',
@@ -419,6 +409,8 @@ export function reconcileParty(
 
   const vchUsed = new Set<number>();
   const MATCHABLE: ReconVchType[] = ['RECEIPT', 'CREDIT NOTE', 'DEBIT NOTE', 'DISCOUNT'];
+  /** Bank-side Tally rows no single OMS voucher matched — tried as splits below. */
+  const loose: { row: MatchRow; amt: number; type: ReconVchType }[] = [];
 
   for (const v of ledger.vouchers) {
     const type = reconVchType(v.vchType, v.particulars) as ReconVchType;
@@ -428,6 +420,7 @@ export function reconcileParty(
 
     const row: MatchRow = {
       ...base,
+      ledgerName: v.ledgerName || ledger.ledgerName,
       source: 'TALLY',
       txnDate: v.txnDate,
       vchType: type,
@@ -473,6 +466,7 @@ export function reconcileParty(
           ? `No OMS receipt of ${amt.toFixed(2)} near ${fmtDate(v.txnDate)} — can be entered from this report.`
           : `No OMS ${type.toLowerCase()} of ${amt.toFixed(2)} near ${fmtDate(v.txnDate)}.`;
       if (cash) row.note = `${row.note} (Register shows this against Cash, not a bank.)`;
+      else loose.push({ row, amt, type });
       out.push(row);
       continue;
     }
@@ -485,6 +479,7 @@ export function reconcileParty(
     const verdict = dateVerdict(v.txnDate, m.transDate);
     row.status = verdict.status;
     row.note = cash ? `Matched against the OMS cash leg. ${verdict.note ?? ''}`.trim() : verdict.note;
+    if (m.viaAgent) row.note = [`Collected through agent ${m.viaAgent} as ${m.voucherNo}.`, row.note].filter(Boolean).join(' ');
 
     /*
      * Same party, same figures, same date — different bank.
@@ -522,9 +517,52 @@ export function reconcileParty(
     out.push(row);
   }
 
+  /*
+   * One payment, entered as one voucher on one side and as several on the
+   * other, the same day (PNB 25 Jun: OMS RN/785 3,91,955 = Tally 195 3,74,144
+   * + 196 17,811). Neither piece matches alone; together they do.
+   */
+  const sameDay = (a: Date, b: Date) => dayGap(a, b) === 0;
+  const oneOf = <T>(items: T[], amtOf: (t: T) => number, target: number): T[] | null => {
+    const list = items.slice(0, 12);
+    const pick = (from: number, left: number, got: T[]): T[] | null => {
+      if (got.length >= 2 && near(left, 0)) return got;
+      if (got.length === 4) return null;
+      for (let i = from; i < list.length; i += 1) {
+        const hit = pick(i + 1, r2(left - amtOf(list[i])), [...got, list[i]]);
+        if (hit) return hit;
+      }
+      return null;
+    };
+    return pick(0, target, []);
+  };
+  // Several Tally rows = one OMS voucher.
+  oms.vouchers.forEach((m, idx) => {
+    if (vchUsed.has(idx) || bankMag(m) <= 0.004) return;
+    const type = omsTypeOf(m);
+    const parts = oneOf(loose.filter((l) => l.type === type && l.row.status === 'MISSING_IN_OMS' && sameDay(l.row.txnDate, m.transDate)), (l) => l.amt, bankMag(m));
+    if (!parts) return;
+    vchUsed.add(idx);
+    for (const l of parts) {
+      Object.assign(l.row, { status: 'MATCHED', omsRef: m.voucherNo, omsAmount: bankMag(m), omsDate: m.transDate, omsBank: m.particulars,
+        note: `One OMS voucher ${m.voucherNo} (${bankMag(m).toFixed(2)}) = ${parts.length} Tally entries (${parts.map((x) => x.row.vchNo).join(' + ')}).` });
+    }
+  });
+  // One Tally row = several OMS vouchers.
+  for (const l of loose) {
+    if (l.row.status !== 'MISSING_IN_OMS') continue;
+    const free = oms.vouchers.map((m, idx) => ({ m, idx })).filter(({ m, idx }) => !vchUsed.has(idx) && omsTypeOf(m) === l.type && bankMag(m) > 0.004 && sameDay(m.transDate, l.row.txnDate));
+    const parts = oneOf(free, (x) => bankMag(x.m), l.amt);
+    if (!parts) continue;
+    for (const x of parts) vchUsed.add(x.idx);
+    const refs = parts.map((x) => x.m.voucherNo).join(' + ');
+    Object.assign(l.row, { status: 'MATCHED', omsRef: refs, omsAmount: r2(parts.reduce((s, x) => s + bankMag(x.m), 0)), omsDate: parts[0].m.transDate, omsBank: parts[0].m.particulars,
+      note: `One Tally entry ${l.row.vchNo} (${l.amt.toFixed(2)}) = ${parts.length} OMS vouchers (${refs}).` });
+  }
+
   // OMS vouchers the register never mentioned — bank leg only.
   oms.vouchers.forEach((m, idx) => {
-    if (vchUsed.has(idx)) return;
+    if (vchUsed.has(idx) || m.viaAgent) return;
     const type = omsTypeOf(m);
     if (!MATCHABLE.includes(type)) return;
     const mag = bankMag(m);

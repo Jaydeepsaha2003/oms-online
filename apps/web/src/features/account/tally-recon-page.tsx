@@ -1541,6 +1541,19 @@ export function TallyReconPage() {
                             {list[0].customerName && list[0].customerName !== ledgerName && (
                               <span className="ml-1.5 font-semibold normal-case opacity-70">→ {list[0].customerName}</span>
                             )}
+                            {canRun && list[0].customerName && (
+                              <button
+                                type="button"
+                                onClick={() => {
+                                  setAliasFor(ledgerName);
+                                  setAliasCustomer(list[0].customerName ?? '');
+                                }}
+                                title="Map this Tally ledger to a different OMS customer"
+                                className="ml-2 inline-flex cursor-pointer items-center gap-1 rounded-[3px] border border-amber-400/70 bg-white/70 px-1.5 py-px align-[1px] text-[10px] font-bold tracking-normal text-amber-900 normal-case hover:bg-white dark:border-amber-400/40 dark:bg-white/10 dark:text-amber-100"
+                              >
+                                <Link2 className="size-3" /> Change
+                              </button>
+                            )}
                           </td>
                           <td className={cn(TD, NUM, 'font-extrabold text-amber-950 dark:text-amber-100')}>{moneyOrDash(drSubtotal)}</td>
                           <td className={cn(TD, NUM, 'font-extrabold text-amber-950 dark:text-amber-100')}>{moneyOrDash(crSubtotal)}</td>
@@ -1946,7 +1959,7 @@ export function TallyReconPage() {
       <Dialog open={!!aliasFor} onOpenChange={(o) => !o && setAliasFor(null)}>
         <DialogContent className="sm:max-w-md">
           <DialogHeader>
-            <DialogTitle className="text-[15px]">Map a Tally ledger</DialogTitle>
+            <DialogTitle className="text-[15px]">{aliasCustomer && rows.some((r) => r.ledgerName === aliasFor && r.customerName) ? 'Change mapping' : 'Map a Tally ledger'}</DialogTitle>
           </DialogHeader>
           <div className="space-y-3">
             <div>

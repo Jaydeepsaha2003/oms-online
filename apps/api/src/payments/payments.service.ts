@@ -56,6 +56,9 @@ type Reserved = Map<string, { bank: number; cash: number }>;
 /** The same, kept per named voucher so each one's hold can be released as it replays. */
 type Claims = Map<string, Reserved>;
 
+/** Money-on-account id of a CREDIT opening balance row: this prefix + its row id. */
+export const OPENING_CREDIT = 'ADV-OPN-';
+
 /** Far enough ahead to mean "every open bill". */
 const FAR = new Date(2999, 11, 31);
 
@@ -918,16 +921,33 @@ export class PaymentsService {
   }
 
   /**
+   * Re-settle every receipt of one party by today's rules, after something the
+   * receipts settled against (an opening balance, say) changed underneath them.
+   */
+  async resettleParty(tx: Db, custId: number): Promise<void> {
+    if (!custId) return;
+    const rows = await tx.acctLedger.findMany({ where: { voucherType: 'RECEIPT', custId } });
+    if (rows.some((r) => r.adjMode == null)) return; // saved before replay support: leave as is
+    const arrival = [...rows].sort(byArrival);
+    const claims = await this.claimsOf(tx, arrival);
+    await this.reverseChain(tx, [...rows].sort((a, b) => a.id - b.id));
+    await this.claimExact(tx, custId, null, arrival.map(entryOf), claims);
+    await this.replayInOrder(tx, arrival, claims);
+    await this.applyOnAccount(tx, custId);
+  }
+
+  /**
    * Settle the party's open bills from money it already has on account: oldest
    * bill first, oldest money first, bank and cash kept apart. Runs after every
    * receipt change and every bill save, so a bill the party has already paid
    * for never shows as due. Each settlement is dated the later of the bill and
    * the money â€” it was paid the moment both existed.
    *
-   * Only money a receipt parked for this party is used: an agent's money is
-   * spread over several parties, and notes manage what they park themselves.
-   * The rows carry the parking receipt as their source, so reversing that
-   * receipt takes them back out.
+   * Only money a receipt parked for this party is used, plus a CREDIT opening:
+   * an agent's money is spread over several parties, and notes manage what
+   * they park themselves. The rows carry the parking receipt as their source,
+   * so reversing that receipt takes them back out; a CREDIT opening's rows have
+   * none and stay put (a changed bill lifts them, see ChallansService).
    */
   async applyOnAccount(tx: Db, custId: number): Promise<void> {
     if (!custId) return;
@@ -942,7 +962,7 @@ export class PaymentsService {
     const ownerOf = new Map(parked.filter((p) => p.refRecId && owners.has(p.refRecId)).map((p) => [p.refId, p.refRecId!]));
 
     for (const bank of [true, false]) {
-      const pots = advs.filter((a) => ownerOf.has(a.refId)).map((a) => ({ ...a, left: bank ? a.bankBal : a.cashBal })).filter((a) => a.left > EPS);
+      const pots = advs.filter((a) => ownerOf.has(a.refId) || a.refId.startsWith(OPENING_CREDIT)).map((a) => ({ ...a, left: bank ? a.bankBal : a.cashBal })).filter((a) => a.left > EPS);
       let i = 0;
       for (const bill of bills) {
         let need = bank ? bill.bankBal : bill.cashBal;
@@ -961,7 +981,7 @@ export class PaymentsService {
               payMode: bank ? 'BANK' : 'CASH',
               modeOfAdj: 'ADVANCE',
               refRecId: pot.refId,
-              sourceVoucherNo: ownerOf.get(pot.refId)!,
+              sourceVoucherNo: ownerOf.get(pot.refId) ?? null,
             },
           });
           need = r2(need - use);
@@ -1417,12 +1437,16 @@ export class PaymentsService {
    */
   private async advancePending(db: Db, customers: { id: number }[], upTo?: Date, skip?: Set<string>): Promise<PendingAdvanceRow[]> {
     const ids = customers.map((c) => c.id);
-    const advs = (
-      await db.acctPartyAdvance.findMany({
-        where: { custId: { in: ids }, ...(upTo ? { recDate: { lt: nextDay(upTo) } } : {}) },
-        orderBy: [{ recDate: 'asc' }, { refId: 'asc' }],
-      })
+    const before = upTo ? { lt: nextDay(upTo) } : undefined;
+    const parked = (
+      await db.acctPartyAdvance.findMany({ where: { custId: { in: ids }, ...(before ? { recDate: before } : {}) } })
     ).filter((a) => !skip?.has(a.refRecId ?? ''));
+    // A CREDIT opening is money the party already had with us on day one:
+    // money on account like any other, and the oldest of it.
+    const credits = (
+      await db.acctOpeningTrans.findMany({ where: { custId: { in: ids }, kind: 'OPENING', drCr: 'CREDIT', ...(before ? { transDate: before } : {}) } })
+    ).map((o) => ({ refId: `${OPENING_CREDIT}${o.id}`, recDate: o.transDate, custId: o.custId, customerName: o.customerName, bankAmt: o.bankAmt, cashAmt: o.cashAmt, takeAccOn: 'PARTY' }));
+    const advs = [...credits, ...parked].sort((a, b) => +a.recDate - +b.recDate || a.refId.localeCompare(b.refId));
     if (!advs.length) return [];
     const used = await db.acctPaymentReceipt.findMany({
       where: { refRecId: { in: advs.map((a) => a.refId) } },

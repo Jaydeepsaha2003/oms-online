@@ -2,6 +2,7 @@ import { BadRequestException, Injectable, NotFoundException } from '@nestjs/comm
 import { Prisma } from '@prisma/client';
 import { type DrCr, type NewPartyOpeningDto, type OpeningBalanceDto, type Paginated } from '@oms/shared';
 import { PrismaService } from '../prisma/prisma.service';
+import { PaymentsService } from '../payments/payments.service';
 import { CreateOpeningBalanceDto, OpeningBalanceQueryDto, UpdateOpeningBalanceDto } from './dto/opening-balance.dto';
 
 type Row = Prisma.AcctOpeningTransGetPayload<object>;
@@ -18,7 +19,23 @@ function parseDate(s: string): Date {
 
 @Injectable()
 export class OpeningBalancesService {
-  constructor(private readonly prisma: PrismaService) {}
+  constructor(
+    private readonly prisma: PrismaService,
+    private readonly payments: PaymentsService,
+  ) {}
+
+  /**
+   * An opening is the oldest thing a party owes, and receipts clear it first.
+   * Changing it changes what every later receipt settled, so the party's
+   * receipts are settled again, in date order, in the same transaction.
+   */
+  private writeAndResettle<T>(custIds: number[], write: (tx: Prisma.TransactionClient) => Promise<T>): Promise<T> {
+    return this.prisma.$transaction(async (tx) => {
+      const out = await write(tx);
+      for (const id of new Set(custIds)) await this.payments?.resettleParty(tx, id);
+      return out;
+    }, { timeout: 120_000 });
+  }
 
   async findMany(q: OpeningBalanceQueryDto): Promise<Paginated<OpeningBalanceDto>> {
     const search = q.search?.trim();
@@ -52,7 +69,7 @@ export class OpeningBalancesService {
     const cashAmt = dto.cashAmt ?? 0;
     if (bankAmt <= 0 && cashAmt <= 0) throw new BadRequestException('Enter a bank and/or cash opening amount.');
 
-    const row = await this.prisma.acctOpeningTrans.create({
+    const row = await this.writeAndResettle([dto.customerId], (tx) => tx.acctOpeningTrans.create({
       data: {
         kind: 'OPENING',
         custId: dto.customerId,
@@ -64,7 +81,7 @@ export class OpeningBalancesService {
         remarks: dto.remarks?.trim() || null,
         userName: userName ?? null,
       },
-    });
+    }));
     await this.prisma.customerAddition.updateMany({ where: { customerId: dto.customerId }, data: { openingSettled: true } });
     return this.toDto(row);
   }
@@ -119,14 +136,14 @@ export class OpeningBalancesService {
   }
 
   async update(id: number, dto: UpdateOpeningBalanceDto): Promise<OpeningBalanceDto> {
-    await this.getOpening(id);
+    const before = await this.getOpening(id);
     const customer = await this.prisma.customer.findUnique({ where: { id: dto.customerId }, select: { partyName: true } });
     if (!customer) throw new NotFoundException('Customer not found.');
     const bankAmt = dto.bankAmt ?? 0;
     const cashAmt = dto.cashAmt ?? 0;
     if (bankAmt <= 0 && cashAmt <= 0) throw new BadRequestException('Enter a bank and/or cash opening amount.');
 
-    const row = await this.prisma.acctOpeningTrans.update({
+    const row = await this.writeAndResettle([before.custId, dto.customerId], (tx) => tx.acctOpeningTrans.update({
       where: { id },
       data: {
         custId: dto.customerId,
@@ -137,13 +154,13 @@ export class OpeningBalancesService {
         drCr: dto.drCr,
         remarks: dto.remarks?.trim() || null,
       },
-    });
+    }));
     return this.toDto(row);
   }
 
   async remove(id: number): Promise<void> {
-    await this.getOpening(id);
-    await this.prisma.acctOpeningTrans.delete({ where: { id } });
+    const before = await this.getOpening(id);
+    await this.writeAndResettle([before.custId], (tx) => tx.acctOpeningTrans.delete({ where: { id } }));
   }
 
   /** Load a row and ensure it is an OPENING entry (not a payment CLEARANCE). */

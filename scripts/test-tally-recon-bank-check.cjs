@@ -90,6 +90,37 @@ test('a real fault on a note still shows — the date, not the wording', () => {
   assert.equal(row.status, 'DATE_MISMATCH', 'a genuine disagreement is still reported');
 });
 
+test('one OMS receipt entered as two Tally receipts the same day is matched (PNB 25 Jun)', () => {
+  const rows = reconcileParty(
+    ledger([tallyVoucher('Receipt', 'ICICI BANK', 374144, '2026-06-25', '195'), tallyVoucher('Receipt', 'ICICI BANK', 17811, '2026-06-25', '196')]),
+    party([omsVoucher('RECEIPT', 'ICICI BANK', 391955, '2026-06-25', 'RN/785')]),
+    FROM,
+  );
+  const receipts = only(rows, 'RECEIPT');
+  assert.equal(receipts.length, 2, 'no extra "missing in Tally" row for RN/785');
+  for (const r of receipts) { assert.equal(r.status, 'MATCHED'); assert.equal(r.omsRef, 'RN/785'); }
+});
+
+test('one Tally receipt entered as two OMS receipts the same day is matched (PADMAVATI 1 May)', () => {
+  const rows = reconcileParty(
+    ledger([tallyVoucher('Receipt', 'AXIS BANK', 41882, '2026-05-01', '70')]),
+    party([omsVoucher('RECEIPT', 'AXIS BANK', 41880, '2026-05-01', 'RN/407'), omsVoucher('RECEIPT', 'AXIS BANK', 2, '2026-05-01', 'RN/815')]),
+    FROM,
+  );
+  const receipts = only(rows, 'RECEIPT');
+  assert.equal(receipts.length, 1);
+  assert.equal(receipts[0].status, 'MATCHED');
+  assert.equal(receipts[0].omsRef, 'RN/407 + RN/815');
+});
+
+test('two Tally ledgers of one party are matched as one, each row under its own ledger', () => {
+  const old = { ...tallyVoucher('Receipt', 'ICICI BANK', 1000, '2026-04-04', '1'), ledgerName: 'PNB KITCHENMATE (OLD)' };
+  const cur = { ...tallyVoucher('Receipt', 'ICICI BANK', 2000, '2026-05-04', '2'), ledgerName: 'PNB KITCHENMATE LTD' };
+  const merged = { ledgerName: 'PNB KITCHENMATE LTD', openingNet: null, openingDate: null, closingNet: null, vouchers: [old, cur] };
+  const rows = reconcileParty(merged, party([omsVoucher('RECEIPT', 'ICICI BANK', 1000, '2026-04-04', 'RN/1'), omsVoucher('RECEIPT', 'ICICI BANK', 2000, '2026-05-04', 'RN/2')]), FROM);
+  assert.deepEqual(rows.map((r) => [r.ledgerName, r.status, r.omsRef]), [['PNB KITCHENMATE (OLD)', 'MATCHED', 'RN/1'], ['PNB KITCHENMATE LTD', 'MATCHED', 'RN/2']]);
+});
+
 let failures = 0;
 for (const [name, fn] of tests) {
   try { fn(); console.log(`PASS ${name}`); }
