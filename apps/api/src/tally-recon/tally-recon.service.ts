@@ -90,6 +90,29 @@ function issueKeyOf(r: { source: string; ledgerName: string; vchType: string; vc
 }
 
 /**
+ * An opening that differs only because an OMS receipt in the period holds money
+ * Tally has before the period (VIJAY: RN/373 ₹9,00,000 on 02-Apr = ₹4,00,000
+ * that day + a ₹5,00,000 advance Tally took before 1-Apr). The receipt is what
+ * is wrong; matching the opening would count that money twice. Returns the
+ * explanation, or null when the opening difference stands on its own.
+ */
+export function splitReceiptHint(
+  rows: { status: string; vchType: string; txnDate: Date; dr: number; cr: number; omsRef: string | null; omsAmount: number | null }[],
+  openingDiff: number,
+): string | null {
+  const omsOnly = rows.filter((r) => r.status === 'MISSING_IN_TALLY' && r.vchType === 'RECEIPT');
+  const tallyOnly = rows.filter((r) => r.status === 'MISSING_IN_OMS' && r.vchType === 'RECEIPT');
+  for (const o of omsOnly) {
+    const omsAmt = Math.abs(o.omsAmount ?? o.cr);
+    const sameDay = tallyOnly.filter((t) => ymd(t.txnDate) === ymd(o.txnDate)).reduce((sum, t) => sum + Math.abs(t.cr - t.dr), 0);
+    if (Math.abs(omsAmt - sameDay - openingDiff) <= 2) {
+      return `Not an opening problem: OMS receipt ${o.omsRef} (${omsAmt.toFixed(2)} on ${ymd(o.txnDate)}) holds ${openingDiff.toFixed(2)} that Tally has before this period. Split that receipt in Receive Payment (${sameDay.toFixed(2)} on its date + ${openingDiff.toFixed(2)} on the earlier date) — matching the opening would count it twice.`;
+    }
+  }
+  return null;
+}
+
+/**
  * Start of the April–March financial year a date falls in — mirrors the party
  * ledger. An opening balance belongs to a year, not to the day it was keyed, so a
  * balance entered in Jul-2025 is in force from 01-Apr-2025.
@@ -605,6 +628,12 @@ export class TallyReconService {
       }
       const group = groups.groupOf(ledger.ledgerName);
       rows.push(...reconcileParty(ledger, null, from, group && !groups.isParty(group) ? group : null));
+    }
+
+    for (const r of rows) {
+      if (r.vchType !== 'OPENING' || r.status !== 'AMOUNT_MISMATCH' || !r.customerId) continue;
+      const hint = splitReceiptHint(rows.filter((x) => x.customerId === r.customerId), r2((r.omsAmount ?? 0) - (r.dr - r.cr)));
+      if (hint) r.note = hint;
     }
 
     // A bill Tally keeps under this party but OMS under another: say whose, so
@@ -1321,7 +1350,9 @@ export class TallyReconService {
         failed.push({ rowId: id, reason: 'Row not found.' });
         continue;
       }
-      if (row.vchType !== 'OPENING' || row.status !== 'AMOUNT_MISMATCH') {
+      // MISSING_IN_TALLY: OMS carries an opening Tally does not — matching
+      // brings OMS to Tally's nil (J.E. STEEL).
+      if (row.vchType !== 'OPENING' || !['AMOUNT_MISMATCH', 'MISSING_IN_TALLY'].includes(row.status)) {
         failed.push({ rowId: id, reason: 'Only an opening row whose amount differs can be matched.' });
         continue;
       }
@@ -1356,6 +1387,12 @@ export class TallyReconService {
         }
 
         const tallyAmount = r2((row.dr || 0) - (row.cr || 0));
+        const siblings = await this.prisma.tallyReconRow.findMany({ where: { runId: row.runId, customerId: row.customerId } });
+        const hint = splitReceiptHint(siblings, r2(currentAmount - tallyAmount));
+        if (hint) {
+          failed.push({ rowId: id, reason: hint });
+          continue;
+        }
         if (!effective.length) {
           /*
            * No opening record: OMS's brought-forward figure is its own bills and
@@ -1387,7 +1424,7 @@ export class TallyReconService {
               },
             });
             const rowWrite = await tx.tallyReconRow.updateMany({
-              where: { id: row.id, status: 'AMOUNT_MISMATCH', resolvedAt: null, omsAmount: row.omsAmount },
+              where: { id: row.id, status: row.status, resolvedAt: null, omsAmount: row.omsAmount },
               data: {
                 status: 'MATCHED', resolvedAt: new Date(), resolvedRef: 'Opening Balance', review: 'SOLVED',
                 reviewNote: 'Opening difference added to OMS from the report.', reviewedAt: new Date(), reviewedBy: userName ?? null,
@@ -1416,27 +1453,18 @@ export class TallyReconService {
           });
           continue;
         }
-        if (nextBankAmt <= 0.004 && (opening.cashAmt ?? 0) <= 0.004) {
-          failed.push({ rowId: id, reason: 'Matching would leave an empty opening record. Remove or edit it in Opening Balance.' });
-          continue;
-        }
+        // Matching to nil with no cash part: the record goes rather than stay as ₹0.
+        const removeOpening = nextBankAmt <= 0.004 && (opening.cashAmt ?? 0) <= 0.004;
 
         await this.prisma.$transaction(async (tx) => {
-          const openingWrite = await tx.acctOpeningTrans.updateMany({
-            where: {
-              id: opening.id,
-              kind: 'OPENING',
-              custId: row.customerId!,
-              bankAmt: opening.bankAmt,
-              cashAmt: opening.cashAmt,
-              drCr: opening.drCr,
-            },
-            data: { bankAmt: nextBankAmt, drCr: nextDrCr, userName: userName ?? null },
-          });
+          const same = { id: opening.id, kind: 'OPENING', custId: row.customerId!, bankAmt: opening.bankAmt, cashAmt: opening.cashAmt, drCr: opening.drCr };
+          const openingWrite = removeOpening
+            ? await tx.acctOpeningTrans.deleteMany({ where: same })
+            : await tx.acctOpeningTrans.updateMany({ where: same, data: { bankAmt: nextBankAmt, drCr: nextDrCr, userName: userName ?? null } });
           if (openingWrite.count !== 1) throw new Error('The opening was edited by somebody else. Re-check the report, then try again.');
 
           const rowWrite = await tx.tallyReconRow.updateMany({
-            where: { id: row.id, status: 'AMOUNT_MISMATCH', resolvedAt: null, omsAmount: row.omsAmount },
+            where: { id: row.id, status: row.status, resolvedAt: null, omsAmount: row.omsAmount },
             data: {
               status: 'MATCHED',
               resolvedAt: new Date(),

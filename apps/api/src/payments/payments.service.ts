@@ -928,6 +928,9 @@ export class PaymentsService {
     if (!custId) return;
     const rows = await tx.acctLedger.findMany({ where: { voucherType: 'RECEIPT', custId } });
     if (rows.some((r) => r.adjMode == null)) return; // saved before replay support: leave as is
+    // What a CREDIT opening paid is re-applied at the end from the opening as it
+    // stands NOW — one switched to Dr (or removed) must stop paying bills.
+    await tx.acctPaymentReceipt.deleteMany({ where: { custId, refRecId: { startsWith: OPENING_CREDIT } } });
     const arrival = [...rows].sort(byArrival);
     const claims = await this.claimsOf(tx, arrival);
     await this.reverseChain(tx, [...rows].sort((a, b) => a.id - b.id));

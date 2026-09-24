@@ -164,9 +164,14 @@ const canAddOpening = (r: ReconRow) =>
   Math.abs(r.omsAmount ?? 0) < 0.005 &&
   Math.max(r.dr || 0, r.cr || 0) > 0;
 
-/** An existing OMS opening whose bank figure Tally proves is different. */
+/** An OMS opening whose bank figure Tally proves is different — or that Tally
+ *  does not have at all (matching then brings OMS to nil). */
 const canMatchOpening = (r: ReconRow) =>
-  r.vchType === 'OPENING' && r.status === 'AMOUNT_MISMATCH' && !r.resolvedAt && !!r.customerId && r.omsAmount != null;
+  r.vchType === 'OPENING' &&
+  (r.status === 'AMOUNT_MISMATCH' || (r.status === 'MISSING_IN_TALLY' && Math.abs(r.omsAmount ?? 0) > 0.004)) &&
+  !r.resolvedAt &&
+  !!r.customerId &&
+  r.omsAmount != null;
 
 const REVIEW: Record<Exclude<ReconReview, 'OPEN'>, { label: string; chip: string }> = {
   PENDING: {

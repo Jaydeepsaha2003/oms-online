@@ -227,6 +227,17 @@ test('raising an opening balance re-settles the receipts: the opening is paid fi
   assert.equal(onBill._sum.recAmt, 100, 'so only 100 is left for the bill');
 });
 
+test('an opening switched from Cr back to Dr stops paying bills (VIJAY put back)', async () => {
+  const p = await party('SWITCH CO');
+  const openings = new OpeningBalancesService(prisma, svc);
+  const o = await openings.create({ customerId: p.id, transDate: '2025-06-26', bankAmt: 300, cashAmt: 0, drCr: 'CREDIT' }, 'Tester');
+  await bill(p, 'SW-01JAN', '2026-01-01', 200);
+  await prisma.$transaction((tx) => svc.applyOnAccount(tx, p.id));
+  assert.equal((await prisma.acctPaymentReceipt.aggregate({ where: { invNo: 'SW-01JAN' }, _sum: { recAmt: true } }))._sum.recAmt, 200);
+  await openings.update(o.id, { customerId: p.id, transDate: '2025-06-26', bankAmt: 300, cashAmt: 0, drCr: 'DEBIT' });
+  assert.equal(await prisma.acctPaymentReceipt.count({ where: { invNo: 'SW-01JAN' } }), 0, 'the bill is unpaid again');
+});
+
 test('a named receipt whose bills are all paid is still refused when typed in', async () => {
   const p = await party('REFUSE CO');
   await bill(p, 'R-01JAN', '2026-01-01');

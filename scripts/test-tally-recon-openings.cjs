@@ -279,6 +279,27 @@ test('Match opening with no OMS opening record adds the difference, and the old 
   assert.equal((await prisma.tallyReconRow.findUnique({ where: { id: row.id } })).status, 'MATCHED');
 });
 
+test('an OMS opening Tally does not have can be matched to nil (J.E. STEEL)', async () => {
+  const p = await party('JE STEEL');
+  await prisma.challan.create({ data: { code: 'JE/1', prefix: 'SSS', invDate: new Date('2025-09-10'), customerId: p.id, customerName: p.partyName, challanStatus: 'CONFIRMED', b: 500, c: 0, total: 500 } });
+  const r = await run();
+  const row = await openingRow(r.id, p, { omsAmount: 500, status: 'MISSING_IN_TALLY' });
+  const res = await svc.matchOpenings({ rowIds: [row.id] }, 'Tester');
+  assert.equal(res.failed.length, 0, res.failed[0]?.reason);
+  const paid = await prisma.acctPaymentReceipt.aggregate({ where: { invNo: 'JE/1' }, _sum: { recAmt: true } });
+  assert.equal(paid._sum.recAmt, 500, 'the old bill is settled, so OMS owes nothing, as in Tally');
+});
+
+test('matching an existing opening down to nil removes the record', async () => {
+  const p = await party('NIL OPENING CO');
+  await openings.create({ customerId: p.id, transDate: '2026-04-01', bankAmt: 700, cashAmt: 0, drCr: 'DEBIT' }, 'Tester');
+  const r = await run();
+  const row = await openingRow(r.id, p, { omsAmount: 700, status: 'MISSING_IN_TALLY' });
+  const res = await svc.matchOpenings({ rowIds: [row.id] }, 'Tester');
+  assert.equal(res.failed.length, 0, res.failed[0]?.reason);
+  assert.equal((await openingsOf(p.id)).length, 0);
+});
+
 (async () => {
   let failures = 0;
   try {
