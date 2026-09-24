@@ -325,6 +325,8 @@ export interface NoteDirectoryRow {
   b: number;
   c: number;
   total: number;
+  /** The Tally voucher this note is linked to (credit notes: Tally's own number, e.g. "14"). */
+  tally?: { status: 'NOT_POSTED' | 'POSTING' | 'POSTED' | 'FAILED' | 'UNKNOWN'; vchNo: string | null } | null;
 }
 
 export interface NoteDirectoryQuery {

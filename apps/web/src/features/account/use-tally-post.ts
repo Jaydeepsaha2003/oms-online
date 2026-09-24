@@ -5,22 +5,22 @@ import { getApiErrorMessage, http } from '@/lib/api';
 import { useConfirm } from '@/components/common/confirm';
 
 /**
- * "Post to Tally" from anywhere (challan list, after saving a challan). Always
+ * "Post to Tally" from anywhere (challan list, after saving a challan, credit notes). Always
  * asks first; the server runs every check (SSS series, party mapping, GST
  * lock, duplicates) and says plainly why when it refuses.
  */
-export function usePostToTally() {
+export function usePostToTally(path = '/tally/post', listKey = 'challans') {
   const qc = useQueryClient();
   const confirm = useConfirm();
   const m = useMutation({
-    mutationFn: (code: string) => http.post<TallyPostResult>('/tally/post', { code }),
+    mutationFn: (code: string) => http.post<TallyPostResult>(path, { code }),
     onSuccess: (r) => {
       const say = r.status === 'POSTED' ? toast.success : r.status === 'FAILED' ? toast.error : toast.warning;
       say(r.message, { description: r.warnings.length ? `Check in Tally: ${r.warnings.join(' · ')}` : undefined, duration: 12_000 });
     },
     onError: (e) => toast.error(getApiErrorMessage(e), { duration: 12_000 }),
     onSettled: () => {
-      qc.invalidateQueries({ queryKey: ['challans'] });
+      qc.invalidateQueries({ queryKey: [listKey] });
       qc.invalidateQueries({ queryKey: ['tally'] });
     },
   });

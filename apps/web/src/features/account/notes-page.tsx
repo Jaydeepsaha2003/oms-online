@@ -9,6 +9,7 @@ import {
   Loader2,
   Plus,
   Printer,
+  Send,
   RotateCcw,
   Shuffle,
   Trash2,
@@ -54,6 +55,7 @@ import {
 import { isIOS, reservePreviewTab } from '@/lib/pdf';
 import { useCustomers } from '@/features/customers/use-customers';
 import { fetchChallanByCode } from '@/features/challans/use-challans';
+import { usePostToTally } from '@/features/account/use-tally-post';
 import {
   fetchNote,
   useDeleteNote,
@@ -1562,6 +1564,7 @@ export function NotesPage() {
         onDelete={del}
         canDelete={can('note:delete')}
         canPrint={can('note:print')}
+        canPostTally={can('tally:create')}
         confirm={confirm}
       />
 
@@ -1674,6 +1677,7 @@ function NoteDirectoryDialog({
   onDelete,
   canDelete,
   canPrint,
+  canPostTally,
   confirm,
 }: {
   open: boolean;
@@ -1683,9 +1687,11 @@ function NoteDirectoryDialog({
   onDelete: ReturnType<typeof useDeleteNote>;
   canDelete: boolean;
   canPrint: boolean;
+  canPostTally: boolean;
   confirm: ReturnType<typeof useConfirm>;
 }) {
   const navigate = useNavigate();
+  const tallyPost = usePostToTally('/tally/note-post', 'notes');
   const [fromDate, setFromDate] = useState('');
   const [toDate, setToDate] = useState('');
   const [payMode, setPayMode] = useState('ALL');
@@ -1755,6 +1761,30 @@ function NoteDirectoryDialog({
         <span className={cn(TEXT_CELL, 'tabular-nums font-bold')}>{money0(r.total)}</span>
       ),
     },
+    // Tally numbers credit notes itself — this shows which Tally CN this one is.
+    ...(mode === 'CREDIT'
+      ? [
+          {
+            id: 'tally',
+            label: 'Tally',
+            cell: (r: NoteDirectoryRow) => {
+              const s = r.tally?.status ?? 'NOT_POSTED';
+              if (s === 'NOT_POSTED' && !r.b) return <span className="text-muted-foreground/60 text-[12px]">—</span>;
+              const [text, tone] =
+                s === 'POSTED'
+                  ? [`Tally CN ${r.tally?.vchNo ?? ''}`, 'bg-emerald-50 text-emerald-700 ring-emerald-200']
+                  : s === 'POSTING'
+                    ? ['Sending…', 'bg-sky-50 text-sky-700 ring-sky-200']
+                    : s === 'UNKNOWN'
+                      ? ['Not sure — Sync Center', 'bg-rose-50 text-rose-700 ring-rose-200']
+                      : s === 'FAILED'
+                        ? ['Tally refused', 'bg-rose-50 text-rose-700 ring-rose-200']
+                        : ['Not in Tally', 'bg-amber-50 text-amber-800 ring-amber-200'];
+              return <span className={cn('inline-flex rounded-[4px] px-2 py-0.5 text-[11.5px] font-bold whitespace-nowrap ring-1 ring-inset', tone)}>{text}</span>;
+            },
+          } satisfies DataColumn<NoteDirectoryRow>,
+        ]
+      : []),
   ];
 
   return (
@@ -1808,6 +1838,22 @@ function NoteDirectoryDialog({
             className={DIRECTORY_GRID_CLASSES}
             actions={(r) => (
               <div className="flex justify-end gap-1">
+                {canPostTally && mode === 'CREDIT' && r.b > 0 && (!r.tally || r.tally.status === 'NOT_POSTED' || r.tally.status === 'FAILED') && (
+                  <Button
+                    size="sm"
+                    variant="outline"
+                    className="h-8 gap-1 px-2 text-[11.5px] font-bold"
+                    disabled={tallyPost.pendingCode === r.code}
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      void tallyPost.post(r.code, `${r.customerName} · B ₹${r.b.toLocaleString('en-IN')}`);
+                    }}
+                    title="Post this credit note to Tally"
+                  >
+                    {tallyPost.pendingCode === r.code ? <Loader2 className="size-3.5 animate-spin" /> : <Send className="size-3.5" />}
+                    Post to Tally
+                  </Button>
+                )}
                 {/* Opens the letterhead bill page and PREVIEWS the finished PDF
                     there, exactly as the challan list does. It used to auto-print,
                     which handed over the browser's Save-as-PDF chooser instead of

@@ -222,7 +222,7 @@ export class TallyBillsService {
     const now = new Date();
     const used = new Set<string>();
     const window = NOTE_WINDOW_DAYS * 86_400_000;
-    const rows: { key: string; data: Prisma.TallyVoucherUncheckedCreateInput }[] = oms.map((o) => {
+    const rows: { key: string; omsKey?: string; data: Prisma.TallyVoucherUncheckedCreateInput }[] = oms.map((o) => {
       const allowed = allowedFor(o.customerId);
       const t = tally
         .filter((v) => v.type === o.type && !v.cancelled && !used.has(v.guid) && v.date && Math.abs(v.amount - (o.b ?? 0)) <= 1.01)
@@ -236,6 +236,7 @@ export class TallyBillsService {
           : [];
       return {
         key: t?.guid ?? o.key,
+        omsKey: o.key,
         data: {
           vchType: o.type, challanId: o.challanId, creditNoteId: o.creditNoteId, companyGuid,
           status: t ? 'POSTED' : 'NOT_POSTED', tallyGuid: t?.guid ?? null, tallyMasterId: t?.masterId ?? null, tallyAlterId: t?.alterId ?? null,
@@ -265,12 +266,24 @@ export class TallyBillsService {
             r,
           ]),
         );
-        await tx.tallyVoucher.deleteMany({ where: notes });
+        // A note OMS is posting, or could not confirm, is the posting service's to settle:
+        // keep its row as it is unless Tally now shows the note. OMS-posted rows keep who posted them.
+        const existing = await tx.tallyVoucher.findMany({ where: notes });
+        const matched = new Set(rows.filter((r) => r.omsKey && r.data.tallyGuid).map((r) => r.omsKey));
+        const keep = existing.filter(
+          (r) => ['POSTING', 'UNKNOWN', 'FAILED'].includes(r.status) && !matched.has(r.creditNoteId ? `cn:${r.creditNoteId}` : `dn:${r.challanId}`),
+        );
+        const keptKeys = new Set(keep.map((r) => (r.creditNoteId ? `cn:${r.creditNoteId}` : `dn:${r.challanId}`)));
+        const posted = new Map(existing.filter((r) => r.tallyGuid && r.source === 'OMS').map((r) => [r.tallyGuid, r]));
+        await tx.tallyVoucher.deleteMany({ where: { ...notes, id: { notIn: keep.map((r) => r.id) } } });
         for (const r of rows) {
+          if (r.omsKey && keptKeys.has(r.omsKey)) continue;
           const a = kept.get(r.key);
+          const p = r.data.tallyGuid ? posted.get(r.data.tallyGuid) : undefined;
           await tx.tallyVoucher.create({
             data: {
               ...r.data,
+              ...(p && { source: p.source, postedBy: p.postedBy, postedAt: p.postedAt }),
               ...(a && { acceptedRecon: a.acceptedRecon, acceptedAlterId: a.acceptedAlterId, acceptedNote: a.acceptedNote, acceptedBy: a.acceptedBy, acceptedAt: a.acceptedAt }),
             },
           });

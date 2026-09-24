@@ -11,6 +11,7 @@ import { TallyService } from './tally.service';
 import { TallyPartiesService } from './tally-parties.service';
 import { TallyBillsService } from './tally-bills.service';
 import { TallyPostingService } from './tally-posting.service';
+import { TallyNotesService } from './tally-notes.service';
 
 const R = RESOURCES.TALLY;
 
@@ -46,6 +47,7 @@ export class TallyController {
     private readonly parties: TallyPartiesService,
     private readonly bills: TallyBillsService,
     private readonly posting: TallyPostingService,
+    private readonly notes: TallyNotesService,
   ) {}
 
   /** Live check: can OMS reach Tally, and is the locked company open? */
@@ -131,5 +133,33 @@ export class TallyController {
   @Permissions(perm(R, ACTIONS.CREATE))
   resolve(@Body() dto: CodeDto, @CurrentUser('name') name?: string) {
     return this.posting.resolve(dto.code, name ?? null);
+  }
+
+  /** What OMS would send for one credit note (nothing written). */
+  @Get('note-preview')
+  @Permissions(perm(R, ACTIONS.VIEW))
+  notePreview(@Query('code') code: string) {
+    return this.notes.preview(code ?? '');
+  }
+
+  /** Every linked credit note rebuilt and compared with Tally's own. */
+  @Post('note-preview/test')
+  @Permissions(perm(R, ACTIONS.VIEW))
+  notePreviewTest() {
+    return this.notes.testAgainstTally();
+  }
+
+  /** WRITES TO TALLY: post one credit note. */
+  @Post('note-post')
+  @Permissions(perm(R, ACTIONS.CREATE))
+  @Audit({ action: ACTIONS.CREATE, resource: R, description: 'Posted a credit note to Tally' })
+  notePost(@Body() dto: CodeDto, @CurrentUser('name') name?: string) {
+    return this.notes.post(dto.code, name ?? null);
+  }
+
+  @Post('note-resolve')
+  @Permissions(perm(R, ACTIONS.CREATE))
+  noteResolve(@Body() dto: CodeDto, @CurrentUser('name') name?: string) {
+    return this.notes.resolve(dto.code, name ?? null);
   }
 }

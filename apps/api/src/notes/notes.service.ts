@@ -196,7 +196,13 @@ export class NotesService {
         where: { ...(commonWhere as Prisma.CreditNoteWhereInput), prefix: creditCfg(mode).prefix },
         orderBy: [{ invDate: 'desc' }, { id: 'desc' }],
       });
-      items = rows.map((r) => ({ mode, id: r.id, code: r.code, invDate: r.invDate.toISOString(), customerName: r.customerName, b: r.b ?? 0, c: r.c ?? 0, total: r.total ?? 0 }));
+      // The Tally link: shows which Tally credit note this is (Tally numbers them itself).
+      const links = new Map(
+        (await this.prisma.tallyVoucher.findMany({ where: { creditNoteId: { in: rows.map((r) => r.id) } }, select: { creditNoteId: true, status: true, vchNo: true } })).map(
+          (t) => [t.creditNoteId, { status: t.status as NonNullable<NoteDirectoryRow['tally']>['status'], vchNo: t.vchNo }],
+        ),
+      );
+      items = rows.map((r) => ({ mode, id: r.id, code: r.code, invDate: r.invDate.toISOString(), customerName: r.customerName, b: r.b ?? 0, c: r.c ?? 0, total: r.total ?? 0, tally: links.get(r.id) ?? null }));
     } else {
       const rows = await this.prisma.challan.findMany({
         where: { ...(commonWhere as Prisma.ChallanWhereInput), transaction: 'DEBIT NOTE' },
@@ -390,7 +396,10 @@ export class NotesService {
     // Re-saving a credit note deletes and recreates its lines, which would
     // cascade away the `returnDispatchId` links and strand any reversal rows the
     // previous save created. Take them out first, while the links still exist.
-    if (isCreditLike(mode) && dto.code?.trim()) await this.clearUndispatch(code);
+    if (isCreditLike(mode) && dto.code?.trim()) {
+      await this.assertNotInTally(code, 'edit it');
+      await this.clearUndispatch(code);
+    }
 
     await this.prisma.$transaction(async (tx) => {
       if (isCreditLike(mode)) {
@@ -627,12 +636,22 @@ export class NotesService {
     });
   }
 
+  /** A credit note OMS posted to Tally (or is posting) is frozen: re-saving recreates it and loses the link. */
+  private async assertNotInTally(code: string, action: string): Promise<void> {
+    const cn = await this.prisma.creditNote.findUnique({ where: { code }, select: { id: true } });
+    const tv = cn && (await this.prisma.tallyVoucher.findUnique({ where: { creditNoteId: cn.id }, select: { status: true, source: true, vchNo: true } }));
+    if (!tv) return;
+    if (tv.status === 'POSTING' || tv.status === 'UNKNOWN') throw new BadRequestException(`${code} is being posted to Tally — wait until it shows posted or failed, then ${action}.`);
+    if (tv.status === 'POSTED' && tv.source === 'OMS') throw new BadRequestException(`${code} was posted to Tally as Credit Note ${tv.vchNo}. Change or delete it in Tally first, press "Check now" in Tally Sync Center, then ${action}.`);
+  }
+
   /* ── Delete (+ reverse all accounting) ─────────────────────────────────────── */
 
   async remove(mode: NoteMode, code: string): Promise<void> {
     if (isCreditLike(mode)) {
       const cn = await this.prisma.creditNote.findUnique({ where: { code } });
       if (!cn) throw new NotFoundException(`${mode === 'PURCHASE' ? 'Purchase Voucher' : 'Credit Note'} not found.`);
+      await this.assertNotInTally(code, 'delete it');
       await this.reverseCreditNote(code, creditCfg(mode).ledgerType);
       // Any quantity this note put back in the pending pool has to come out
       // again — the return is only true for as long as the note exists. Runs

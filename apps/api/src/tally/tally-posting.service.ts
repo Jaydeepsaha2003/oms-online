@@ -8,10 +8,10 @@ import { currentFy, DEBTORS_TDL, parseLedgers, TALLY_PREFIX, tallyVoucherNo } fr
 import { buildSalesVoucher, salesVoucherXml, type SalesVoucher, type VoucherParty } from './tally-voucher';
 
 /** Sales vouchers with their stock and ledger lines (cancelled ones included). */
-const LINES_TDL = (filter: string) =>
+export const LINES_TDL = (filter: string, vchType = 'Sales') =>
   '<COLLECTION NAME="OmsSaleLines"><TYPE>Voucher</TYPE>' +
   '<FETCH>GUID,MasterId,AlterId,VoucherNumber,Date,PartyLedgerName,PartyGSTIN,IsCancelled,IRNAckNo,EWayBillDetails.List,AllInventoryEntries.List,LedgerEntries.List</FETCH>' +
-  `<FILTER>OmsPick</FILTER></COLLECTION><SYSTEM TYPE="Formulae" NAME="OmsPick">$VoucherTypeName = "Sales"${filter}</SYSTEM>`;
+  `<FILTER>OmsPick</FILTER></COLLECTION><SYSTEM TYPE="Formulae" NAME="OmsPick">$VoucherTypeName = "${vchType}"${filter}</SYSTEM>`;
 
 
 const CHALLAN_SELECT = {
@@ -47,7 +47,7 @@ const STALE_MS = 2 * 60_000;
 /** An UNKNOWN is declared FAILED only if the voucher is still absent this long after the attempt. */
 const SETTLE_MS = 60_000;
 
-interface Actual {
+export interface Actual {
   guid: string;
   masterId: number | null;
   alterId: number | null;
@@ -61,9 +61,11 @@ interface Actual {
   irnAckNo: string | null;
   items: Map<string, { qty: number; amount: number }>;
   ledgers: Map<string, number>;
+  /** Ledger the stock lines are booked to (SALES, SALES RETURN, RATE DIFFERANCE…). */
+  itemLedger: string | null;
 }
 
-function parseActual(xml: string): Actual[] {
+export function parseActual(xml: string): Actual[] {
   return [...xml.matchAll(/<VOUCHER [^>]*>([^]*?)<\/VOUCHER>/g)].map(([, v]) => {
     const items = new Map<string, { qty: number; amount: number }>();
     for (const [, b] of v.matchAll(/<ALLINVENTORYENTRIES\.LIST>([^]*?)<\/ALLINVENTORYENTRIES\.LIST>/g)) {
@@ -93,14 +95,16 @@ function parseActual(xml: string): Actual[] {
       irnAckNo: tag(head, 'IRNACKNO'),
       items,
       ledgers,
+      itemLedger: tag(/<ACCOUNTINGALLOCATIONS\.LIST>([^]*?)<\/ACCOUNTINGALLOCATIONS\.LIST>/.exec(v)?.[1] ?? '', 'LEDGERNAME'),
     };
   });
 }
 
 const close = (a: number, b: number, tol = 0.02) => Math.abs(a - b) <= tol;
 
-/** Every way the voucher OMS would send differs from the one in Tally. */
-function differences(v: SalesVoucher, a: Actual): string[] {
+/** Every way the voucher OMS would send differs from the one in Tally. `sign` -1
+ *  reads a credit note, whose charge and tax ledgers Tally stores as minus. */
+export function differences(v: SalesVoucher, a: Actual, sign = 1): string[] {
   const d: string[] = [];
   if (a.party !== v.party) d.push(`Party: Tally "${a.party}", OMS "${v.party}"`);
   const billed = Math.abs(a.ledgers.get(a.party) ?? 0);
@@ -116,20 +120,20 @@ function differences(v: SalesVoucher, a: Actual): string[] {
   const ledgers = new Map(v.ledgers.map((l) => [l.name, l.amount]));
   for (const name of new Set([...ledgers.keys(), ...[...a.ledgers.keys()].filter((n) => n !== a.party)])) {
     const m = ledgers.get(name) ?? 0;
-    const t = a.ledgers.get(name) ?? 0;
+    const t = sign * (a.ledgers.get(name) ?? 0);
     if (!close(m, t)) d.push(`${name}: Tally ₹${t}, OMS ₹${m}`);
   }
   return d;
 }
 
 /** Tally's import reply: counters plus any line errors, in words. */
-function parseImport(xml: string) {
+export function parseImport(xml: string) {
   const n = (t: string) => int(tag(xml, t)) ?? 0;
   const lineErrors = [...xml.matchAll(/<LINEERROR>([^<]*)<\/LINEERROR>/g)].map((m) => m[1].trim()).filter(Boolean);
   return { created: n('CREATED'), altered: n('ALTERED'), errors: n('ERRORS'), exceptions: n('EXCEPTIONS'), lineErrors };
 }
 
-type Ctx = Awaited<ReturnType<TallyPostingService['context']>>;
+export type Ctx = Awaited<ReturnType<TallyPostingService['context']>>;
 
 @Injectable()
 export class TallyPostingService {
@@ -139,7 +143,7 @@ export class TallyPostingService {
   ) {}
 
   /** Party + company context every build needs, read live once. */
-  private async context() {
+  async context() {
     const company = await this.tally.lockedCompany();
     const ledgers = new Map(parseLedgers(await this.tally.exportFromCompany('OmsDebtors', DEBTORS_TDL)).map((l) => [l.guid, l]));
     const customers = new Map(
@@ -157,18 +161,19 @@ export class TallyPostingService {
     return { company, companyState: company.state ?? '', ledgers, customers, lockedUpTo, transporters };
   }
 
-  private build(c: ChallanRow, ctx: Ctx): TallyPreview & { party: VoucherParty; built: SalesVoucher | null } {
-    const cust = c.customerId != null ? ctx.customers.get(c.customerId) : undefined;
+  /** The Tally party for an OMS customer, read live — or why there is none usable. */
+  partyFor(customerId: number | null, customerName: string, ctx: Ctx): { party: VoucherParty; partyBlock: string | null } {
+    const cust = customerId != null ? ctx.customers.get(customerId) : undefined;
     const ledger: TallyLedger | undefined = cust ? ctx.ledgers.get(cust.tallyLedgerGuid!) : undefined;
     const partyBlock = !cust
-      ? `${c.customerName} is not mapped to a Tally ledger (Tally Sync Center → Party mapping).`
+      ? `${customerName} is not mapped to a Tally ledger (Tally Sync Center → Party mapping).`
       : !ledger
-        ? `${c.customerName}'s Tally ledger is gone from Tally — map it again.`
+        ? `${customerName}'s Tally ledger is gone from Tally — map it again.`
         : (ledger.gstin ?? '') !== (cust.tallyGstin ?? '')
-          ? `${c.customerName}'s GSTIN changed in Tally — re-confirm the mapping.`
+          ? `${customerName}'s GSTIN changed in Tally — re-confirm the mapping.`
           : null;
     const party: VoucherParty = {
-      name: ledger?.name ?? c.customerName,
+      name: ledger?.name ?? customerName,
       state: ledger?.state ?? null,
       gstin: ledger?.gstin,
       registrationType: ledger?.registrationType,
@@ -176,6 +181,11 @@ export class TallyPostingService {
       pincode: ledger?.pincode,
       city: cust?.city,
     };
+    return { party, partyBlock };
+  }
+
+  private build(c: ChallanRow, ctx: Ctx): TallyPreview & { party: VoucherParty; built: SalesVoucher | null } {
+    const { party, partyBlock } = this.partyFor(c.customerId, c.customerName, ctx);
     const vchNo = tallyVoucherNo(c.code);
     const { voucher, blocks } = buildSalesVoucher(c, party, ctx.companyState, vchNo ?? c.code);
     // Checked first and alone: an NB/DN bill is not a Tally bill at all, and a

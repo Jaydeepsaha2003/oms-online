@@ -212,31 +212,38 @@ const list = (tagName: string, lines: string[] | undefined) =>
  * accountant types (SSS-739/26-27 was copied field for field): party and
  * consignee GST details from the ledger, one stock line per item+rate booked
  * to SALES, then the charge, tax, TCS and round-off ledgers.
+ *
+ * With `note`, the same voucher as a Credit Note — the mirror image the
+ * accountant types (Tally CN 11 / 9 copied): every line and ledger debited
+ * ("Yes", minus amount), the party credited, items booked to `note.itemLedger`
+ * (SALES RETURN, or RATE DIFFERANCE for a rate cut); no delivery note or e-way details.
  */
-export function salesVoucherXml(v: SalesVoucher, p: VoucherParty): string {
+export function salesVoucherXml(v: SalesVoucher, p: VoucherParty, note?: { itemLedger: string }): string {
   const date = ymd(v.date);
+  const sg = note ? -1 : 1;
+  const dp = note ? 'Yes' : 'No';
   const dest = [p.city, p.state].filter(Boolean).join(',').toUpperCase();
   const lines = v.lines
     .map(
       (l) =>
         '<ALLINVENTORYENTRIES.LIST>' +
-        `${el('STOCKITEMNAME', l.item)}<ISDEEMEDPOSITIVE>No</ISDEEMEDPOSITIVE>` +
-        `<RATE>${amt(l.rate)}/${l.unit}</RATE><AMOUNT>${amt(l.amount)}</AMOUNT><ACTUALQTY>${qty(l)}</ACTUALQTY><BILLEDQTY>${qty(l)}</BILLEDQTY>` +
-        `<BATCHALLOCATIONS.LIST><BATCHNAME>Primary Batch</BATCHNAME><AMOUNT>${amt(l.amount)}</AMOUNT><ACTUALQTY>${qty(l)}</ACTUALQTY><BILLEDQTY>${qty(l)}</BILLEDQTY></BATCHALLOCATIONS.LIST>` +
-        `<ACCOUNTINGALLOCATIONS.LIST>${el('LEDGERNAME', TALLY_NAMES.sales)}<ISDEEMEDPOSITIVE>No</ISDEEMEDPOSITIVE><AMOUNT>${amt(l.amount)}</AMOUNT></ACCOUNTINGALLOCATIONS.LIST>` +
+        `${el('STOCKITEMNAME', l.item)}<ISDEEMEDPOSITIVE>${dp}</ISDEEMEDPOSITIVE>` +
+        `<RATE>${amt(l.rate)}/${l.unit}</RATE><AMOUNT>${amt(sg * l.amount)}</AMOUNT><ACTUALQTY>${qty(l)}</ACTUALQTY><BILLEDQTY>${qty(l)}</BILLEDQTY>` +
+        `<BATCHALLOCATIONS.LIST><BATCHNAME>Primary Batch</BATCHNAME><AMOUNT>${amt(sg * l.amount)}</AMOUNT><ACTUALQTY>${qty(l)}</ACTUALQTY><BILLEDQTY>${qty(l)}</BILLEDQTY></BATCHALLOCATIONS.LIST>` +
+        `<ACCOUNTINGALLOCATIONS.LIST>${el('LEDGERNAME', note?.itemLedger ?? TALLY_NAMES.sales)}<ISDEEMEDPOSITIVE>${dp}</ISDEEMEDPOSITIVE><AMOUNT>${amt(sg * l.amount)}</AMOUNT></ACCOUNTINGALLOCATIONS.LIST>` +
         '</ALLINVENTORYENTRIES.LIST>',
     )
     .join('');
   const ledgers =
-    `<LEDGERENTRIES.LIST>${el('LEDGERNAME', v.party)}<ISDEEMEDPOSITIVE>Yes</ISDEEMEDPOSITIVE><ISPARTYLEDGER>Yes</ISPARTYLEDGER><AMOUNT>${amt(-v.total)}</AMOUNT></LEDGERENTRIES.LIST>` +
+    `<LEDGERENTRIES.LIST>${el('LEDGERNAME', v.party)}<ISDEEMEDPOSITIVE>${note ? 'No' : 'Yes'}</ISDEEMEDPOSITIVE><ISPARTYLEDGER>Yes</ISPARTYLEDGER><AMOUNT>${amt(-sg * v.total)}</AMOUNT></LEDGERENTRIES.LIST>` +
     // Credit side, signed — a negative round-off stays "No" with a minus amount, as Tally stores it.
-    v.ledgers.map((l) => `<LEDGERENTRIES.LIST>${el('LEDGERNAME', l.name)}<ISDEEMEDPOSITIVE>No</ISDEEMEDPOSITIVE><AMOUNT>${amt(l.amount)}</AMOUNT></LEDGERENTRIES.LIST>`).join('');
+    v.ledgers.map((l) => `<LEDGERENTRIES.LIST>${el('LEDGERNAME', l.name)}<ISDEEMEDPOSITIVE>${dp}</ISDEEMEDPOSITIVE><AMOUNT>${amt(sg * l.amount)}</AMOUNT></LEDGERENTRIES.LIST>`).join('');
   return (
-    '<VOUCHER VCHTYPE="Sales" ACTION="Create" OBJVIEW="Invoice Voucher View">' +
+    `<VOUCHER VCHTYPE="${note ? 'Credit Note' : 'Sales'}" ACTION="Create" OBJVIEW="Invoice Voucher View">` +
     list('ADDRESS', p.address) +
     list('BASICBUYERADDRESS', p.address) +
     `<DATE>${date}</DATE><EFFECTIVEDATE>${date}</EFFECTIVEDATE>` +
-    '<VOUCHERTYPENAME>Sales</VOUCHERTYPENAME>' +
+    `<VOUCHERTYPENAME>${note ? 'Credit Note' : 'Sales'}</VOUCHERTYPENAME>` +
     el('VOUCHERNUMBER', v.vchNo) +
     el('PARTYLEDGERNAME', v.party) +
     el('PARTYNAME', v.party) +
@@ -257,10 +264,10 @@ export function salesVoucherXml(v: SalesVoucher, p: VoucherParty): string {
     el('BASICSHIPPEDBY', v.shippedBy) +
     el('BASICFINALDESTINATION', dest) +
     '<PERSISTEDVIEW>Invoice Voucher View</PERSISTEDVIEW><VCHENTRYMODE>Item Invoice</VCHENTRYMODE><ISINVOICE>Yes</ISINVOICE>' +
-    (v.deliveryNote ? `<INVOICEDELNOTES.LIST><BASICSHIPPINGDATE>${date}</BASICSHIPPINGDATE>${el('BASICSHIPDELIVERYNOTE', v.deliveryNote)}</INVOICEDELNOTES.LIST>` : '') +
+    (!note && v.deliveryNote ? `<INVOICEDELNOTES.LIST><BASICSHIPPINGDATE>${date}</BASICSHIPPINGDATE>${el('BASICSHIPDELIVERYNOTE', v.deliveryNote)}</INVOICEDELNOTES.LIST>` : '') +
     // E-way bill Part-A transporter, where Tally keeps it (as on SSS-739) — the
     // accountant then only generates. No bill number: Tally/NIC fill that in.
-    (v.transporterId
+    (!note && v.transporterId
       ? '<EWAYBILLDETAILS.LIST><DOCUMENTTYPE>Tax Invoice</DOCUMENTTYPE><SUBTYPE>Supply</SUBTYPE>' +
         `<TRANSPORTDETAILS.LIST>${el('TRANSPORTERNAME', v.shippedBy)}${el('TRANSPORTERID', v.transporterId)}</TRANSPORTDETAILS.LIST></EWAYBILLDETAILS.LIST>`
       : '') +

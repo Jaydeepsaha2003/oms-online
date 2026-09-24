@@ -116,3 +116,18 @@ test('transporter ID goes into the e-way bill details; none sent when OMS has no
   assert.match(withId, /<EWAYBILLDETAILS\.LIST>.*<TRANSPORTERNAME>BEST ROADWAYS<\/TRANSPORTERNAME><TRANSPORTERID>88AAACB4214A1ZJ<\/TRANSPORTERID>.*<\/EWAYBILLDETAILS\.LIST>/);
   assert.doesNotMatch(salesVoucherXml({ ...v, transporterId: null }, { name: 'BAPU STEEL', state: 'Maharashtra' }), /EWAYBILLDETAILS/);
 });
+
+test('credit note mirrors a sale: party credited, returns ledger debited, no OMS text or e-way bill', () => {
+  const { salesVoucherXml } = require('./tally-voucher.ts');
+  const v = {
+    vchNo: '14', date: new Date(2026, 8, 24), party: 'MANAK STEEL', total: 1050, shippedBy: 'X', deliveryNote: 'SSS-700/26-27', transporterId: '88AAACB4214A1ZJ',
+    lines: [{ item: 'S.S.UTENSILS/GLASS', unit: 'KGS', qty: 10, rate: 100, amount: 1000 }],
+    ledgers: [{ name: 'IGST 5%', amount: 50 }],
+  };
+  const x = salesVoucherXml(v, { name: 'MANAK STEEL', state: 'Gujarat' }, { itemLedger: 'SALES RETURN' });
+  assert.match(x, /VCHTYPE="Credit Note"/);
+  assert.match(x, /<LEDGERNAME>MANAK STEEL<\/LEDGERNAME><ISDEEMEDPOSITIVE>No<\/ISDEEMEDPOSITIVE><ISPARTYLEDGER>Yes<\/ISPARTYLEDGER><AMOUNT>1050(\.00)?<\/AMOUNT>/);
+  assert.match(x, /<LEDGERNAME>SALES RETURN<\/LEDGERNAME><ISDEEMEDPOSITIVE>Yes<\/ISDEEMEDPOSITIVE><AMOUNT>-1000(\.00)?<\/AMOUNT>/);
+  assert.match(x, /<LEDGERNAME>IGST 5%<\/LEDGERNAME><ISDEEMEDPOSITIVE>Yes<\/ISDEEMEDPOSITIVE><AMOUNT>-50(\.00)?<\/AMOUNT>/);
+  assert.doesNotMatch(x, /OMS|EWAYBILLDETAILS|INVOICEDELNOTES/);
+});
