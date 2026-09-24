@@ -20,9 +20,9 @@ export const TALLY_NAMES = {
   itemScrap: 'S.S.SCRAP',
 };
 
-/** Dispatch-from for e-way bills — exactly as every Tally-generated e-way bill of S.S.STEEL has it. */
+/** Dispatch-from for e-invoice and e-way bill — exactly as S.S.STEEL's Tally-entered bills have it (SSS-746). */
 const SHIP_FROM = {
-  address: 'J-6/ Balaji Industrial Premises Co-Op Soc Ltd,, Near Goddev Naka,B.P.Cross Road,, Bhayander (East) Thane',
+  address: ['J-6/ Balaji Industrial Premises Co-Op Soc Ltd,', 'Near Goddev Naka,B.P.Cross Road,', 'Bhayander (East) Thane'],
   place: 'BHAYANDER',
   pincode: '401105',
   state: 'Maharashtra',
@@ -234,6 +234,9 @@ export function salesVoucherXml(v: SalesVoucher, p: VoucherParty, note?: { itemL
   const sg = note ? -1 : 1;
   const dp = note ? 'Yes' : 'No';
   const dest = [p.city, p.state].filter(Boolean).join(',').toUpperCase();
+  // Place (Bill To / Ship To / e-way): the last address line, as the accountant types it (CHENNAI, DELHI…); 3+ letters or the state.
+  const lastLine = (p.address?.at(-1) ?? p.city ?? '').replace(/[,\s]+$/, '').toUpperCase();
+  const place = lastLine.length >= 3 ? lastLine : (p.state ?? '').toUpperCase();
   const lines = v.lines
     .map(
       (l) =>
@@ -274,19 +277,21 @@ export function salesVoucherXml(v: SalesVoucher, p: VoucherParty, note?: { itemL
     '<CONSIGNEECOUNTRYNAME>India</CONSIGNEECOUNTRYNAME>' +
     el('BASICSHIPPEDBY', v.shippedBy) +
     el('BASICFINALDESTINATION', dest) +
+    // E-invoice needs these on every bill (Tally's "Uncertain Transactions" check).
+    list('DISPATCHFROMADDRESS', SHIP_FROM.address) +
+    el('DISPATCHFROMNAME', 'S.S.STEEL') + el('DISPATCHFROMSTATENAME', SHIP_FROM.state) + el('DISPATCHFROMPINCODE', SHIP_FROM.pincode) + el('DISPATCHFROMPLACE', SHIP_FROM.place) +
+    el('BILLTOPLACE', place) + el('SHIPTOPLACE', place) +
     '<PERSISTEDVIEW>Invoice Voucher View</PERSISTEDVIEW><VCHENTRYMODE>Item Invoice</VCHENTRYMODE><ISINVOICE>Yes</ISINVOICE>' +
     (!note && v.deliveryNote ? `<INVOICEDELNOTES.LIST><BASICSHIPPINGDATE>${date}</BASICSHIPPINGDATE>${el('BASICSHIPDELIVERYNOTE', v.deliveryNote)}</INVOICEDELNOTES.LIST>` : '') +
     // E-way bill Part-A, laid out as on Tally-entered bills (SSS-713) — the
     // accountant then only generates. No bill number: Tally/NIC fill that in.
-    // Place = last address line, as the accountant typed it (HARYANA, CHENNAI, DELHI…).
     (!note && shouldPrefillEWayBill(v.total)
-      ? el('DISPATCHFROMNAME', 'S.S.STEEL') + el('DISPATCHFROMSTATENAME', SHIP_FROM.state) + el('DISPATCHFROMPINCODE', SHIP_FROM.pincode) + el('DISPATCHFROMPLACE', SHIP_FROM.place) +
-        '<EWAYBILLDETAILS.LIST>' +
-        list('CONSIGNORADDRESS', [SHIP_FROM.address]) +
+      ? '<EWAYBILLDETAILS.LIST>' +
+        list('CONSIGNORADDRESS', [SHIP_FROM.address.join(', ')]) +
         list('CONSIGNEEADDRESS', p.address?.length ? [p.address.join(', ')] : undefined) +
         '<DOCUMENTTYPE>Tax Invoice</DOCUMENTTYPE><SUBTYPE>Supply</SUBTYPE>' +
         el('CONSIGNORPLACE', SHIP_FROM.place) + el('CONSIGNORPINCODE', SHIP_FROM.pincode) +
-        el('CONSIGNEEPLACE', (p.address?.at(-1) ?? p.city ?? '').replace(/[,\s]+$/, '').toUpperCase()) + el('CONSIGNEEPINCODE', p.pincode) +
+        el('CONSIGNEEPLACE', place) + el('CONSIGNEEPINCODE', p.pincode) +
         el('SHIPPEDFROMSTATE', SHIP_FROM.state) + el('SHIPPEDTOSTATE', p.state) +
         (v.transporterId ? `<TRANSPORTDETAILS.LIST>${el('TRANSPORTERNAME', v.shippedBy)}${el('TRANSPORTERID', v.transporterId)}</TRANSPORTDETAILS.LIST>` : '') +
         '</EWAYBILLDETAILS.LIST>'

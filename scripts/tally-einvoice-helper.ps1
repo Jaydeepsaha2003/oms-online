@@ -17,7 +17,8 @@ $ErrorActionPreference = 'Stop'
 
 # Tally keys (SendKeys: % = Alt, ^ = Ctrl, ~ = Enter). {DATE} and {NO} are filled in per bill.
 # ponytail: blind keystrokes, calibrated on this PC in step mode; if a Tally screen changes, fix the list here.
-$OpenAndSend = @('%g', 'Day Book~', '{F2}', '{DATE}~', '%{F12}', 'Voucher Number~', 'Equal To~', '{NO}~', '^a', '~', '^a', '~')
+# Checked on the Tally PC with SSS-747: Go To > Day Book > date > Ctrl+F "Look for" the number > open > save > "generate e-Invoice?" Yes.
+$OpenAndSend = @('%g', 'Day Book~', '{F2}', '{DATE}~', '^f', '{NO}~', '~', '^a', 'y')
 $PrintKeys = @('%p', '~', '^p')
 
 function Ask-Tally($filter) {

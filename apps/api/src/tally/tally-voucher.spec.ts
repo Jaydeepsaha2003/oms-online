@@ -148,5 +148,17 @@ test('credit note mirrors a sale: party credited, returns ledger debited, no OMS
   assert.match(x, /<LEDGERNAME>MANAK STEEL<\/LEDGERNAME><ISDEEMEDPOSITIVE>No<\/ISDEEMEDPOSITIVE><ISPARTYLEDGER>Yes<\/ISPARTYLEDGER><AMOUNT>1050(\.00)?<\/AMOUNT>/);
   assert.match(x, /<LEDGERNAME>SALES RETURN<\/LEDGERNAME><ISDEEMEDPOSITIVE>Yes<\/ISDEEMEDPOSITIVE><AMOUNT>-1000(\.00)?<\/AMOUNT>/);
   assert.match(x, /<LEDGERNAME>IGST 5%<\/LEDGERNAME><ISDEEMEDPOSITIVE>Yes<\/ISDEEMEDPOSITIVE><AMOUNT>-50(\.00)?<\/AMOUNT>/);
-  assert.doesNotMatch(x, /OMS|EWAYBILLDETAILS|INVOICEDELNOTES/);
+  assert.doesNotMatch(x, />[^<]*\bOMS\b|EWAYBILLDETAILS|INVOICEDELNOTES/); // "OMS" in any text Tally shows
+});
+
+test('every bill carries the e-invoice dispatch-from and bill-to place, even under ₹50,000 (SSS-747 was refused)', () => {
+  const { salesVoucherXml } = require('./tally-voucher.ts');
+  const x = salesVoucherXml(
+    { vchNo: 'SSS-747/26-27', date: new Date(2026, 8, 24), party: 'ANIL METAL', lines: [], ledgers: [], total: 42_563, shippedBy: null, deliveryNote: null },
+    { name: 'ANIL METAL', state: 'Maharashtra', address: ['GALA 5, SOME ROAD,', 'MUMBAI'], pincode: '400002' },
+  );
+  assert.match(x, /<DISPATCHFROMADDRESS\.LIST TYPE="String"><DISPATCHFROMADDRESS>J-6\/ Balaji Industrial Premises Co-Op Soc Ltd,<\/DISPATCHFROMADDRESS><DISPATCHFROMADDRESS>Near Goddev Naka,B\.P\.Cross Road,<\/DISPATCHFROMADDRESS><DISPATCHFROMADDRESS>Bhayander \(East\) Thane<\/DISPATCHFROMADDRESS><\/DISPATCHFROMADDRESS\.LIST>/);
+  assert.match(x, /<DISPATCHFROMNAME>S\.S\.STEEL<\/DISPATCHFROMNAME><DISPATCHFROMSTATENAME>Maharashtra<\/DISPATCHFROMSTATENAME><DISPATCHFROMPINCODE>401105<\/DISPATCHFROMPINCODE><DISPATCHFROMPLACE>BHAYANDER<\/DISPATCHFROMPLACE>/);
+  assert.match(x, /<BILLTOPLACE>MUMBAI<\/BILLTOPLACE><SHIPTOPLACE>MUMBAI<\/SHIPTOPLACE>/);
+  assert.doesNotMatch(x, /EWAYBILLDETAILS/);
 });
