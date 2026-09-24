@@ -936,6 +936,10 @@ export function ChallanFormPage() {
   if (savedId) {
     return (
       <div className="space-y-4">
+        {/* The installed app has no browser Back — same way out as the form's header. */}
+        <Button variant="ghost" size="icon" className="size-8" onClick={() => navigate(backTo)} title="Back">
+          <ArrowLeft className="size-4" />
+        </Button>
         <div className="bg-card mx-auto max-w-lg rounded-md border p-8 text-center shadow-sm">
           <div className="bg-emerald-100 mx-auto flex size-12 items-center justify-center rounded-full text-emerald-700">
             <Check className="size-6" />
