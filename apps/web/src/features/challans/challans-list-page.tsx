@@ -687,7 +687,11 @@ export function ChallansListPage() {
     return (
       <div className="space-y-2">
         <div className="flex items-start justify-between gap-2">
-          <div className="min-w-0">
+          {/* Same tick as the desktop table's first column; the bottom bar then prints the selection. */}
+          <div className="-m-1 shrink-0 p-1" onClick={(e) => e.stopPropagation()}>
+            <RowCheckbox checked={selected.has(r.id)} onChange={() => toggleRow(r.id)} label={`Select challan ${r.code}`} title={`Select ${r.code} for bulk print`} />
+          </div>
+          <div className="min-w-0 flex-1">
             <p className="text-[11.5px] font-bold tabular-nums text-indigo-700 dark:text-indigo-300">{r.code}</p>
             <p className="truncate text-[14px] leading-tight font-bold text-slate-900">{r.customerName}</p>
             <p className="text-muted-foreground text-[11.5px] font-medium tabular-nums">{formatDate(r.invDate)}</p>
@@ -1105,6 +1109,14 @@ export function ChallansListPage() {
               or press <kbd className="rounded border px-1 font-sans text-[11px] font-semibold">Ctrl</kbd>+
               <kbd className="rounded border px-1 font-sans text-[11px] font-semibold">P</kbd>
             </span>
+            {/* Phones have no table header tick. */}
+            <button
+              type="button"
+              onClick={togglePage}
+              className="text-sky-800 cursor-pointer font-semibold underline decoration-dotted underline-offset-2 sm:hidden dark:text-sky-300"
+            >
+              {allPageSelected ? 'Unselect page' : 'Select all on page'}
+            </button>
             <button
               type="button"
               onClick={clearSelection}
