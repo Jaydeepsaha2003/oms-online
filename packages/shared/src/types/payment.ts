@@ -90,6 +90,18 @@ export interface PendingAdvanceRow {
 
 /** One party's (or agent's) total outstanding advance across every open advance
  *  voucher they have — the "who's sitting on an advance right now" view. */
+/**
+ * What saving a bill would take from the party's money on account, sent back
+ * (409, error ADVANCE_CHOICE) so the operator can say whether to use it.
+ */
+export interface AdvanceOffer {
+  /** Party money on account the bill could draw on, each side. */
+  bank: number;
+  cash: number;
+  /** How much of THIS bill it would settle (bank and cash kept apart). */
+  use: number;
+}
+
 export interface PartyAdvanceSummary {
   /** Null for an AGENT-level advance (not tied to one customer). */
   customerId: number | null;

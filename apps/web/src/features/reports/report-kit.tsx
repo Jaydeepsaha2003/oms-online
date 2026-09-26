@@ -1,7 +1,7 @@
 import type { CSSProperties, ReactNode } from 'react';
 import { ArrowDownRight, ArrowRight, ArrowUpRight, Hammer, Lightbulb, type LucideIcon } from 'lucide-react';
 import type { PeriodMetric, ReportSlice } from '@oms/shared';
-import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
+import { Card, CardContent } from '@/components/ui/card';
 import { cn } from '@/lib/utils';
 import { MobileWallpaper } from '@/components/common/mobile-skin';
 import { inrCompact, inrFull } from '@/features/dashboard/format';
@@ -9,14 +9,40 @@ import { inrCompact, inrFull } from '@/features/dashboard/format';
 /*
  * Two renderings, one set of props.
  *
- * Desktop keeps the plain bordered cards the reports have always had. Below
- * `sm` every kit piece switches to the shared Reports mobile design: frosted
- * glass floating on a living liquid wallpaper, transcribed from the mockup
- * (see the `.rp-*` block in index.css, which holds the actual numbers). The
- * split is `sm:hidden` / `hidden sm:block` rather than utility overrides
- * because the two versions differ in structure — sheens, tone dots and stat
- * grids exist only on the phone — not just in colour.
+ * Below `sm` every kit piece is the Reports mobile mockup: frosted glass on a
+ * living liquid wallpaper (the `.rp-*` block in index.css). From `sm` up it is
+ * the desktop report mockups: glass cards on a tinted plate under the CRM
+ * desk's blue hero (`.pd-*` and `.rd-*`). The split is `sm:hidden` /
+ * `hidden sm:block` rather than utility overrides because the two differ in
+ * structure, not just in colour.
+ *
+ * Note for the desktop classes: they are unlayered, so they beat any Tailwind
+ * utility on the same element. An element that must also be hidden on a phone
+ * is therefore hidden by NOT rendering the desktop class there, or by a
+ * wrapper — never by `hidden` next to a class that sets `display`.
  */
+
+/** The desktop mockups' categorical palette (their first blue is #4f6ef7). */
+const DESK_COLORS = ['#4f6ef7', '#8b5cf6', '#f59e0b', '#10b981', '#ef4444', '#06b6d4', '#ec4899', '#84cc16'];
+/** Bank / cash on the desktop charts and bars — the mockup's pair. */
+export const DESK_BANK = '#2c4fd0';
+export const DESK_CASH = '#34d399';
+/** Recharts dressing shared by every desktop chart: dashed grid, quiet ticks. */
+export const CHART_GRID = { vertical: false, stroke: '#e8ecf3', strokeDasharray: '4 4' } as const;
+export const CHART_TICK = { fontSize: 10.5, fill: '#8a94a8', fontWeight: 600 } as const;
+/** Column tops as the mockup draws them. */
+export const BAR_RADIUS: [number, number, number, number] = [6, 6, 2, 2];
+
+/** A swatch legend above a chart, the mockup's 9px rounded squares. */
+export function ChartLegend({ items }: { items: { label: string; color: string }[] }) {
+  return (
+    <div className="rd-legend">
+      {items.map((it) => (
+        <span key={it.label} className="rd-key"><i style={{ background: it.color }} />{it.label}</span>
+      ))}
+    </div>
+  );
+}
 
 /** Tone palette — the mockup's own gradients, tints and rings. */
 export type KpiTone = 'blue' | 'emerald' | 'amber' | 'violet' | 'rose' | 'slate';
@@ -38,12 +64,30 @@ export const toneSurface = (tone: KpiTone): CSSProperties => ({
 /** Stagger helper — every list in the mockup enters one item at a time. */
 const delay = (ms: number): CSSProperties => ({ animationDelay: `${ms}ms` });
 
-/** The headline figure the mockup puts on the blue, above the range chips. */
+/** One glass tile beside the desktop hero's headline figure. */
+export interface HeroStat {
+  label: string;
+  value: string;
+  hint?: string;
+  /** The tile's dot — the mockup gives each tile its own. */
+  dot: string;
+  /** A small change figure beside the value ("↑ 8.2%"). */
+  delta?: { dir: 'up' | 'down' | 'flat'; text: string };
+}
+
+/** The headline figure the mockup puts on the blue. The phone uses the first
+ *  four fields; the desktop hero also shows the chip, tiles and bar. */
 export interface ReportHero {
   label: string;
   value: string;
   hint?: string;
   delta?: { dir: 'up' | 'down' | 'flat'; text: string };
+  /** Desktop: the chip beside the figure when it is not the delta ("24 urgent"). */
+  chip?: { text: string; tone: 'good' | 'bad' | 'neutral' };
+  /** Desktop: the four glass tiles beside the headline. */
+  stats?: HeroStat[];
+  /** Desktop: a progress bar under the hint ("collected of billed"). */
+  bar?: { pct: number; label: string; tone?: 'good' | 'bad' };
 }
 
 /**
@@ -101,15 +145,76 @@ export function ReportHeader({ title, subtitle, icon: _icon, asOf, actions, hero
         {actions && <div className="relative mt-3 flex flex-wrap items-center gap-2">{actions}</div>}
       </div>
 
-      {/* Desktop: unchanged plain strip. */}
-      <div className="hidden flex-wrap items-center justify-between gap-3 sm:flex">
-        <p className="text-muted-foreground min-w-0 text-sm">{subtitle}</p>
-        <div className="flex items-center gap-2">
-          {actions}
-          {asOfText && <span className="text-muted-foreground text-xs">as of {asOfText}</span>}
-        </div>
+      {/* Desktop: the mockup's header row, less the name the topbar shows. */}
+      <div aria-hidden className="pd-backdrop max-sm:hidden" />
+      <div className="hidden flex-wrap items-center gap-3.5 sm:flex">
+        <p className="rd-sub mr-auto min-w-0">{subtitle}</p>
+        {asOfText && <span className="rd-asof">as of {asOfText}</span>}
+        {actions && <div className="flex items-center gap-2">{actions}</div>}
       </div>
     </div>
+  );
+}
+
+const ARROW = { up: '↑', down: '↓', flat: '→' } as const;
+
+/**
+ * The desktop hero: the report's headline figure with its chip, hint and bar,
+ * and four glass tiles beside it — the CRM desk's blue band (`.pd-hero`), as
+ * every desktop report mockup opens. Rendered after the filter bar, because
+ * the filters are what these figures answer to. Nothing on a phone, where
+ * {@link ReportHeader} carries the headline.
+ */
+export function ReportDeskHero({ hero, children }: { hero?: ReportHero; children?: ReactNode }) {
+  if (!hero) return <div className="pd-hero h-[132px] animate-pulse max-sm:hidden" aria-hidden />;
+  const chip = hero.chip ?? (hero.delta ? { text: `${ARROW[hero.delta.dir]} ${hero.delta.text} vs prev.`, tone: hero.delta.dir === 'down' ? 'bad' : hero.delta.dir === 'up' ? 'good' : 'neutral' } : undefined);
+  const chipColor = chip?.tone === 'bad' ? 'text-rose-700' : chip?.tone === 'good' ? 'text-emerald-700' : 'text-slate-600';
+  return (
+    <section className="pd-hero max-sm:hidden">
+      <div className="flex flex-wrap items-center gap-[18px]">
+        <div className="flex min-w-0 flex-[1_1_260px] flex-col gap-1.5">
+          <span className="pd-hero-label">{hero.label}</span>
+          <div className="flex flex-wrap items-baseline gap-3">
+            <span className="pd-hero-value">{hero.value}</span>
+            {chip && <span className={cn('pd-hero-chip', chipColor)}>{chip.text}</span>}
+          </div>
+          {hero.hint && <span className="pd-hero-hint">{hero.hint}</span>}
+          {hero.bar && (
+            <div className="mt-0.5 flex max-w-[360px] items-center gap-2.5">
+              <div className="pd-hero-track">
+                <span
+                  style={{
+                    width: `${Math.max(0, Math.min(100, hero.bar.pct))}%`,
+                    background: hero.bar.tone === 'good' ? 'linear-gradient(90deg,#b9f6dc,#6ee7b7)' : undefined,
+                  }}
+                />
+              </div>
+              <span className="text-[11.5px] font-bold whitespace-nowrap text-white/85">{hero.bar.label}</span>
+            </div>
+          )}
+        </div>
+        {hero.stats && hero.stats.length > 0 && (
+          <div className="grid flex-[2_1_520px] grid-cols-2 gap-2.5 lg:grid-cols-4">
+            {hero.stats.map((s) => (
+              <div key={s.label} className="pd-hero-stat min-w-0">
+                <div className="pd-hero-stat-label"><span className="size-[7px] shrink-0 rounded-full" style={{ background: s.dot }} /><span className="truncate">{s.label}</span></div>
+                <div className="flex items-baseline gap-1.5">
+                  <span className="pd-hero-stat-value whitespace-nowrap">{s.value}</span>
+                  {s.delta && (
+                    <span className={cn('text-[11px] font-extrabold whitespace-nowrap', s.delta.dir === 'down' ? 'text-rose-200' : 'text-emerald-200')}>
+                      {ARROW[s.delta.dir]} {s.delta.text}
+                    </span>
+                  )}
+                </div>
+                {s.hint && <div className="pd-hero-stat-hint truncate">{s.hint}</div>}
+              </div>
+            ))}
+          </div>
+        )}
+      </div>
+      {/* The foot: switches and actions that belong on the blue. */}
+      {children && <div className="pd-hero-foot">{children}</div>}
+    </section>
   );
 }
 
@@ -132,16 +237,18 @@ export function DeltaBadge({ metric }: { metric: PeriodMetric }) {
 }
 
 /**
- * Wraps a page's KPIs so the phone gets the mockup's two-column tile grid
- * while desktop keeps whatever responsive grid the page already declared.
- * Pages pass their existing grid classes; they apply from `sm` up only.
+ * Wraps a page's KPIs: the phone's two-column tile grid, and on desktop the
+ * mockup's KPI strip — one glass bar, a column per figure. `deskHidden` is for
+ * figures the desktop hero already shows, which the phone still lists here.
  */
-export function KpiGrid({ className, children }: { className?: string; children: ReactNode }) {
-  return <div className={cn('rp-kpis sm:grid', className)}>{children}</div>;
+export function KpiGrid({ className, children, deskHidden }: { className?: string; children: ReactNode; deskHidden?: boolean }) {
+  return <div className={cn('rp-kpis', deskHidden ? 'sm:hidden' : 'rd-strip', className)}>{children}</div>;
 }
 
+const KPI_DOT: Record<KpiTone, string> = { blue: '#4f6ef7', emerald: '#10b981', amber: '#f59e0b', violet: '#8b5cf6', rose: '#f43f5e', slate: '#94a3b8' };
+
 /** Compact headline KPI — a glass tile on a phone, the plain card on desktop. */
-export function Kpi({ label, value, hint, icon: Icon, tone = 'blue', metric, loading, title }: {
+export function Kpi({ label, value, hint, icon: _icon, tone = 'blue', metric, loading, title, deskHidden }: {
   label: string;
   value: string;
   hint?: string;
@@ -150,6 +257,8 @@ export function Kpi({ label, value, hint, icon: Icon, tone = 'blue', metric, loa
   metric?: PeriodMetric;
   loading?: boolean;
   title?: string;
+  /** Already on the desktop hero: listed on the phone only. */
+  deskHidden?: boolean;
 }) {
   const t = TONE[tone];
   const deltaTone: KpiTone = metric?.direction === 'up' ? 'emerald' : metric?.direction === 'down' ? 'rose' : 'slate';
@@ -179,24 +288,26 @@ export function Kpi({ label, value, hint, icon: Icon, tone = 'blue', metric, loa
         </div>
       </div>
 
-      {/* Desktop */}
-      <Card className="card-hover hidden gap-0 sm:block">
-        <CardHeader className="flex-row items-center justify-between space-y-0 pb-2">
-          <CardTitle className="text-muted-foreground text-sm font-medium">{label}</CardTitle>
-          {Icon && <span className={cn('flex size-9 items-center justify-center rounded-xl bg-gradient-to-br text-white shadow-sm', t.deskGrad)}><Icon className="size-4.5" /></span>}
-        </CardHeader>
-        <CardContent>
-          {loading ? (
-            <div className="bg-muted h-8 w-24 animate-pulse rounded" />
-          ) : (
-            <div className="text-2xl font-bold tracking-tight tabular-nums" title={title}>{value}</div>
-          )}
-          <div className="text-muted-foreground mt-1 flex items-center gap-1.5 text-xs">
-            {metric && !loading && <DeltaBadge metric={metric} />}
-            {hint && <span>{hint}</span>}
-          </div>
-        </CardContent>
-      </Card>
+      {/* Desktop: a cell of the KPI strip */}
+      {!deskHidden && (
+        <div className="rd-cell hidden">
+          <span className="rd-cell-label"><span className="size-[7px] shrink-0 rounded-full" style={{ background: KPI_DOT[tone] }} />{label}</span>
+          <span className="flex flex-wrap items-center gap-2">
+            {loading ? <span className="h-6 w-20 animate-pulse rounded bg-slate-900/10" /> : <span className="rd-cell-value" title={title}>{value}</span>}
+            {deltaText && !loading && (
+              <span
+                className={cn(
+                  'rd-delta',
+                  metric!.direction === 'up' ? 'bg-emerald-50 text-emerald-700' : metric!.direction === 'down' ? 'bg-rose-50 text-rose-700' : 'bg-slate-100 text-slate-600',
+                )}
+              >
+                {ARROW[metric!.direction === 'up' ? 'up' : metric!.direction === 'down' ? 'down' : 'flat']} {deltaText.replace(/^[+-]/, '')}
+              </span>
+            )}
+          </span>
+          {hint && <span className="rd-hint">{hint}</span>}
+        </div>
+      )}
     </>
   );
 }
@@ -222,12 +333,20 @@ export const CASH_EDGE = '#059669';
 /** A ranked horizontal-bar list (no chart lib) — top parties / regions / agents.
  *  A slice carrying `bank`/`cash` splits its bar into the Bank+Cash pair with a
  *  legend up top; slices without a payment mode keep one solid colour. */
-export function RankedBars({ data, money = true, emptyText = 'No data.', subFor }: {
+export function RankedBars({ data, money = true, emptyText = 'No data.', subFor, unit, cols = 1, colorFor, format }: {
   data: ReportSlice[];
   money?: boolean;
   emptyText?: string;
   /** Overrides the "x% of top" line under each bar. */
   subFor?: (d: ReportSlice) => string;
+  /** Desktop: a small word before each value ("orders"). */
+  unit?: string;
+  /** Desktop: split the list into two side-by-side columns. */
+  cols?: 1 | 2;
+  /** Desktop: a fixed colour per row (bank blue / cash green) instead of the cycle. */
+  colorFor?: (d: ReportSlice) => string;
+  /** Desktop: how a value is written, when it is neither money nor a count ("14.2%"). */
+  format?: (v: number) => string;
 }) {
   if (!data.length) return <div className="text-muted-foreground py-8 text-center text-sm">{emptyText}</div>;
   const max = Math.max(...data.map((d) => d.value), 1);
@@ -286,36 +405,45 @@ export function RankedBars({ data, money = true, emptyText = 'No data.', subFor 
         </div>
       </div>
 
-      {/* Desktop */}
-      <div className="hidden space-y-2.5 sm:block">
-        {split && <div className="text-muted-foreground -mt-0.5 mb-1 flex items-center gap-3 text-[11px]">{legend}</div>}
-        {data.map((d, i) => {
-          const bank = d.bank ?? 0;
-          const cash = d.cash ?? 0;
-          return (
-            <div key={d.name} className="grid grid-cols-[minmax(0,1fr)_auto] items-center gap-x-3">
-              <div className="min-w-0">
-                <div className="mb-1 flex items-center justify-between gap-2">
-                  <span className="truncate text-sm font-medium" title={d.name}>{d.name}</span>
-                  <span className="shrink-0 text-sm font-semibold tabular-nums" title={money ? inrFull(d.value) : undefined}>
-                    {fmt(d.value)}
-                    {split && <span className="text-muted-foreground ml-1 font-normal">({fmt(bank)} bank / {fmt(cash)} cash)</span>}
-                  </span>
-                </div>
-                <div className="bg-muted flex h-2 overflow-hidden rounded-full">
-                  {split ? (
-                    <>
-                      <div className="h-full" style={{ width: `${(bank / max) * 100}%`, background: BANK_COLOR }} />
-                      <div className="h-full" style={{ width: `${(cash / max) * 100}%`, background: CASH_COLOR, boxShadow: `inset 0 0 0 1px ${CASH_EDGE}` }} />
-                    </>
-                  ) : (
-                    <div className="h-full rounded-full" style={{ width: `${(d.value / max) * 100}%`, background: BAR_COLORS[i % BAR_COLORS.length] }} />
-                  )}
-                </div>
-              </div>
+      {/* Desktop: the mockup's rows — name and value over an 8px track. A
+          second column restarts the colour cycle, as the mockup's does. */}
+      <div className="hidden sm:block">
+        {split && <ChartLegend items={[{ label: 'Bank', color: DESK_BANK }, { label: 'Cash', color: DESK_CASH }]} />}
+        <div className={cn(cols === 2 && 'grid grid-cols-2 gap-x-9 gap-y-3')}>
+          {(cols === 2 ? [data.slice(0, Math.ceil(data.length / 2)), data.slice(Math.ceil(data.length / 2))] : [data]).map((part, c) => (
+            <div key={c} className="rd-bars">
+              {part.map((d, i) => {
+                const bank = d.bank ?? 0;
+                const cash = d.cash ?? 0;
+                const color = colorFor?.(d) ?? DESK_COLORS[i % DESK_COLORS.length];
+                // A column's own leader is its 100%, as in the mockup's second column.
+                const top = Math.max(...part.map((x) => x.value), 1);
+                return (
+                  <div key={d.name} className="flex min-w-0 flex-col gap-[5px]">
+                    <div className="rd-bar-head">
+                      <span className="rd-bar-name" title={d.name}>{d.name}</span>
+                      <span className="rd-bar-value" title={money ? inrFull(d.value) : undefined}>
+                        {unit && <span className="rd-bar-unit">{unit}</span>}
+                        {format ? format(d.value) : fmt(d.value)}
+                        {split && <span className="rd-bar-unit ml-1.5 mr-0">{fmt(bank)} · {fmt(cash)}</span>}
+                      </span>
+                    </div>
+                    <div className="rd-track">
+                      {split ? (
+                        <>
+                          <span style={{ width: `${(bank / top) * 100}%`, background: DESK_BANK }} />
+                          <span style={{ width: `${(cash / top) * 100}%`, background: DESK_CASH }} />
+                        </>
+                      ) : (
+                        <span className="rounded-full" style={{ width: `${(d.value / top) * 100}%`, background: `linear-gradient(90deg,${color}cc,${color})` }} />
+                      )}
+                    </div>
+                  </div>
+                );
+              })}
             </div>
-          );
-        })}
+          ))}
+        </div>
       </div>
     </>
   );
@@ -324,7 +452,14 @@ export function RankedBars({ data, money = true, emptyText = 'No data.', subFor 
 /** A titled report section — the mockup's glass card on a phone, the plain
  *  bordered card on desktop. `note` is the small grey line the mockup puts
  *  under a chart to explain it. */
-export function ReportCard({ title, children, right, note }: { title: string; children: ReactNode; right?: ReactNode; note?: ReactNode }) {
+export function ReportCard({ title, children, right, note, flush }: {
+  title: string;
+  children: ReactNode;
+  right?: ReactNode;
+  note?: ReactNode;
+  /** Desktop: no body padding — for a table that runs edge to edge. */
+  flush?: boolean;
+}) {
   return (
     <>
       {/* Phones */}
@@ -340,27 +475,47 @@ export function ReportCard({ title, children, right, note }: { title: string; ch
         </div>
       </div>
 
-      {/* Desktop */}
-      <Card className="card-hover hidden sm:block">
-        <CardHeader className="flex-row items-center justify-between space-y-0 pb-2">
-          <CardTitle className="text-base">{title}</CardTitle>
-          {right}
-        </CardHeader>
-        <CardContent>
-          {children}
-          {note && <p className="text-muted-foreground mt-2 text-xs">{note}</p>}
-        </CardContent>
-      </Card>
+      {/* Desktop: the mockup's glass card. The wrapper does the hiding, since
+          `.rd-card` sets its own display. */}
+      <div className="hidden sm:contents">
+        <section className="rd-card rd-rise">
+          <header className="rd-card-head">
+            <h3 className="rd-card-title">{title}</h3>
+            {right && <div className="rd-card-right">{right}</div>}
+          </header>
+          <div className="rd-card-body" data-flush={flush}>{children}</div>
+          {note && <p className="rd-note">{note}</p>}
+        </section>
+      </div>
     </>
   );
 }
 
 export type InsightTone = 'good' | 'warn' | 'bad' | 'info';
-const INSIGHT_DOT: Record<InsightTone, string> = { good: 'bg-emerald-500', warn: 'bg-amber-500', bad: 'bg-rose-500', info: 'bg-blue-500' };
 const DOT_HEX: Record<InsightTone, string> = { good: '#059669', warn: '#d97706', bad: '#e11d48', info: '#2563eb' };
 
+/** How each insight tone reads on the desktop Summary: its tag, its top bar,
+ *  the colour of its figure, and the count chip in the header. */
+const INSIGHT: Record<InsightTone, { tag: string; count: string; bar: string; value: string; pill: string; chip: string; dot: string }> = {
+  bad: { tag: 'Act now', count: 'act now', bar: '#f43f5e', value: 'text-rose-700 dark:text-rose-300', pill: 'bg-rose-50 text-rose-700', chip: 'bg-rose-50 text-rose-700 ring-1 ring-inset ring-rose-200', dot: '#f43f5e' },
+  warn: { tag: 'Watch', count: 'watch', bar: '#f59e0b', value: 'text-amber-700 dark:text-amber-300', pill: 'bg-amber-50 text-amber-700', chip: 'bg-amber-50 text-amber-700 ring-1 ring-inset ring-amber-200', dot: '#f59e0b' },
+  good: { tag: 'On track', count: 'on track', bar: '#10b981', value: 'text-emerald-700 dark:text-emerald-300', pill: 'bg-emerald-50 text-emerald-700', chip: 'bg-emerald-50 text-emerald-700 ring-1 ring-inset ring-emerald-200', dot: '#10b981' },
+  info: { tag: 'Note', count: 'note', bar: '#4f6ef7', value: '', pill: 'bg-indigo-50 text-[#3b4fd8]', chip: 'bg-indigo-50 text-[#3b4fd8] ring-1 ring-inset ring-indigo-200', dot: '#4f6ef7' },
+};
+const TONE_ORDER: InsightTone[] = ['bad', 'warn', 'good', 'info'];
+
+export interface SummaryPoint {
+  /** The phone's sentence. */
+  text: ReactNode;
+  tone?: InsightTone;
+  /** Desktop: the tile's headline figure and its sentence, as the mockup
+   *  splits them. Without it the tile shows `text` alone. */
+  desk?: { value: string; text: ReactNode };
+}
+
 /** Plain-English "Summary" card — auto-generated takeaways from a report's data. */
-export function ReportSummary({ points, loading }: { points: { text: ReactNode; tone?: InsightTone }[]; loading?: boolean }) {
+export function ReportSummary({ points, loading, title = 'Summary' }: { points: SummaryPoint[]; loading?: boolean; title?: string }) {
+  const counts = TONE_ORDER.map((t) => [t, points.filter((p) => (p.tone ?? 'info') === t).length] as const).filter(([, n]) => n > 0);
   return (
     <>
       {/* Phones */}
@@ -368,7 +523,7 @@ export function ReportSummary({ points, loading }: { points: { text: ReactNode; 
         <span aria-hidden className="rp-summary-glow" />
         <div className="relative mb-3 flex items-center gap-2.5">
           <span className="rp-summary-icon"><Lightbulb className="size-3.5" /></span>
-          <div className="rp-summary-title">Summary</div>
+          <div className="rp-summary-title">{title}</div>
           {points.length > 0 && !loading && <div className="rp-summary-count">{points.length} points</div>}
         </div>
         {loading ? (
@@ -390,31 +545,44 @@ export function ReportSummary({ points, loading }: { points: { text: ReactNode; 
         )}
       </div>
 
-      {/* Desktop */}
-      <Card className="border-primary/20 bg-primary/[0.03] hidden sm:block">
-        <CardHeader className="pb-2">
-          <CardTitle className="flex items-center gap-2 text-base">
-            <span className="bg-gradient-brand flex size-7 items-center justify-center rounded-lg text-white shadow-sm"><Lightbulb className="size-4" /></span>
-            Summary
-          </CardTitle>
-        </CardHeader>
-        <CardContent>
+      {/* Desktop: the mockup's Summary — tone counts up top, one tile each. */}
+      <div className="hidden sm:contents">
+        <section className="rd-summary">
+          <div className="mb-3 flex flex-wrap items-center gap-2.5">
+            <span className="rd-summary-icon" aria-hidden>✦</span>
+            <span className="text-[15px] font-extrabold">{title}</span>
+            <span className="flex-1" />
+            {!loading && counts.map(([t, n]) => (
+              <span key={t} className={cn('rd-count', INSIGHT[t].chip)}>
+                <span className="size-1.5 rounded-full" style={{ background: INSIGHT[t].dot }} />
+                {n} {INSIGHT[t].count}
+              </span>
+            ))}
+          </div>
           {loading ? (
-            <div className="space-y-2">{[0, 1, 2].map((i) => <div key={i} className="bg-muted h-4 w-full animate-pulse rounded" />)}</div>
+            <div className="rd-insights">{[0, 1, 2, 3].map((i) => <div key={i} className="rd-insight h-[92px] animate-pulse" />)}</div>
           ) : points.length === 0 ? (
-            <p className="text-muted-foreground text-sm">Not enough data yet to summarise.</p>
+            <p className="rd-insight-text">Not enough data yet to summarise.</p>
           ) : (
-            <ul className="grid gap-2.5 sm:grid-cols-2">
-              {points.map((p, i) => (
-                <li key={i} className="flex items-start gap-2.5 text-sm leading-snug">
-                  <span className={cn('mt-1.5 size-2 shrink-0 rounded-full', INSIGHT_DOT[p.tone ?? 'info'])} />
-                  <span>{p.text}</span>
-                </li>
-              ))}
-            </ul>
+            // Six read as 3 + 3 and four as one row, as in the mockups.
+            <div className="rd-insights" style={{ gridTemplateColumns: `repeat(auto-fit, minmax(min(100%, ${points.length > 4 && points.length % 3 === 0 ? 280 : 220}px), 1fr))` }}>
+              {points.map((p, i) => {
+                const t = INSIGHT[p.tone ?? 'info'];
+                return (
+                  <div key={i} className="rd-insight rd-rise" style={delay(i * 45)}>
+                    <span aria-hidden className="absolute inset-x-0 top-0 h-[3px]" style={{ background: t.bar }} />
+                    <div className="flex items-center justify-between gap-2">
+                      {p.desk ? <span className={cn('rd-insight-value', t.value)}>{p.desk.value}</span> : <span />}
+                      <span className={cn('rd-tag', t.pill)}>{t.tag}</span>
+                    </div>
+                    <p className="rd-insight-text">{p.desk ? p.desk.text : p.text}</p>
+                  </div>
+                );
+              })}
+            </div>
           )}
-        </CardContent>
-      </Card>
+        </section>
+      </div>
     </>
   );
 }
@@ -439,43 +607,78 @@ export function ReportSeg<T extends string>({ options, value, onChange }: { opti
           <button key={o} type="button" className="rp-seg-btn" data-on={value === o} onClick={() => onChange(o)}>{o}</button>
         ))}
       </div>
-      <div className="mb-4 hidden flex-wrap gap-1.5 sm:flex" role="tablist">
-        {options.map((o) => (
-          <button
-            key={o}
-            type="button"
-            role="tab"
-            aria-selected={value === o}
-            onClick={() => onChange(o)}
-            className={cn('rounded-md px-3 py-1.5 text-sm font-medium transition-colors', value === o ? 'bg-slate-900 text-white' : 'bg-slate-100 text-slate-600 hover:bg-slate-200')}
-          >
-            {o}
-          </button>
-        ))}
+      <div className="mb-3 hidden sm:block">
+        <div className="rd-seg rd-seg-sm" role="tablist">
+          {options.map((o) => (
+            <button key={o} type="button" role="tab" aria-selected={value === o} data-on={value === o} className="rd-seg-btn" onClick={() => onChange(o)}>
+              {o}
+            </button>
+          ))}
+        </div>
       </div>
     </>
   );
 }
 
 /** Stat chips — the recovery pipeline and the party segments, two-up. */
-export function ReportChips({ chips }: { chips: { label: string; count: string; value?: string; tone: KpiTone }[] }) {
+/** The mockup's tinted pipeline tiles, desktop side: Tailwind's 50 / 200 / 700. */
+const CHIP_DESK: Record<KpiTone, string> = {
+  rose: 'bg-rose-50 text-rose-700 ring-rose-200 dark:bg-rose-500/15 dark:text-rose-300 dark:ring-rose-400/25',
+  amber: 'bg-amber-50 text-amber-700 ring-amber-200 dark:bg-amber-500/15 dark:text-amber-300 dark:ring-amber-400/25',
+  slate: 'bg-slate-100 text-slate-600 ring-slate-200 dark:bg-white/5 dark:text-slate-300 dark:ring-white/15',
+  blue: 'bg-indigo-50 text-blue-800 ring-indigo-200 dark:bg-indigo-500/15 dark:text-indigo-300 dark:ring-indigo-400/25',
+  violet: 'bg-violet-50 text-violet-700 ring-violet-200 dark:bg-violet-500/15 dark:text-violet-300 dark:ring-violet-400/25',
+  emerald: 'bg-emerald-50 text-emerald-700 ring-emerald-200 dark:bg-emerald-500/15 dark:text-emerald-300 dark:ring-emerald-400/25',
+};
+
+export function ReportChips({ chips, unit }: { chips: { label: string; count: string; value?: string; tone: KpiTone }[]; unit?: string }) {
   return (
-    <div className="rp-chips sm:grid-cols-3 lg:grid-cols-6">
-      {chips.map((c, i) => (
-        <div key={c.label} className="rp-chip max-sm:!block sm:rounded-lg sm:px-3 sm:py-2 sm:ring-1 sm:ring-inset" style={{ ...toneSurface(c.tone), ...delay(60 + i * 45) }}>
-          <div className="rp-chip-label sm:text-xs sm:tracking-wide sm:opacity-80">{c.label}</div>
-          <div className="rp-chip-count sm:mt-0.5 sm:text-lg sm:font-bold">{c.count}</div>
-          {c.value && <div className="rp-chip-value sm:text-xs sm:opacity-80">{c.value}</div>}
-        </div>
-      ))}
-    </div>
+    <>
+      <div className="rp-chips sm:hidden">
+        {chips.map((c, i) => (
+          <div key={c.label} className="rp-chip max-sm:!block" style={{ ...toneSurface(c.tone), ...delay(60 + i * 45) }}>
+            <div className="rp-chip-label">{c.label}</div>
+            <div className="rp-chip-count">{c.count}</div>
+            {c.value && <div className="rp-chip-value">{c.value}</div>}
+          </div>
+        ))}
+      </div>
+      <div className="hidden gap-2.5 sm:grid" style={{ gridTemplateColumns: `repeat(${Math.min(chips.length, 6)}, minmax(0,1fr))` }}>
+        {chips.map((c, i) => (
+          <div key={c.label} className={cn('rd-rise min-w-0 rounded-[14px] px-[13px] py-[11px] ring-1 ring-inset', CHIP_DESK[c.tone])} style={delay(i * 45)}>
+            <div className="truncate text-[11.5px] font-bold">{c.label}</div>
+            <div className="mt-[3px] flex items-baseline gap-1.5">
+              <span className="text-[22px] font-extrabold tabular-nums">{c.count}</span>
+              {unit && <span className="text-[11.5px] font-semibold opacity-80">{unit}</span>}
+            </div>
+            {c.value && <div className="text-[12.5px] font-bold tabular-nums opacity-85">{c.value}</div>}
+          </div>
+        ))}
+      </div>
+    </>
   );
 }
 
 /** A value funnel — ordered → dispatched → billed, each a fat proportional bar. */
 export function ReportFunnel({ steps }: { steps: { label: string; value: string; ratio: number; from: string; to: string }[] }) {
   return (
-    <div className="rp-funnel">
+    <>
+    {/* Desktop: the mockup's stage bars. */}
+    <div className="hidden flex-col gap-4 sm:flex">
+      {steps.map((s, i) => (
+        <div key={s.label}>
+          <div className="mb-1.5 flex items-baseline gap-2.5">
+            <span className="flex-1 text-[13px] font-bold">{s.label}</span>
+            <span className="text-[17px] font-extrabold tabular-nums">{s.value}</span>
+            <span className="w-11 text-right text-xs font-extrabold text-[#7a849c]">{Math.round(s.ratio * 100)}%</span>
+          </div>
+          <div className="rd-stage-track">
+            <div className="rd-rise" style={{ width: `${Math.max(s.ratio, 0) * 100}%`, background: `linear-gradient(90deg,${s.from},${s.to})`, ...delay(90 + i * 120) }} />
+          </div>
+        </div>
+      ))}
+    </div>
+    <div className="rp-funnel sm:hidden">
       {steps.map((s, i) => (
         <div key={s.label}>
           <div className="rp-funnel-head">
@@ -491,6 +694,58 @@ export function ReportFunnel({ steps }: { steps: { label: string; value: string;
           </div>
         </div>
       ))}
+    </div>
+    </>
+  );
+}
+
+/**
+ * A category mix as the desktop mockups draw it: a ring (a CSS conic
+ * gradient, hairline gaps between slices) with the total in its hole, and a
+ * legend of swatch, name, value and share beside it.
+ */
+export function ReportDonut({ data, emptyText = 'No data yet.', center = 'Total', money = true, colorFor, cols = 1 }: {
+  data: ReportSlice[];
+  emptyText?: string;
+  /** The word in the ring's hole, over the total. */
+  center?: string;
+  /** False for counts (parties), which also drops the share column. */
+  money?: boolean;
+  /** A fixed colour per slice (segments have their own) instead of the cycle. */
+  colorFor?: (d: ReportSlice) => string;
+  /** The legend in two columns, for a long list of short names. */
+  cols?: 1 | 2;
+}) {
+  const total = data.reduce((t, d) => t + Math.max(0, d.value), 0);
+  if (!data.length || total <= 0) return <div className="text-muted-foreground py-8 text-center text-sm">{emptyText}</div>;
+  const color = (d: ReportSlice, i: number) => colorFor?.(d) ?? DESK_COLORS[i % DESK_COLORS.length];
+  const fmt = (v: number) => (money ? inrCompact(v) : Math.round(v).toLocaleString('en-IN'));
+  let at = 0;
+  const stops: string[] = [];
+  data.forEach((d, i) => {
+    const deg = (Math.max(0, d.value) / total) * 360;
+    const gap = Math.min(0.8, deg / 3);
+    stops.push(`${color(d, i)} ${at}deg ${at + deg - gap}deg`, `var(--rd-gap) ${at + deg - gap}deg ${at + deg}deg`);
+    at += deg;
+  });
+  return (
+    <div className="flex flex-wrap items-center gap-[22px]">
+      <div className="rd-donut" style={{ background: `conic-gradient(${stops.join(', ')})` }}>
+        <div className="rd-donut-hole">
+          <span className="text-[10.5px] font-extrabold tracking-[0.08em] text-[#7a849c] uppercase">{center}</span>
+          <span className="text-[19px] font-extrabold tabular-nums" title={money ? inrFull(total) : undefined}>{fmt(total)}</span>
+        </div>
+      </div>
+      <div className={cn('min-w-[220px] flex-[1_1_240px] gap-2', cols === 2 ? 'grid grid-cols-2 gap-x-5' : 'flex flex-col')}>
+        {data.map((d, i) => (
+          <div key={d.name} className="rd-donut-row" style={money ? undefined : { gridTemplateColumns: '10px minmax(0,1fr) auto' }}>
+            <span className="size-2.5 rounded-[3px]" style={{ background: color(d, i) }} />
+            <span className="truncate font-semibold" title={d.name}>{d.name}</span>
+            <span className="font-extrabold tabular-nums" title={money ? inrFull(d.value) : undefined}>{fmt(d.value)}</span>
+            {money && <span className="text-right text-[11.5px] font-bold text-[#7a849c] tabular-nums">{Math.round((d.value / total) * 100)}%</span>}
+          </div>
+        ))}
+      </div>
     </div>
   );
 }

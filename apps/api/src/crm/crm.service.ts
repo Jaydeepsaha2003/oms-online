@@ -591,10 +591,10 @@ export class CrmService {
       const hit = all.find((x) => x.partyName.trim().toUpperCase() === key);
       if (hit) return hit;
       // Known/typed party with no open exposure → cleared shell (still carry CRM state).
-      const cust = customerId != null ? await this.prisma.customer.findUnique({ where: { id: customerId }, select: { agentName: true } }) : null;
+      const cust = customerId != null ? await this.prisma.customer.findUnique({ where: { id: customerId }, select: { agentName: true, mobile: true } }) : null;
       const crm = await this.crmOverlayFor(customerId ?? null, p);
       return {
-        customerId: customerId ?? null, partyName: p, agent: cust?.agentName ?? null,
+        customerId: customerId ?? null, partyName: p, agent: cust?.agentName ?? null, mobile: cust?.mobile ?? null,
         outstanding: 0, gross: 0, overdue: 0, dueSoon: 0, oldestDays: 0, invoiceCount: 0, lastReceiptAt: null, advanceHeld: 0,
         ...crm, invoices: [], bank: { ...ZERO_SIDE }, cash: { ...ZERO_SIDE },
       };
@@ -624,7 +624,7 @@ export class CrmService {
       // having changed. Ordering the source makes the whole computation
       // reproducible; the sort below adds the same tiebreaker for safety.
       this.prisma.challan.findMany({ where: { challanStatus: 'CONFIRMED' }, orderBy: { code: 'asc' }, select: { code: true, total: true, b: true, c: true, invDate: true, dueDate: true, customerId: true, customerName: true, transaction: true } }),
-      this.prisma.customer.findMany({ select: { id: true, agentName: true } }),
+      this.prisma.customer.findMany({ select: { id: true, agentName: true, mobile: true } }),
       this.prisma.acctPaymentReceipt.findMany({ select: { custId: true, invNo: true, recAmt: true, recDate: true, payMode: true, refRecId: true } }),
       // Sales Discounts settle an invoice just as truly as cash does (Account →
       // Sales Discount). Without them a written-off remainder is never cleared
@@ -709,6 +709,7 @@ export class CrmService {
         p = {
           customerId: c.customerId ?? null, partyName: key,
           agent: (c.customerId != null ? custMap.get(c.customerId)?.agentName : null) ?? null,
+          mobile: (c.customerId != null ? custMap.get(c.customerId)?.mobile : null) ?? null,
           outstanding: 0, gross: 0, overdue: 0, dueSoon: 0, oldestDays: 0, invoiceCount: 0, lastReceiptAt: null, advanceHeld: 0,
           openFollowups: 0, nextPromiseAt: null, nextPromiseAmount: null, promiseState: 'none', hasFollowup: false, invoices: [],
           bank: { ...ZERO_SIDE }, cash: { ...ZERO_SIDE },

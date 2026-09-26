@@ -1,3 +1,5 @@
+import type { AdvanceOffer } from './payment';
+
 /** Shared, transport-level types used by both the API and the web client. */
 
 /** Standard success envelope returned by the API. */
@@ -62,6 +64,9 @@ export interface ApiError {
   duplicate?: DuplicateMatch;
   /** Set when `error === 'DUPLICATE_DISPATCH'` (409). */
   duplicateDispatch?: DuplicateDispatch;
+  /** Set when `error === 'ADVANCE_CHOICE'` (409): a bill save waiting on
+   *  "use the party's advance?". */
+  advance?: AdvanceOffer;
   path?: string;
   timestamp?: string;
 }

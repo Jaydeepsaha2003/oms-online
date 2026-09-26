@@ -9,6 +9,7 @@ import { Input } from '@/components/ui/input';
 import { Button } from '@/components/ui/button';
 import { Label } from '@/components/ui/label';
 import { Sheet, SheetContent, SheetFooter, SheetHeader, SheetTitle } from '@/components/ui/sheet';
+import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover';
 
 /** Distinct agents / regions / customers for the filter dropdowns. */
 export function useReportFilterOptions() {
@@ -126,7 +127,9 @@ function activeCount(f: FilterState): number {
 /**
  * The report filter bar — date range (+ presets), customer, agent, region.
  *
- * Desktop: the same always-visible inline row it always had.
+ * Desktop: the report mockups' glass bar — the quick ranges as a segmented
+ * control, then Dates / Customer / Agent / Region as labelled chips holding
+ * the real controls, and Reset at the end.
  *
  * Below `sm` it becomes the rest of the mockup's header. `ReportHeader` draws
  * the blue hero with square bottom corners and this continues the same blue
@@ -144,6 +147,8 @@ export function ReportFilterBar({ f, setF, active, onReset }: { f: FilterState; 
   const { data } = useReportFilterOptions();
   const count = activeCount(f);
   const fmtD = (v: string) => (v ? v.split('-').reverse().join('-') : 'any');
+  // The desktop chip's short form, as the mockup writes it: 01-04-26.
+  const fmtShort = (v: string) => (v ? `${v.slice(8, 10)}-${v.slice(5, 7)}-${v.slice(2, 4)}` : 'any');
   const custName = f.customerId ? data?.customers.find((c) => String(c.id) === f.customerId)?.name ?? 'Customer set' : 'All customers';
   // Which preset (if any) the current range is exactly — lights that chip up.
   const currentPreset = PRESETS.find((p) => {
@@ -153,19 +158,63 @@ export function ReportFilterBar({ f, setF, active, onReset }: { f: FilterState; 
 
   return (
     <>
-      {/* Desktop */}
-      <div className="bg-card hidden flex-wrap items-end gap-2 rounded-xl border p-3 sm:flex">
-        <FilterFields f={f} setF={setF} />
-        <Button
-          variant="outline"
-          size="sm"
-          className="border-rose-200 font-semibold text-rose-600 hover:bg-rose-50 hover:text-rose-700 disabled:border-input disabled:text-rose-600/40"
-          onClick={onReset}
-          disabled={!active}
-          title={active ? 'Clear all filters' : 'No filters applied'}
-        >
-          <RotateCcw className="size-3.5" /> Reset
-        </Button>
+      {/* Desktop — the wrapper does the hiding, `.rd-filters` sets its own display. */}
+      <div className="hidden sm:block">
+        <div className="rd-filters">
+          <div className="rd-seg" role="group" aria-label="Period">
+            {PRESETS.map((p) => (
+              <button key={p} type="button" className="rd-seg-btn" data-on={currentPreset === p} onClick={() => setF((prev) => ({ ...prev, ...presetRange(p) }))}>
+                {p}
+              </button>
+            ))}
+          </div>
+          {/* The range reads as one short chip, as in the mockup; the two date
+              inputs open under it. */}
+          <Popover>
+            <PopoverTrigger asChild>
+              <button type="button" className="rd-field rd-field-drop">
+                <span className="rd-field-label">Dates</span>
+                <span className="text-[12.5px] leading-[1.3] font-bold whitespace-nowrap text-[#27304a] tabular-nums dark:text-[#e8eefc]">
+                  {fmtShort(f.from)} → {fmtShort(f.to)}
+                </span>
+                <span aria-hidden className="absolute top-1/2 right-[11px] -translate-y-1/2 text-[10px] text-[#8a94a8]">▼</span>
+              </button>
+            </PopoverTrigger>
+            <PopoverContent align="start" className="w-auto p-3">
+              <div className="flex items-end gap-2">
+                <div>
+                  <Label className="text-muted-foreground mb-1 block text-xs">From</Label>
+                  <Input type="date" value={f.from} onChange={(e) => setF((p) => ({ ...p, from: e.target.value }))} className="w-[9.5rem]" />
+                </div>
+                <div>
+                  <Label className="text-muted-foreground mb-1 block text-xs">To</Label>
+                  <Input type="date" value={f.to} onChange={(e) => setF((p) => ({ ...p, to: e.target.value }))} className="w-[9.5rem]" />
+                </div>
+              </div>
+            </PopoverContent>
+          </Popover>
+          <div className="rd-field flex-[1_1_128px] max-w-[220px]">
+            <span className="rd-field-label">Customer</span>
+            <NativeSelect
+              value={f.customerId ? custName : ''}
+              onChange={(name) => setF((p) => ({ ...p, customerId: name ? String(data?.customers.find((c) => c.name === name)?.id ?? '') : '' }))}
+              options={['', ...(data?.customers ?? []).map((c) => c.name)]}
+              placeholder="All customers"
+            />
+          </div>
+          <div className="rd-field flex-[1_1_128px] max-w-[180px]">
+            <span className="rd-field-label">Agent</span>
+            <NativeSelect value={f.agent} onChange={(v) => setF((p) => ({ ...p, agent: v }))} options={['', ...(data?.agents ?? [])]} placeholder="All agents" />
+          </div>
+          <div className="rd-field flex-[1_1_128px] max-w-[180px]">
+            <span className="rd-field-label">Region</span>
+            <NativeSelect value={f.region} onChange={(v) => setF((p) => ({ ...p, region: v }))} options={['', ...(data?.regions ?? [])]} placeholder="All regions" />
+          </div>
+          <span className="flex-1" />
+          <button type="button" className="rd-reset inline-flex items-center gap-1.5" onClick={onReset} disabled={!active} title={active ? 'Clear all filters' : 'No filters applied'}>
+            <RotateCcw className="size-3.5" /> Reset
+          </button>
+        </div>
       </div>
 
       {/* Phones: the blue header continues here — range chips + Filter. */}

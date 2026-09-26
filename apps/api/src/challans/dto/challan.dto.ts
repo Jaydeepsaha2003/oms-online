@@ -107,6 +107,10 @@ export class CreateChallanDto {
    *  MUST stay declared: the global ValidationPipe runs `whitelist: true`, so an
    *  undeclared property is silently stripped and the confirm would never land. */
   @IsOptional() @Transform(toBool) @IsBoolean() confirmDuplicate?: boolean;
+  /** Declared for the same reason. No `toBool` here: "no answer" must stay
+   *  undefined, and toBool would turn it into false — "keep the advance". */
+  @IsOptional() @IsBoolean() askAdvance?: boolean;
+  @IsOptional() @IsBoolean() useAdvance?: boolean;
 
   @IsArray() @ArrayNotEmpty() @ValidateNested({ each: true }) @Type(() => CreateChallanItemDto)
   items!: CreateChallanItemDto[];

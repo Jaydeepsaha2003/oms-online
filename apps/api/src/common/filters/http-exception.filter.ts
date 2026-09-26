@@ -7,7 +7,7 @@ import {
   Logger,
 } from '@nestjs/common';
 import type { Request, Response } from 'express';
-import type { ApiError, DuplicateDispatch, DuplicateMatch } from '@oms/shared';
+import type { AdvanceOffer, ApiError, DuplicateDispatch, DuplicateMatch } from '@oms/shared';
 
 /**
  * Converts any thrown error into the standard `ApiError` envelope so the web
@@ -29,6 +29,7 @@ export class HttpExceptionFilter implements ExceptionFilter {
     let details: Record<string, string[]> | undefined;
     let duplicate: DuplicateMatch | undefined;
     let duplicateDispatch: DuplicateDispatch | undefined;
+    let advance: AdvanceOffer | undefined;
 
     if (exception instanceof HttpException) {
       statusCode = exception.getStatus();
@@ -51,6 +52,8 @@ export class HttpExceptionFilter implements ExceptionFilter {
         // offer "open the existing one" rather than just refusing the save.
         if (body.duplicate) duplicate = body.duplicate as DuplicateMatch;
         if (body.duplicateDispatch) duplicateDispatch = body.duplicateDispatch as DuplicateDispatch;
+        // A bill save waiting on "use the party's advance?" carries the offer.
+        if (body.advance) advance = body.advance as AdvanceOffer;
       }
     } else if (exception instanceof Error) {
       message = exception.message;
@@ -77,6 +80,7 @@ export class HttpExceptionFilter implements ExceptionFilter {
       details,
       duplicate,
       duplicateDispatch,
+      advance,
       path: request.url,
       timestamp: new Date().toISOString(),
     };

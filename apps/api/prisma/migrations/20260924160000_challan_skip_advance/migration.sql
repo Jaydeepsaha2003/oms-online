@@ -1,0 +1,12 @@
+-- A bill the operator chose to keep off the party's advance.
+--
+-- Saving a bill used to spend the party's money on account on it without a
+-- word (PaymentsService.applyOnAccount, run after every bill and receipt
+-- save). The bill-save question now asks first; "keep the advance" is stored
+-- here so that the next receipt saved for the party does not quietly spend it
+-- after all. Answering "use it" on a later save clears it.
+--
+-- Hand-written, and additive only: 37 tables still have no CREATE in any
+-- migration (see start.bat), so `prisma migrate dev` cannot be used safely
+-- until a baseline exists.
+ALTER TABLE "challans" ADD COLUMN "skipAdvance" BOOLEAN NOT NULL DEFAULT false;

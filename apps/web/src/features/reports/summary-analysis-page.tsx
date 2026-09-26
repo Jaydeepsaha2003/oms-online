@@ -5,16 +5,19 @@ import type { SummaryActionCategory, SummaryActionPriority } from '@oms/shared';
 import { Button } from '@/components/ui/button';
 import { cn } from '@/lib/utils';
 import { inrCompact, inrFull } from '@/features/dashboard/format';
-import { Kpi, KpiGrid, ReportCard, ReportHeader, ReportPill, ReportSeg, ReportSummary } from './report-kit';
+import { Kpi, KpiGrid, ReportCard, ReportDeskHero, ReportHeader, ReportPill, ReportSeg, ReportSummary, type ReportHero } from './report-kit';
 import { ReportFilterBar, useReportFilters } from './report-filters';
 import { useSummaryAnalysis } from './use-reports';
 
 const CATEGORIES: Array<'All' | SummaryActionCategory> = ['All', 'Cash', 'Sales', 'Margin', 'Customers', 'Operations'];
 const PRIORITY_TONE: Record<SummaryActionPriority, string> = {
-  'Do today': 'bg-rose-50 text-rose-700 ring-rose-600/20',
-  'This week': 'bg-amber-50 text-amber-700 ring-amber-600/20',
-  Watch: 'bg-slate-100 text-slate-600 ring-slate-500/20',
+  'Do today': 'bg-rose-50 text-rose-700 ring-rose-200',
+  'This week': 'bg-amber-50 text-amber-700 ring-amber-200',
+  Watch: 'bg-slate-100 text-slate-600 ring-slate-200',
 };
+/** A desktop pill: the mockup's 11.5px tinted chip with a hairline ring. */
+const PILL = 'inline-flex items-center rounded-full px-[9px] py-[3px] text-[11.5px] leading-[1.3] font-bold whitespace-nowrap ring-1 ring-inset';
+const HAIR = 'border-[rgba(20,30,60,0.06)] dark:border-white/10';
 
 export function SummaryAnalysisPage() {
   const navigate = useNavigate();
@@ -23,6 +26,18 @@ export function SummaryAnalysisPage() {
   const [category, setCategory] = useState<(typeof CATEGORIES)[number]>('All');
   const actions = useMemo(() => data?.actions.filter((a) => category === 'All' || a.category === category) ?? [], [data, category]);
   const todayCount = data?.actions.filter((a) => a.priority === 'Do today').length ?? 0;
+
+  const hero: ReportHero | undefined = data ? {
+    label: 'Outstanding',
+    value: inrCompact(data.headline.outstanding),
+    hint: 'net receivable · point-in-time',
+    stats: [
+      { label: 'Overdue', value: inrCompact(data.headline.overdue), hint: 'past due date', dot: '#ff8fab' },
+      { label: 'Revenue', value: inrCompact(data.headline.revenue), hint: 'selected period', dot: '#7dd3fc' },
+      { label: 'Next 30 days', value: inrCompact(data.forecast.next30DayRevenue), hint: 'forecast billing', dot: '#6ee7b7' },
+      { label: 'Do today', value: String(todayCount), hint: 'highest-priority actions', dot: '#fcd34d' },
+    ],
+  } : undefined;
 
   return (
     <div className="rp-page space-y-5">
@@ -36,17 +51,37 @@ export function SummaryAnalysisPage() {
 
       <ReportFilterBar f={filters.f} setF={filters.setF} active={filters.active} onReset={filters.reset} />
 
+      <ReportDeskHero hero={hero} />
+
       <ReportSummary
+        title="Forecast"
         loading={isLoading}
         points={data ? [
-          { text: <>The recent sales run rate points to about <strong>{inrCompact(data.forecast.next30DayRevenue)}</strong> billing in the next 30 days.</>, tone: 'info' },
-          { text: <>About <strong>{inrCompact(data.forecast.collectible30Days)}</strong> may be collectible in 30 days if overdue and due-soon calls are completed.</>, tone: 'good' },
-          { text: <>Reducing DSO by 10 days can release about <strong>{inrCompact(data.forecast.cashUnlockFromTenDsoDays)}</strong> of working cash.</>, tone: 'good' },
-          { text: <><strong>{data.headline.activeParties}</strong> parties were billed in the period, while <strong>{data.headline.owingParties}</strong> parties currently owe money. These are different groups.</>, tone: 'warn' },
+          {
+            text: <>The recent sales run rate points to about <strong>{inrCompact(data.forecast.next30DayRevenue)}</strong> billing in the next 30 days.</>,
+            tone: 'info',
+            desk: { value: inrCompact(data.forecast.next30DayRevenue), text: 'Expected billing in the next 30 days, based on the recent run rate.' },
+          },
+          {
+            text: <>About <strong>{inrCompact(data.forecast.collectible30Days)}</strong> may be collectible in 30 days if overdue and due-soon calls are completed.</>,
+            tone: 'good',
+            desk: { value: inrCompact(data.forecast.collectible30Days), text: 'Could be collected in 30 days if the overdue and due-soon calls are made.' },
+          },
+          {
+            text: <>Reducing DSO by 10 days can release about <strong>{inrCompact(data.forecast.cashUnlockFromTenDsoDays)}</strong> of working cash.</>,
+            tone: 'good',
+            desk: { value: inrCompact(data.forecast.cashUnlockFromTenDsoDays), text: 'Released as working cash if the time to collect drops by 10 days.' },
+          },
+          {
+            text: <><strong>{data.headline.activeParties}</strong> parties were billed in the period, while <strong>{data.headline.owingParties}</strong> parties currently owe money. These are different groups.</>,
+            tone: 'warn',
+            desk: { value: `${data.headline.owingParties} parties`, text: `Owe money now, while ${data.headline.activeParties} were billed in the period. These are different groups.` },
+          },
         ] : []}
       />
 
-      <KpiGrid className="gap-4 sm:grid-cols-2 lg:grid-cols-4">
+      {/* The desktop hero carries these four; the phone lists them. */}
+      <KpiGrid deskHidden className="gap-4 sm:grid-cols-2 lg:grid-cols-4">
         <Kpi label="Outstanding" value={data ? inrCompact(data.headline.outstanding) : '—'} title={data ? inrFull(data.headline.outstanding) : undefined} hint="point-in-time balance" icon={CircleDollarSign} tone="rose" loading={isLoading} />
         <Kpi label="Overdue" value={data ? inrCompact(data.headline.overdue) : '—'} title={data ? inrFull(data.headline.overdue) : undefined} hint="past due date" icon={Banknote} tone="amber" loading={isLoading} />
         <Kpi label="Revenue" value={data ? inrCompact(data.headline.revenue) : '—'} title={data ? inrFull(data.headline.revenue) : undefined} hint="selected period" icon={ReceiptText} tone="blue" loading={isLoading} />
@@ -55,14 +90,46 @@ export function SummaryAnalysisPage() {
 
       <ReportCard
         title={`${data?.actions.length ?? 25} action points`}
-        right={<span className="text-muted-foreground text-xs sm:text-xs">Confidence: {data?.forecast.confidence ?? '—'}</span>}
+        right={`Confidence: ${data?.forecast.confidence ?? '—'}`}
+        flush
       >
-        <ReportSeg options={CATEGORIES} value={category} onChange={setCategory} />
+        <div className="sm:px-4 sm:pt-3">
+          <ReportSeg options={CATEGORIES} value={category} onChange={setCategory} />
+        </div>
 
         {isLoading ? (
-          <div className="space-y-2">{Array.from({ length: 8 }).map((_, i) => <div key={i} className="bg-muted h-20 animate-pulse rounded-md" />)}</div>
+          <div className="space-y-2 sm:p-4">{Array.from({ length: 8 }).map((_, i) => <div key={i} className="bg-muted h-20 animate-pulse rounded-md" />)}</div>
         ) : (
-          <div className="rp-rows sm:divide-y sm:rounded-md sm:border">
+          <>
+          {/* Desktop: the mockup's two-up grid of actions. */}
+          <div className={cn('hidden grid-cols-2 border-t sm:grid', HAIR)}>
+            {actions.map((action, index) => (
+              <div key={action.id} className={cn('rd-rise grid grid-cols-[36px_minmax(0,1fr)] gap-3 border-b px-4 py-3.5', HAIR, index % 2 === 1 && 'border-l')}>
+                <span className={cn('flex size-9 items-center justify-center rounded-[11px] text-[13px] font-extrabold tabular-nums ring-1 ring-inset', PRIORITY_TONE[action.priority])}>
+                  {String((data?.actions.indexOf(action) ?? index) + 1).padStart(2, '0')}
+                </span>
+                <div className="flex min-w-0 flex-col gap-1.5">
+                  <span className="text-sm font-extrabold">{action.title}</span>
+                  <div className="flex flex-wrap items-center gap-1.5">
+                    <span className={cn(PILL, PRIORITY_TONE[action.priority])}>{action.priority}</span>
+                    <span className={cn(PILL, 'bg-indigo-50 text-blue-800 ring-indigo-200')}>{action.category}</span>
+                  </div>
+                  <p className="m-0 text-[13px] leading-[1.5] text-pretty text-[#3a4256] dark:text-[#c5d3ee]">{action.detail}</p>
+                  <div className="grid grid-cols-2 gap-2">
+                    <div className="rounded-[10px] bg-[#f5f7fc] px-2.5 py-2 text-xs leading-[1.45] text-[#5b6479] dark:bg-white/5 dark:text-[#93a6c9]">
+                      <strong className="text-[#27304a] dark:text-white">Why:</strong> {action.evidence}
+                    </div>
+                    <div className="rounded-[10px] bg-emerald-50 px-2.5 py-2 text-xs leading-[1.45] text-emerald-700 dark:bg-emerald-500/10 dark:text-emerald-300">
+                      <strong>Expected result:</strong> {action.impact}
+                    </div>
+                  </div>
+                  <div><Link to={action.route} className="rd-btn">Open →</Link></div>
+                </div>
+              </div>
+            ))}
+          </div>
+
+          <div className="rp-rows sm:hidden">
             {actions.map((action, index) => (
               <div
                 key={action.id}
@@ -95,6 +162,7 @@ export function SummaryAnalysisPage() {
               </div>
             ))}
           </div>
+          </>
         )}
       </ReportCard>
 

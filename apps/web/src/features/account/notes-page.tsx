@@ -30,13 +30,13 @@ import {
   type NoteMode,
   type RecentSoldRow,
 } from '@oms/shared';
-import { getApiErrorMessage } from '@/lib/api';
+import { getAdvanceOffer, getApiErrorMessage } from '@/lib/api';
 import { cn } from '@/lib/utils';
 import { RateBreakdownCard } from '@/components/common/rate-breakdown';
 import { formatDate } from '@/lib/date-format';
 import { usePermissions } from '@/hooks/use-permissions';
 import { useSaveShortcut } from '@/hooks/use-save-shortcut';
-import { useConfirm } from '@/components/common/confirm';
+import { askUseAdvance, useChoose, useConfirm } from '@/components/common/confirm';
 import { DataTable, type DataColumn } from '@/components/common/data-table';
 import { NativeSelect } from '@/components/common/combo';
 import { Combobox } from '@/components/ui/combobox';
@@ -234,6 +234,7 @@ function NotePriceBreakdown({
 export function NotesPage() {
   const { can } = usePermissions();
   const confirm = useConfirm();
+  const choose = useChoose();
 
   const [mode, setMode] = useState<NoteMode>('DEBIT');
   const [editingCode, setEditingCode] = useState<string | null>(null);
@@ -605,13 +606,17 @@ export function NotesPage() {
     doSave(false);
   };
 
-  const doSave = (markUndispatched: boolean) => {
+  const doSave = (markUndispatched: boolean, useAdvance?: boolean) => {
     setAskUndispatch(false);
     if (!customerId) return;
     saveMut.mutate(
       {
         mode,
         markUndispatched: markUndispatched || undefined,
+        // A Debit Note is a bill: the server asks before spending the party's
+        // advance on it, exactly as a challan save does.
+        askAdvance: mode === 'DEBIT' || undefined,
+        useAdvance,
         code: editingCode ?? undefined,
         invDate,
         customerId,
@@ -688,7 +693,16 @@ export function NotesPage() {
           }
           resetForNew();
         },
-        onError: (e) => toast.error(getApiErrorMessage(e, 'Save failed')),
+        onError: (e) => {
+          const offer = getAdvanceOffer(e);
+          if (offer) {
+            void askUseAdvance(choose, offer, party, 'debit note').then((use) => {
+              if (use !== null) doSave(markUndispatched, use);
+            });
+            return;
+          }
+          toast.error(getApiErrorMessage(e, 'Save failed'));
+        },
       },
     );
   };

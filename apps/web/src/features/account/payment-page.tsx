@@ -362,8 +362,17 @@ export function PaymentPage() {
 
   /* ── actions ────────────────────────────────────────────────────────────── */
   const save = useSavePayment();
+  /*
+   * One idempotency key per receipt, not per press of Save. It was made fresh
+   * inside every submit, so when a save went through but its response was lost
+   * (a dropped connection, a timeout), pressing Save again sent a NEW key and
+   * the server had no way to know it was the same receipt. Kept until the form
+   * is cleared — after a save, or by hand — so a re-press is recognised.
+   */
+  const requestIdRef = useRef(globalThis.crypto.randomUUID());
 
   const clearAll = () => {
+    requestIdRef.current = globalThis.crypto.randomUUID();
     setParty('');
     setAgent('');
     setPayMode('');
@@ -459,7 +468,7 @@ export function PaymentPage() {
           receiptAmt: receipt,
           recDate,
           remarks: remarks || null,
-          requestId: globalThis.crypto.randomUUID(),
+          requestId: requestIdRef.current,
           confirmDuplicate: duplicateConfirmed,
       };
       try {
@@ -468,6 +477,12 @@ export function PaymentPage() {
         clearAll();
       } catch (e) {
         const message = getApiErrorMessage(e, 'Save failed');
+        // The first press did save; this one was recognised as the same receipt.
+        if (/already saved as/i.test(message)) {
+          toast.success(message);
+          clearAll();
+          return;
+        }
         // The browser's context can be stale when another user/tab just saved.
         // Let the server's authoritative duplicate check drive the same explicit
         // confirmation, then retry with the SAME request id.
