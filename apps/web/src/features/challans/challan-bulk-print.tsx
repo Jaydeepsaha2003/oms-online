@@ -7,7 +7,7 @@ import type { ChallanDto, CustomerDto } from '@oms/shared';
 import { http } from '@/lib/api';
 import { cn } from '@/lib/utils';
 import { formatDate } from '@/lib/date-format';
-import { buildBillFilename, captureScale, decodeImage, isIOS, waitForPaintable } from '@/lib/pdf';
+import { buildBillFilename, captureScale, decodeImage, isIOS, savePdfBlob, waitForPaintable } from '@/lib/pdf';
 import { Button } from '@/components/ui/button';
 import { Dialog, DialogContent, DialogFooter, DialogHeader, DialogTitle } from '@/components/ui/dialog';
 import { useChallanTerms, useCompany } from '@/features/settings/use-settings';
@@ -111,6 +111,8 @@ export function ChallanBulkPrint({
   /** Finished PDFs waiting for a Share / WhatsApp / Email tap. */
   const [shareFiles, setShareFiles] = useState<PdfFile[]>([]);
   const [shareSaved, setShareSaved] = useState(false);
+  /** iPhone Print: every challan in one PDF, waiting for the tap that opens it. */
+  const [onePdf, setOnePdf] = useState<PdfFile | null>(null);
   /** The party's contact, when every selected challan is for the same party. */
   const [contact, setContact] = useState<{ mobile: string | null; email: string | null } | null>(null);
 
@@ -221,11 +223,13 @@ export function ChallanBulkPrint({
     }
   };
 
-  /** Lay one capture out as an A4 PDF, paginating if the challan runs longer
-   *  than a sheet. */
-  const pdfOf = async (job: Job, shot: Shot): Promise<PdfFile> => {
+  /** Lay captures out as one A4 PDF — each on its own page(s), paginating a
+   *  challan that runs longer than a sheet. */
+  const pdfOf = async (shots: Shot[], filename: string): Promise<PdfFile> => {
     const { jsPDF } = await import('jspdf');
     const pdf = new jsPDF({ unit: 'pt', format: 'a4', orientation: 'portrait' });
+    shots.forEach((shot, n) => {
+    if (n > 0) pdf.addPage();
     const margin = 4;
     const pageW = pdf.internal.pageSize.getWidth();
     const pageH = pdf.internal.pageSize.getHeight();
@@ -244,7 +248,8 @@ export function ChallanBulkPrint({
         first = false;
       }
     }
-    return { blob: pdf.output('blob'), filename: buildBillFilename('Challan', job.challan.code, `challan-${job.challan.id}`) };
+    });
+    return { blob: pdf.output('blob'), filename };
   };
 
   /** One line naming what is being sent, e.g. "Challans SSS/1, SSS/2 — SUMTI MARKETING". */
@@ -328,8 +333,11 @@ export function ChallanBulkPrint({
      * routes iOS to a PDF too. Saving is the honest fallback: say so rather
      * than opening a preview that prints nothing.
      */
-    const mode: Delivery = how === 'print' && isIOS() ? 'save' : how;
-    if (mode !== how) toast.info('iPhone and iPad cannot print a batch directly — saving the PDFs instead.');
+    // iPhone: all challans into ONE PDF, opened from a fresh tap (its share sheet has Print).
+    // Saving them as separate PDFs showed only the first one in the print preview.
+    const iosPrint = how === 'print' && isIOS();
+    const mode: Delivery = iosPrint ? 'share' : how;
+    setOnePdf(null);
     cancelled.current = false;
     setDelivery(mode);
     setPhase('printing');
@@ -345,9 +353,9 @@ export function ChallanBulkPrint({
       setJobs((prev) => (prev ?? []).map((j, k) => (k === i ? { ...j, status: 'working' } : j)));
       try {
         const shot = await captureOne(list[i]);
-        if (mode === 'print') shots.push(shot);
+        if (mode === 'print' || iosPrint) shots.push(shot);
         else {
-          const file = await pdfOf(list[i], shot);
+          const file = await pdfOf([shot], buildBillFilename('Challan', list[i].challan.code, `challan-${list[i].challan.id}`));
           if (mode === 'save') saveBlobSilently(file.blob, file.filename);
           else files.push(file);
         }
@@ -362,6 +370,7 @@ export function ChallanBulkPrint({
     // Sharing can't start here: the share sheet needs a fresh tap, and the
     // rasterise above has used this one up. The buttons below give that tap.
     setShareFiles(files);
+    if (iosPrint && shots.length) setOnePdf(await pdfOf(shots, `Challans-${shots.length}.pdf`));
     setPhase('done');
     // Whatever captured cleanly goes to the preview; a challan that failed is
     // simply absent rather than blocking the ones that worked.
@@ -526,6 +535,11 @@ export function ChallanBulkPrint({
               <p className="rounded-md border border-amber-300 bg-amber-50 px-3 py-2 text-[12px] text-amber-900 dark:border-amber-400/40 dark:bg-amber-400/10 dark:text-amber-100">
                 {failed.length} did not go through{delivery === 'print' ? ' and are not in the preview' : ''}. The rest did — open those {failed.length === 1 ? 'one' : 'ones'} on their own to see the error.
               </p>
+            )}
+            {phase === 'done' && onePdf && (
+              <Button className="w-full" onClick={() => void savePdfBlob(onePdf.blob, onePdf.filename)}>
+                <Printer /> Open PDF ({done} challans) — then tap Print
+              </Button>
             )}
             {phase === 'done' && delivery === 'share' && shareFiles.length > 0 && (
               <div className="space-y-2 rounded-md border p-3">
