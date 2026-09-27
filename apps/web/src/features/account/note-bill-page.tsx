@@ -338,7 +338,7 @@ export function NoteBillPage() {
 
   const shareNote = async () => {
     if (!previewFile) return;
-    if (await sharePdfFile(previewFile.blob, previewFile.filename, `${pageTitle} ${note?.code ?? ''}`)) return;
+    if (await sharePdfFile(previewFile.blob, previewFile.filename)) return;
     toast.error('Sharing is not available on this device.');
   };
 
