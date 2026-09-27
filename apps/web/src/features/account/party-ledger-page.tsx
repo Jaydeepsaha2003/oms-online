@@ -2,15 +2,18 @@ import { useEffect, useMemo, useRef, useState, type CSSProperties } from 'react'
 import { useNavigate, useSearchParams } from 'react-router-dom';
 import {
   CalendarRange,
+  ChevronDown,
   ChevronLeft,
   ChevronRight,
   Download,
   Eye,
   FileSpreadsheet,
-  Filter,
+  Keyboard,
   Loader2,
   Pin,
   Printer,
+  SlidersHorizontal,
+  Target,
   X,
 } from 'lucide-react';
 import { toast } from 'sonner';
@@ -39,6 +42,7 @@ import { Label } from '@/components/ui/label';
 import { Popover, PopoverAnchor, PopoverContent, PopoverTrigger } from '@/components/ui/popover';
 import { Switch } from '@/components/ui/switch';
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from '@/components/ui/dialog';
+import { Sheet, SheetContent, SheetHeader, SheetTitle } from '@/components/ui/sheet';
 import { fetchLedgerCleared, fetchLedgerReceipts, usePartyLedger, usePartyLedgerLookups } from './use-party-ledger';
 import { DemandPlanDialog } from '@/features/crm/demand-plan-dialog';
 
@@ -61,33 +65,56 @@ const timestampedPdfName = (partyName: string) => {
   return `${partyName.replace(/[\\/:*?"<>|\u0000-\u001f]/g, '-').trim()}_${stamp}.pdf`;
 };
 
-/** Compact, amber-bordered filter controls — the same language as every other list page. */
-const CONTROL =
-  'h-9 rounded-[4px] border-amber-300 dark:border-amber-400/40 text-[12.5px] focus-visible:border-amber-500 focus-visible:ring-amber-400/30';
-const CONTROL_ON =
-  'border-amber-500 bg-amber-50 text-amber-900 font-semibold dark:border-amber-400/60 dark:bg-amber-400/10 dark:text-amber-200';
+/* ── The Party Ledger skin ───────────────────────────────────────────────────
+   The look lives in index.css (`.pl-*`, the Party Ledger mockup); what is here
+   is what the rows need to choose between: a rail colour per row, the voucher
+   type's own colour, the ageing tiles and the text-size steps. */
 
-/* ── Tally palette ──────────────────────────────────────────────────────────
-   Tally puts amber chrome around a plain white data grid; the ledger keeps that
-   amber frame (borders, filters, opening/closing bands) but the column strip
-   itself uses the same dark navy→indigo gradient as every other list screen's
-   header, for one consistent look across the app. */
+/** A voucher type's colour, where its settlement state has nothing to add. */
+const VT_RAIL: Record<string, string> = {
+  'SALES INVOICE': '#6366f1',
+  RECEIPT: '#10b981',
+  'CREDIT NOTE': '#f59e0b',
+  'DEBIT NOTE': '#f43f5e',
+};
+/** The rail down a row's left edge: what is owed on it first, its type second. */
+const railOf = (r: PartyLedgerRow) =>
+  r.status === 'D' && /Over/i.test(r.dueFrom)
+    ? '#e11d48'
+    : r.status === 'P'
+      ? '#0ea5e9'
+      : r.status === 'F'
+        ? '#10b981'
+        : (VT_RAIL[r.voucherType.toUpperCase()] ?? '#94a3b8');
+/** "SALES INVOICE" → "Sales Invoice", as the mockup sets the type column. */
+const vtLabel = (vt: string) => vt.toLowerCase().replace(/\b\w/g, (c) => c.toUpperCase());
 
-/** Header cell: sticky, navy→indigo band, white type — the app's column strip. */
-const TH =
-  'sticky bg-gradient-to-b from-blue-800 to-indigo-800 px-2 text-[11px] font-extrabold tracking-wide text-white uppercase whitespace-nowrap dark:from-blue-900 dark:to-indigo-900';
-/** The Bank / Cash banner — same band as the column strip below it, so the two
- *  header tiers read as one continuous header rather than two different bars. */
-const TH_GROUP = TH;
-/** Rule between header cells — white-on-navy, not amber. */
-const TH_LINE = 'border-r border-white/15';
-/** Body cell: full grid lines, tight rows. The colour is scoped to the right edge
- *  so a row's own top/bottom rule (the totals band) isn't overridden by it. */
-const TD =
-  'border-r border-r-amber-200/80 px-2 py-[3px] align-middle dark:border-r-amber-400/15 last:border-r-0';
-const NUM = 'text-right tabular-nums';
-/** The panel that frames the whole worksheet. */
-const PANEL = 'border-amber-300 dark:border-amber-400/30';
+/**
+ * The three ageing tiles. The hints say what the buckets actually are — the
+ * shared rule (`classifyDueType`) Receive Payment uses too: over is past the
+ * due date, past due is not yet due but under half the credit period left.
+ */
+const AGEING = [
+  { key: 'overDue', label: 'Over due', dot: '#e11d48', fg: 'text-rose-700 dark:text-rose-400', bar: 'linear-gradient(90deg,#fb7185,#e11d48)', hint: 'past the due date' },
+  { key: 'pastDue', label: 'Past due', dot: '#f59e0b', fg: 'text-amber-700 dark:text-amber-400', bar: 'linear-gradient(90deg,#fcd34d,#f59e0b)', hint: 'under half the credit left' },
+  { key: 'normal', label: 'Normal due', dot: '#10b981', fg: 'text-emerald-700 dark:text-emerald-400', bar: 'linear-gradient(90deg,#6ee7b7,#10b981)', hint: 'within terms' },
+] as const;
+
+/** Text size for the ledger (A · A · A), remembered per device. */
+const ZOOM_KEY = 'oms:ledger-zoom';
+const ZOOMS = [
+  { z: 1, fs: '13px', label: 'Normal text size' },
+  { z: 1.12, fs: '15px', label: 'Larger text' },
+  { z: 1.25, fs: '17px', label: 'Largest text' },
+] as const;
+const readZoom = (): number => {
+  try {
+    const z = Number(localStorage.getItem(ZOOM_KEY));
+    return ZOOMS.some((step) => step.z === z) ? z : 1;
+  } catch {
+    return 1; // storage blocked — the normal size
+  }
+};
 
 const FY_START_MONTH = 3; // April (0-based)
 function fyStart(d: Date): Date {
@@ -189,26 +216,24 @@ function Balance({
 }) {
   if (!net) {
     return nilLabel ? (
-      <span
-        className={cn('font-bold tabular-nums text-emerald-700 dark:text-emerald-400', className)}
-      >
-        0<span className="ml-1 text-[10px] font-bold opacity-70">{nilLabel}</span>
+      <span className={cn('font-extrabold tabular-nums text-[#047857] dark:text-emerald-400', className)}>
+        0<span className="ml-1 text-[10px] font-extrabold opacity-70">{nilLabel}</span>
       </span>
     ) : (
-      <span className="text-muted-foreground/50">—</span>
+      <span className="text-[#c3c9d6] dark:text-slate-600">—</span>
     );
   }
   const cr = net < 0;
   return (
     <span
       className={cn(
-        'tabular-nums font-bold',
-        cr ? 'text-emerald-700 dark:text-emerald-400' : 'text-slate-900 dark:text-slate-100',
+        'tabular-nums font-extrabold whitespace-nowrap',
+        cr ? 'text-[#047857] dark:text-emerald-400' : 'text-[#141a2b] dark:text-slate-100',
         className,
       )}
     >
       {inr(Math.abs(net))}
-      <span className="ml-1 text-[10px] font-bold opacity-70">{cr ? 'Cr' : 'Dr'}</span>
+      <span className="ml-1 text-[10px] font-extrabold opacity-70">{cr ? 'Cr' : 'Dr'}</span>
     </span>
   );
 }
@@ -267,7 +292,21 @@ export function PartyLedgerPage() {
   const { party, agent, group, from, to, mode, voucherType, preset, showBalance, patch, clear } =
     useLedgerFilters();
   const [receiptFor, setReceiptFor] = useState<PartyLedgerRow | null>(null);
-  const [dateOpen, setDateOpen] = useState(false);
+  /** Which period chip has its picker open — the desktop bar's or the phone's. */
+  const [dateOpen, setDateOpen] = useState<'d' | 'm' | null>(null);
+  const [filtersOpen, setFiltersOpen] = useState(false);
+  const [keysOpen, setKeysOpen] = useState(false);
+  /** The desktop row that holds the tab stop; ↑ / ↓ move it, as in a grid. */
+  const [focusRow, setFocusRow] = useState(0);
+  const [zoom, setZoom] = useState(readZoom);
+  const pickZoom = (z: number) => {
+    setZoom(z);
+    try {
+      localStorage.setItem(ZOOM_KEY, String(z));
+    } catch {
+      /* storage blocked — the size holds for this visit */
+    }
+  };
 
   const custByName = useMemo(
     () => new Map((lookups?.customers ?? []).map((c) => [c.name, c.id])),
@@ -392,6 +431,28 @@ export function PartyLedgerPage() {
     window.addEventListener('keydown', onKey);
     return () => window.removeEventListener('keydown', onKey);
   }, [canPrintLedger, pdfLoading, pdfPreview, rows.length]);
+  // "/" jumps to the customer filter and "?" lists the shortcuts — never while
+  // typing in a field or with a dialog up, where both are ordinary keys.
+  useEffect(() => {
+    const onKey = (event: KeyboardEvent) => {
+      if (event.ctrlKey || event.metaKey || event.altKey) return;
+      const target = event.target as HTMLElement | null;
+      if (target && (target.isContentEditable || /^(INPUT|TEXTAREA|SELECT)$/.test(target.tagName))) return;
+      if (document.querySelector('[role="dialog"], [role="alertdialog"]')) return;
+      if (event.key === '/') {
+        const field = [...document.querySelectorAll<HTMLInputElement>('#pl-customer, #pl-customer-m')].find((el) => el.offsetParent);
+        if (!field) return;
+        event.preventDefault();
+        field.focus();
+      } else if (event.key === '?') {
+        event.preventDefault();
+        setKeysOpen(true);
+      }
+    };
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
+  }, []);
+
   const onExcel = async () => {
     setExcelLoading(true);
     try {
@@ -468,11 +529,41 @@ export function PartyLedgerPage() {
     });
   }, [rows, openingNet, mode]); // eslint-disable-line react-hooks/exhaustive-deps
 
+  /** The running balance as the Total Outstanding tile's trend line: the
+   *  opening, then every row, so it ends on the closing figure. */
+  const spark = useMemo(() => {
+    if (!running || running.length < 2 || openingNet == null) return null;
+    const pts = [openingNet, ...running];
+    const min = Math.min(...pts);
+    const span = Math.max(...pts) - min || 1;
+    return pts
+      .map((v, i) => `${i ? 'L' : 'M'}${((i / (pts.length - 1)) * 120).toFixed(1)},${(27 - ((v - min) / span) * 24).toFixed(1)}`)
+      .join(' ');
+  }, [running, openingNet]);
+
+  /** ↑ / ↓ walk the desktop rows; Enter or Space opens one that has detail. */
+  const rowKey = (e: React.KeyboardEvent<HTMLElement>, r: PartyLedgerRow, openable: boolean) => {
+    if (e.target !== e.currentTarget) return;
+    if (e.key === 'ArrowDown' || e.key === 'ArrowUp') {
+      const all = [...document.querySelectorAll<HTMLElement>('[data-lrow]')];
+      const next = all[all.indexOf(e.currentTarget) + (e.key === 'ArrowDown' ? 1 : -1)];
+      if (!next) return;
+      e.preventDefault();
+      next.focus();
+    } else if ((e.key === 'Enter' || e.key === ' ') && openable) {
+      e.preventDefault();
+      setReceiptFor(r);
+    }
+  };
+  const rowStop = Math.min(focusRow, Math.max(0, rows.length - 1));
+
   /** Opening / Current / Closing share one row shape across the grid. */
   const balanceCells = (b: LedgerBalanceRow) => legs.flatMap((l) => [b[l.dr], b[l.cr]]);
   /** Text columns before the figures: Date, Particulars, Vch Type, Vch No, St, Due From. */
   const LEAD_COLS = 6;
-  const totalCols = LEAD_COLS + legs.length * 2 + 1 + (canViewChallan ? 1 : 0);
+  /** The eye column, for rows backed by a challan or a note. */
+  const viewCol = canViewChallan || canViewNote;
+  const totalCols = LEAD_COLS + legs.length * 2 + 1 + (viewCol ? 1 : 0);
 
   const dateLabel = preset || `${prettyDate(from)} → ${prettyDate(to)}`;
   const scopeLabel = data
@@ -496,10 +587,10 @@ export function PartyLedgerPage() {
             onClick={() => applyPreset(p)}
             aria-pressed={preset === p}
             className={cn(
-              'cursor-pointer rounded-[3px] border px-2 py-1 text-[11.5px] font-semibold transition-colors',
+              'cursor-pointer rounded-[9px] px-2 py-1.5 text-[12px] font-bold transition-colors',
               preset === p
-                ? 'border-amber-500 bg-amber-100 text-amber-900 dark:border-amber-400/60 dark:bg-amber-400/15 dark:text-amber-200'
-                : 'hover:bg-accent border-transparent',
+                ? 'bg-gradient-to-b from-[#5b7cff] to-[#3b4fd8] text-white shadow-sm'
+                : 'text-[#3a4256] hover:bg-[#f1f4fb] dark:text-slate-300 dark:hover:bg-white/5',
             )}
           >
             {p}
@@ -517,185 +608,202 @@ export function PartyLedgerPage() {
         <span className="min-w-0 truncate text-[11.5px] font-semibold">
           {prettyDate(from)} <span className="text-muted-foreground">→</span> {prettyDate(to)}
         </span>
-        <Button
-          size="sm"
-          className="h-7 shrink-0 px-3 text-[12px] font-semibold"
-          onClick={() => setDateOpen(false)}
-        >
+        <button type="button" className="pl-btn pl-btn-primary h-8 shrink-0 px-4" onClick={() => setDateOpen(null)}>
           Done
-        </Button>
+        </button>
       </div>
     </div>
   );
 
+  const modeLabel = mode === 'BOTH' ? 'Bank & Cash' : mode === 'B' ? 'Bank' : 'Cash';
+  /** Filters that live in the phone's sheet, counted on its button. */
+  const sheetFilters = [agent && agent !== 'All', group, voucherType].filter(Boolean).length;
+  /** An agent, group or all-parties ledger: each row says whose entry it is. */
+  const multiParty = !!data && data.scope !== 'CUSTOMER';
+  const pendingTotal = kpis ? kpis.overDue.amount + kpis.pastDue.amount + kpis.normal.amount : 0;
+  const canPlan = query.customerId != null && can('payment:view');
+  const outstandingNote =
+    closingNet == null && footer ? 'clear voucher type' : windowEndsInPast ? `as at ${formatDate(to)}` : undefined;
+
+  /* ── Controls, shared by the desktop bar and the phone's filter card ── */
+  const onParty = (v: string) => patch({ party: v, ...(v ? { agent: '', group: '' } : {}) });
+  const onAgent = (v: string) => patch({ agent: v, ...(v ? { party: '', group: '' } : {}) });
+  const onGroup = (v: string) => patch({ group: v, ...(v ? { party: '', agent: '' } : {}) });
+  const agentList = agentOptions.filter((a) => a !== 'All');
+  const groupList = (lookups?.groups ?? []).map((g) => g.name);
+
+  const periodButton = (where: 'd' | 'm') => (
+    <Popover open={dateOpen === where} onOpenChange={(o) => setDateOpen(o ? where : null)}>
+      <PopoverTrigger asChild>
+        <button
+          type="button"
+          // Never narrower than a full "01-04-2026 → 27-09-2026": which dates the
+          // statement covers is not something to truncate.
+          className={cn('pl-period', where === 'd' ? 'w-[256px] flex-none' : 'min-w-0 flex-1')}
+          title="Statement period"
+        >
+          <CalendarRange className="size-4 shrink-0" />
+          <span className="min-w-0 flex-1 truncate text-left">{dateLabel}</span>
+          <ChevronDown className="size-3.5 shrink-0 opacity-60" />
+        </button>
+      </PopoverTrigger>
+      <PopoverContent align="start" className="w-auto rounded-[16px] p-3">
+        {datePanel}
+      </PopoverContent>
+    </Popover>
+  );
+
+  /** Bank / Cash / Both — the ledger's column groups follow this. */
+  const modeSeg = (grow: boolean) => (
+    <div role="group" aria-label="Transaction mode" className={cn('pl-seg', grow && 'flex-1 [&>button]:flex-1')}>
+      {(['BOTH', 'B', 'C'] as const).map((m) => (
+        <button key={m} type="button" onClick={() => patch({ mode: m })} aria-pressed={mode === m} className="pl-seg-btn">
+          {m === 'BOTH' ? 'Both' : m === 'B' ? 'Bank' : 'Cash'}
+        </button>
+      ))}
+    </div>
+  );
+
+  const zoomSeg = (
+    <div role="group" aria-label="Text size" className="pl-seg pl-seg-soft">
+      {ZOOMS.map((step) => (
+        <button
+          key={step.z}
+          type="button"
+          aria-pressed={zoom === step.z}
+          aria-label={step.label}
+          title={step.label}
+          onClick={() => pickZoom(step.z)}
+          className="pl-seg-btn"
+          style={{ fontSize: step.fs }}
+        >
+          A
+        </button>
+      ))}
+    </div>
+  );
+
+  /* Off by default — the running Balance per transaction is a detail most
+     glances at the ledger don't need; Closing Balance always shows regardless.
+     Disabled under a voucher-type filter: with no opening to seed from there is
+     no running balance to show. */
+  const balanceSwitch = (
+    <Switch checked={showBalance && !!running} onCheckedChange={(v) => patch({ showBalance: v })} disabled={!running} />
+  );
+  const balanceTitle = running ? undefined : 'Clear the voucher type filter to see running balances';
+
+  const pdfButton = canPrintLedger && (
+    <button
+      type="button"
+      className="pl-btn pl-btn-sq pl-btn-rose"
+      onClick={onPdf}
+      disabled={!rows.length || pdfLoading}
+      aria-label="Open Party Ledger PDF"
+      title="Open PDF (Ctrl+P)"
+    >
+      {pdfLoading ? <Loader2 className="size-4 animate-spin" /> : <Printer className="size-4" />}
+    </button>
+  );
+  const excelButton = can('partyledger:export') && (
+    <button
+      type="button"
+      className="pl-btn pl-btn-sq pl-btn-emerald"
+      onClick={onExcel}
+      disabled={!rows.length || excelLoading}
+      aria-label="Download Party Ledger Excel"
+      title="Download Excel"
+    >
+      {excelLoading ? <Loader2 className="size-4 animate-spin" /> : <FileSpreadsheet className="size-4" />}
+    </button>
+  );
+
+  /** A row's own document: a note opens its note bill, anything else backed by
+   *  a Challan opens the challan bill. */
+  const viewTarget = (r: PartyLedgerRow) => {
+    const note = noteRefOf(r);
+    if (note && canViewNote)
+      return { label: `View ${note.label} ${r.voucherNo}`, short: `View ${note.mode === 'CREDIT' ? 'credit' : 'debit'} note`, go: () => viewNote(r, note.mode) };
+    if (isOpenableRow(r) && r.challanId && canViewChallan)
+      return { label: `View challan ${r.voucherNo}`, short: 'View challan', go: () => viewChallan(r) };
+    return null;
+  };
+
   return (
-    // Fills the viewport exactly: filters + KPIs pinned on top, the ledger the only
-    // scrolling region, and the Closing Balance stuck to the bottom of the grid.
-    // `/account/party-ledger` is a flush route (see app-shell) so the page owns its
-    // own padding.
-    // Phones: filters + cards fill the screen, so the page itself scrolls and the
-    // ledger flows below them. sm+: fixed-height worksheet, only the grid scrolls.
-    <div className="flex h-full min-h-0 flex-col gap-2 overflow-y-auto overscroll-contain p-2.5 font-sans sm:gap-2.5 sm:overflow-visible sm:p-3">
-      {/* ── Filter bar ─────────────────────────────────────────────────────────
-          Poppins, so the controls read as chrome and stay distinct from the
-          figures in the ledger below. */}
-      <div className={cn('bg-card font-poppins rounded-[4px] border shadow-sm', PANEL)}>
-        <div className="grid grid-cols-2 items-center gap-2 p-2.5 sm:flex sm:flex-wrap sm:gap-2.5 sm:p-3">
-          <FitSelect
-            label="Customer"
-            value={party}
-            onChange={(v) => patch({ party: v, ...(v ? { agent: '', group: '' } : {}) })}
-            options={partyOptions}
-            className="order-1 col-span-2 w-full sm:order-none sm:w-52"
-          />
-          <FitSelect
-            label="Agent"
-            value={agent === 'All' ? '' : agent}
-            onChange={(v) => patch({ agent: v, ...(v ? { party: '', group: '' } : {}) })}
-            options={agentOptions.filter((a) => a !== 'All')}
-            className="order-3 min-w-0 w-full sm:order-none sm:w-40"
-          />
-          <FitSelect
-            label="Group"
-            value={group}
-            onChange={(v) => patch({ group: v, ...(v ? { party: '', agent: '' } : {}) })}
-            options={(lookups?.groups ?? []).map((g) => g.name)}
-            className="order-3 min-w-0 w-full sm:order-none sm:w-44"
-          />
+    // Fills the viewport exactly: filters + figures pinned on top, the ledger the
+    // only scrolling region, and the Closing Balance stuck to the bottom of the
+    // grid. `/account/party-ledger` is a flush route (see app-shell) so the page
+    // owns its own padding. Phones: filters + cards fill the screen, so the page
+    // itself scrolls and the ledger flows below them.
+    <div className="pl-page flex h-full min-h-0 flex-col gap-2.5 overflow-y-auto overscroll-contain p-2.5 sm:overflow-visible sm:p-3">
+      {/* ── Filters: one bar on desktop ── */}
+      <section aria-label="Ledger filters" className="pl-glass hidden shrink-0 flex-wrap items-center gap-[7px] p-2 sm:flex">
+        {/* Wider than the others: party names run long, and this is the one filter
+            the statement is named after. */}
+        <PlSelect id="pl-customer" label="Customer" value={party} onChange={onParty} options={partyOptions} className="max-w-[320px] flex-[2_1_220px]" />
+        <PlSelect label="Agent" value={agent === 'All' ? '' : agent} onChange={onAgent} options={agentList} className="max-w-[180px] flex-[1_1_150px]" />
+        <PlSelect label="Group" value={group} onChange={onGroup} options={groupList} className="max-w-[200px] flex-[1_1_150px]" />
+        {periodButton('d')}
+        <PlSelect label="Voucher type" value={voucherType} onChange={(v) => patch({ voucherType: v })} options={data?.voucherTypes ?? []} className="max-w-[190px] flex-[1_1_150px]" />
+        {modeSeg(false)}
+        <label
+          className={cn('flex h-[38px] items-center gap-2 px-1.5 text-[12.5px] font-extrabold select-none', running ? 'cursor-pointer' : 'cursor-not-allowed opacity-50')}
+          title={balanceTitle}
+        >
+          {balanceSwitch} Show balance
+        </label>
+        <button type="button" className="pl-btn" onClick={onReset}>
+          <X className="size-3.5" /> Reset
+        </button>
+        <span className="flex-1" aria-hidden />
+        {/* How many rows the statement has — the only way to know how much
+            there is below the fold. */}
+        {data && (
+          <span className="pl-muted flex items-center gap-1.5 text-[12px] font-semibold whitespace-nowrap">
+            <strong className="text-[#141a2b] tabular-nums dark:text-white">{rows.length}</strong> row{rows.length === 1 ? '' : 's'}
+            {isFetching && <Loader2 className="size-3 animate-spin" />}
+          </span>
+        )}
+        {zoomSeg}
+        <button type="button" className="pl-btn pl-btn-sq" onClick={() => setKeysOpen(true)} aria-label="Keyboard shortcuts" title="Keyboard shortcuts (?)">
+          <Keyboard className="size-4" />
+        </button>
+        {canPlan && (
+          <button type="button" className="pl-btn pl-btn-indigo" onClick={() => setPlanOpen(true)} title="How much to ask for, to a target average age">
+            Demand plan
+          </button>
+        )}
+        {pdfButton}
+        {excelButton}
+      </section>
 
-          <Popover open={dateOpen} onOpenChange={setDateOpen}>
-            <PopoverTrigger asChild>
-              <Button
-                variant="outline"
-                className={cn(
-                  CONTROL,
-                  'order-2 col-span-2 w-full max-w-full justify-between font-medium sm:order-none sm:w-auto sm:max-w-56',
-                  CONTROL_ON,
-                )}
-                title="Statement period"
-              >
-                <div className="flex items-center gap-1.5 min-w-0">
-                  <CalendarRange className="size-3.5 shrink-0" />
-                  <span className="truncate">{dateLabel}</span>
-                </div>
-                <Filter className="size-3.5 shrink-0 ml-1.5 text-amber-800/80 dark:text-amber-200/80" />
-              </Button>
-            </PopoverTrigger>
-            <PopoverContent align="start" className="w-auto p-2">
-              {datePanel}
-            </PopoverContent>
-          </Popover>
-
-          <FitSelect
-            label="Voucher type"
-            value={voucherType}
-            onChange={(v) => patch({ voucherType: v })}
-            options={data?.voucherTypes ?? []}
-            className="order-4 col-span-2 min-w-0 w-full sm:order-none sm:w-40"
-          />
-
-          {/* Bank / Cash / Both — the ledger's column groups follow this. */}
-          <div
-            role="group"
-            aria-label="Transaction mode"
-            className="order-5 flex items-center gap-0.5 rounded-[4px] border border-amber-300 bg-amber-50/40 p-0.5 sm:order-none sm:inline-flex dark:border-amber-400/40 dark:bg-transparent"
-          >
-            {(['BOTH', 'B', 'C'] as const).map((m) => (
-              <button
-                key={m}
-                type="button"
-                onClick={() => patch({ mode: m })}
-                aria-pressed={mode === m}
-                className={cn(
-                  'flex-1 cursor-pointer rounded-[3px] px-2.5 py-1 text-[12px] font-semibold transition-colors duration-150 sm:flex-none',
-                  mode === m
-                    ? 'bg-primary text-primary-foreground shadow-sm'
-                    : 'text-amber-900/70 hover:bg-amber-100 hover:text-amber-900 dark:text-amber-200/70 dark:hover:bg-amber-400/10',
-                )}
-              >
-                {m === 'BOTH' ? 'Both' : m === 'B' ? 'Bank' : 'Cash'}
-              </button>
-            ))}
-          </div>
-
-          {/* Off by default — the running Balance per transaction is a detail most
-              glances at the ledger don't need; Closing Balance always shows regardless.
-              Disabled under a voucher-type filter: with no opening to seed from there
-              is no running balance to show. */}
-          <label
-            className={cn(
-              'order-6 flex shrink-0 items-center justify-end gap-1.5 text-[12.5px] font-semibold text-amber-900/80 select-none sm:order-none sm:justify-start dark:text-amber-200/80',
-              running ? 'cursor-pointer' : 'cursor-not-allowed opacity-50',
-            )}
-            title={running ? undefined : 'Clear the voucher type filter to see running balances'}
-          >
-            <Switch
-              checked={showBalance && !!running}
-              onCheckedChange={(v) => patch({ showBalance: v })}
-              disabled={!running}
-            />{' '}
-            Show Balance
-          </label>
-
-          <Button
-            variant="outline"
-            className="order-7 h-9 justify-self-start rounded-[4px] text-[12.5px] font-semibold sm:order-none"
-            onClick={onReset}
-          >
-            <X /> Reset
-          </Button>
-
-          <div className="order-8 ml-auto flex items-center justify-end gap-2 sm:order-none">
-            {/* Was `lg:block`. How many rows the statement has is not a desktop
-                luxury — on a phone, where you cannot see the end of the list, it
-                is the only way to know how much there is. */}
-            {data && (
-              <p className="text-muted-foreground text-[12px] font-medium">
-                <span className="text-foreground font-bold tabular-nums">{rows.length}</span> row
-                {rows.length === 1 ? '' : 's'}
-                {isFetching && <Loader2 className="ml-1 inline size-3 animate-spin align-[-2px]" />}
-              </p>
-            )}
-            {query.customerId != null && can('payment:view') && (
-              <Button variant="outline" className="h-9 rounded-[4px] font-semibold" onClick={() => setPlanOpen(true)} title="How much to ask for, to a target average age">
-                Demand plan
-              </Button>
-            )}
-            {planOpen && query.customerId != null && (
-              <DemandPlanDialog open onOpenChange={setPlanOpen} customerId={query.customerId} partyName={party} defaultSide={mode === 'C' ? 'C' : 'B'} />
-            )}
-            {canPrintLedger && (
-              <Button
-                variant="outline"
-                size="icon"
-                className="size-9 rounded-[4px] border-rose-600 bg-rose-600 text-white shadow-sm hover:border-rose-700 hover:bg-rose-700 hover:text-white disabled:border-rose-300 disabled:bg-rose-300 disabled:text-white dark:border-rose-500 dark:bg-rose-600 dark:hover:border-rose-400 dark:hover:bg-rose-500"
-                onClick={onPdf}
-                disabled={!rows.length || pdfLoading}
-                aria-label="Open Party Ledger PDF"
-                title="Open PDF (Ctrl+P)"
-              >
-                {pdfLoading ? <Loader2 className="animate-spin" /> : <Printer />}
-              </Button>
-            )}
-            {can('partyledger:export') && (
-              <Button
-                variant="outline"
-                size="icon"
-                className="size-9 rounded-[4px] border-emerald-600 bg-emerald-600 text-white shadow-sm hover:border-emerald-700 hover:bg-emerald-700 hover:text-white disabled:border-emerald-300 disabled:bg-emerald-300 disabled:text-white dark:border-emerald-500 dark:bg-emerald-600 dark:hover:border-emerald-400 dark:hover:bg-emerald-500"
-                onClick={onExcel}
-                disabled={!rows.length || excelLoading}
-                aria-label="Download Party Ledger Excel"
-                title="Download Excel"
-              >
-                {excelLoading ? <Loader2 className="animate-spin" /> : <FileSpreadsheet />}
-              </Button>
-            )}
-          </div>
+      {/* ── Filters: a card on a phone, the rest in a sheet ── */}
+      <section aria-label="Ledger filters" className="pl-glass pl-tall flex shrink-0 flex-col gap-[7px] p-2 sm:hidden">
+        <PlSelect id="pl-customer-m" label="Customer" value={party} onChange={onParty} options={partyOptions} />
+        <div className="flex gap-[7px]">
+          {periodButton('m')}
+          <button type="button" className="pl-btn pl-btn-sq relative" onClick={() => setFiltersOpen(true)} aria-label="More filters" title="More filters">
+            <SlidersHorizontal className="size-[18px]" />
+            {sheetFilters > 0 && <span className="pl-badge">{sheetFilters}</span>}
+          </button>
         </div>
-      </div>
+        <div className="flex items-center gap-[7px]">
+          {modeSeg(true)}
+          {canPlan && (
+            <button type="button" className="pl-btn pl-btn-sq pl-btn-indigo" onClick={() => setPlanOpen(true)} aria-label="Demand plan" title="Demand plan">
+              <Target className="size-[18px]" />
+            </button>
+          )}
+          {pdfButton}
+          {excelButton}
+        </div>
+      </section>
 
-      {/* ── Ageing rail ─────────────────────────────────────────────────────── */}
-      <div className="grid grid-cols-6 gap-2 max-sm:*:col-span-2 max-sm:[&>*:nth-child(-n+2)]:col-span-3 sm:grid-cols-3 lg:grid-cols-5">
+      {planOpen && query.customerId != null && (
+        <DemandPlanDialog open onOpenChange={setPlanOpen} customerId={query.customerId} partyName={party} defaultSide={mode === 'C' ? 'C' : 'B'} />
+      )}
+
+      {/* ── Figures: a grid on desktop, a swipeable rail on a phone ── */}
+      <section aria-label="Ageing summary" className="pl-rail">
         <InvDueFromKpi
           text={kpis?.invDueFrom}
           detail={kpis?.invDueFromDetail}
@@ -703,315 +811,209 @@ export function PartyLedgerPage() {
           // nothing currently on screen disappears.
           onShowInvoice={(iso) => patch({ from: iso.slice(0, 10), preset: '' })}
         />
-        <Kpi
-          label="Total Outstanding"
-          value={
-            closingNet != null
-              ? `${inr(Math.abs(closingNet))}${closingNet !== 0 ? ` ${closingNet < 0 ? 'Cr' : 'Dr'}` : ''}`
-              : '—'
-          }
-          /* Say WHEN this figure is from. On a window ending in the past, the
-             ageing cards and every row's status are as at that same day. */
-          note={
-            closingNet == null && footer
-              ? 'clear voucher type'
-              : windowEndsInPast
-                ? `as at ${formatDate(to)}`
-                : undefined
-          }
-          tone={
-            closingNet == null || closingNet === 0 ? 'slate' : closingNet < 0 ? 'emerald' : 'amber'
-          }
-        />
-        <Kpi
-          label="Over Due"
-          value={kpis ? inr(kpis.overDue.amount) : '—'}
-          note={kpis ? `${kpis.overDue.count} inv` : undefined}
-          tone="rose"
-        />
-        <Kpi
-          label="Past Due"
-          value={kpis ? inr(kpis.pastDue.amount) : '—'}
-          note={kpis ? `${kpis.pastDue.count} inv` : undefined}
-          tone="amber"
-        />
-        <Kpi
-          label="Normal Due"
-          value={kpis ? inr(kpis.normal.amount) : '—'}
-          note={kpis ? `${kpis.normal.count} inv` : undefined}
-          tone="emerald"
-        />
-      </div>
-
-      {/* ── The ledger ──────────────────────────────────────────────────────── */}
-      <div
-        className={cn(
-          'bg-card flex flex-none flex-col overflow-hidden rounded-[4px] border shadow-sm sm:min-h-0 sm:flex-1',
-          PANEL,
-        )}
-      >
-        {/* Document header — Tally captions every ledger with the account and the
-            period it covers, on a dark bar above the amber column strip. */}
-        <div className="flex items-center justify-between gap-3 bg-slate-800 px-2.5 py-1 dark:bg-slate-900">
-          <span className="truncate text-[12px] font-extrabold tracking-wide text-amber-300 uppercase">
-            {scopeLabel || 'Ledger Account'}
+        <div className="pl-kpi pl-kpi-blue">
+          <span className="pl-kpi-label flex-wrap gap-y-1">
+            <span className="whitespace-nowrap">Total outstanding</span>
+            {/* Say WHEN this figure is from. On a window ending in the past, the
+                ageing tiles and every row's status are as at that same day. */}
+            {outstandingNote && (
+              <span className="rounded-full bg-white/20 px-[7px] py-px text-[9.5px] tracking-[0.04em] whitespace-nowrap normal-case">{outstandingNote}</span>
+            )}
           </span>
-          {/*
-           * Shown on phones too.
-           *
-           * It used to be `sm:inline` on the reasoning that the Date control
-           * above already states the period. It does not, once the page is
-           * scrolled — and this is a STATEMENT: which dates it covers and
-           * whether it is bank, cash or both is part of the figures, not
-           * decoration. A ledger that does not say what it covers is the one
-           * thing a ledger must not be.
-           *
-           * `text-right` + wrapping rather than `truncate`, so a narrow screen
-           * folds it onto a second line instead of cutting the mode off the end.
-           */}
-          <span className="shrink-0 text-right text-[10.5px] leading-tight font-bold tracking-wide text-white tabular-nums sm:text-[11px]">
-            {prettyDate(from)} — {prettyDate(to)}
-            <span className="hidden sm:inline"> · </span>
-            <span className="block sm:inline">
-              {mode === 'BOTH' ? 'Bank & Cash' : mode === 'B' ? 'Bank' : 'Cash'}
-            </span>
+          <span className="flex items-baseline gap-1.5">
+            <span className="text-[22px] font-extrabold tracking-[-0.01em] tabular-nums">{closingNet != null ? inr(Math.abs(closingNet)) : '—'}</span>
+            {closingNet != null && (
+              <span className={cn('rounded-full px-[7px] py-px text-[11.5px] font-extrabold', closingNet < 0 ? 'bg-[#b9f6dc] text-[#047857]' : 'bg-white/95 text-[#2f3fb5]')}>
+                {closingNet > 0 ? 'Dr' : closingNet < 0 ? 'Cr' : 'Settled'}
+              </span>
+            )}
+          </span>
+          <div className="mt-0.5 h-[30px] w-full">
+            {spark && (
+              <svg
+                key={`${party}|${from}|${to}|${mode}`}
+                viewBox="0 0 120 30"
+                preserveAspectRatio="none"
+                className="block h-[30px] w-full overflow-visible"
+                role="img"
+                aria-label="Running balance trend over the period"
+              >
+                <defs>
+                  <linearGradient id="pl-spark" x1="0" y1="0" x2="0" y2="1">
+                    <stop offset="0%" stopColor="#fff" stopOpacity={0.35} />
+                    <stop offset="100%" stopColor="#fff" stopOpacity={0} />
+                  </linearGradient>
+                </defs>
+                <path d={`${spark} L120,30 L0,30 Z`} fill="url(#pl-spark)" className="pl-spark-fill" />
+                <path
+                  d={spark}
+                  fill="none"
+                  stroke="#fff"
+                  strokeWidth={2}
+                  strokeLinecap="round"
+                  strokeLinejoin="round"
+                  vectorEffect="non-scaling-stroke"
+                  pathLength={1}
+                  className="pl-spark-line"
+                />
+              </svg>
+            )}
+          </div>
+        </div>
+        {AGEING.map((a) => {
+          const k = kpis?.[a.key];
+          const share = k && pendingTotal > 0 ? (k.amount / pendingTotal) * 100 : 0;
+          return (
+            <div key={a.key} className="pl-kpi gap-[3px]">
+              <span className="pl-kpi-label">
+                <span className="pl-kpi-dot" style={{ background: a.dot, boxShadow: `0 0 0 3px ${a.dot}26` }} />
+                {a.label}
+              </span>
+              <span className="flex items-baseline gap-[7px]">
+                <span className={cn('text-[19px] font-extrabold tabular-nums', a.fg)}>{k ? inr(k.amount) : '—'}</span>
+                {k && <span className="pl-muted text-[11.5px] font-bold">{k.count} inv</span>}
+              </span>
+              <span className="pl-kpi-track" role="img" aria-label={`${a.label}: ${Math.round(share)}% of what is pending`}>
+                <span style={{ width: `${share}%`, background: a.bar }} />
+              </span>
+              <span className="pl-kpi-hint">{a.hint}</span>
+            </div>
+          );
+        })}
+      </section>
+
+      {/* ── The ledger ── */}
+      <section aria-label="Ledger" className="pl-ledger flex flex-none flex-col sm:min-h-0 sm:flex-1">
+        {/* The statement's caption: which account, which dates, which side of
+            the book — part of the figures, so it shows on phones too. */}
+        <div className="pl-docbar">
+          <span className="pl-docbar-dot hidden sm:block" aria-hidden />
+          <span className="pl-docbar-title flex-1 sm:flex-none sm:truncate">{scopeLabel || 'Ledger account'}</span>
+          <span className="pl-docbar-period">
+            {prettyDate(from)} — {prettyDate(to)} · {modeLabel}
           </span>
         </div>
 
-        {/* Desktop: the Tally grid. Only this region scrolls; the heading rows stay
+        {/* Desktop: the grid. Only this region scrolls; the heading rows stay
             pinned at the top and the Closing Balance at the bottom. */}
-        <div
-          className={cn(
-            'hidden min-h-0 flex-1 overflow-auto overscroll-x-contain sm:block',
-            '[scrollbar-width:thin] [scrollbar-color:var(--color-amber-400)_var(--color-amber-100)]',
-          )}
-        >
-          <table className="w-full border-collapse text-[13px]">
+        <div className="hidden min-h-0 flex-1 overflow-auto overscroll-x-contain [scrollbar-width:thin] sm:block">
+          <table className="pl-table min-w-[880px]" style={{ zoom }}>
             <caption className="sr-only">
               Party ledger for {scopeLabel} from {prettyDate(from)} to {prettyDate(to)}
             </caption>
-            <thead className="z-30">
+            <thead>
               {grouped && (
                 <tr>
-                  <th className={cn(TH_GROUP, TH_LINE, 'top-0 h-7')} colSpan={LEAD_COLS} />
+                  <th className="pl-th pl-th-group top-0" colSpan={LEAD_COLS} />
                   {legs.map((l) => (
-                    <th
-                      key={l.group}
-                      className={cn(TH_GROUP, TH_LINE, 'top-0 h-7 text-center')}
-                      colSpan={2}
-                      scope="colgroup"
-                    >
+                    <th key={l.group} className="pl-th pl-th-group top-0 text-center" colSpan={2} scope="colgroup">
+                      <span className="pl-th-key" style={{ background: l === BANK_LEG ? '#2c4fd0' : '#34d399' }} />
                       {l.group}
                     </th>
                   ))}
-                  <th
-                    className={cn(TH_GROUP, 'top-0 h-7')}
-                    colSpan={1 + (canViewChallan ? 1 : 0)}
-                  />
+                  <th className="pl-th pl-th-group top-0" colSpan={1 + (viewCol ? 1 : 0)} />
                 </tr>
               )}
               <tr>
                 {['Date', 'Particulars', 'Vch Type', 'Vch No'].map((h) => (
-                  <th
-                    key={h}
-                    scope="col"
-                    className={cn(TH, TH_LINE, grouped ? 'top-7' : 'top-0', 'py-1.5 text-left')}
-                  >
+                  <th key={h} scope="col" className={cn('pl-th text-left', grouped ? 'top-7' : 'top-0')}>
                     {h}
                   </th>
                 ))}
                 {/* Settlement state (P/D/F) then the ageing, both sitting right after
                     the voucher number where they're read together. */}
-                <th
-                  scope="col"
-                  title="Settlement: F = fully paid, P = partially paid, D = due"
-                  className={cn(TH, TH_LINE, grouped ? 'top-7' : 'top-0', 'w-8 py-1.5 text-center')}
-                >
+                <th scope="col" title="Settlement: F = fully paid, P = partially paid, D = due" className={cn('pl-th w-10 text-center', grouped ? 'top-7' : 'top-0')}>
                   St
                 </th>
-                <th
-                  scope="col"
-                  className={cn(TH, TH_LINE, grouped ? 'top-7' : 'top-0', 'py-1.5 text-left')}
-                >
+                <th scope="col" className={cn('pl-th text-left', grouped ? 'top-7' : 'top-0')}>
                   Due From
                 </th>
                 {legs.flatMap((l) =>
                   ['Debit', 'Credit'].map((side) => (
-                    <th
-                      key={`${l.group}-${side}`}
-                      scope="col"
-                      className={cn(TH, TH_LINE, grouped ? 'top-7' : 'top-0', 'py-1.5 text-right')}
-                    >
+                    <th key={`${l.group}-${side}`} scope="col" className={cn('pl-th text-right', grouped ? 'top-7' : 'top-0')}>
                       {grouped ? side : `${l.group} ${side}`}
                     </th>
                   )),
                 )}
-                <th
-                  scope="col"
-                  className={cn(TH, TH_LINE, grouped ? 'top-7' : 'top-0', 'py-1.5 text-right')}
-                >
+                <th scope="col" className={cn('pl-th text-right', grouped ? 'top-7' : 'top-0')}>
                   Balance
                 </th>
-                {canViewChallan && (
-                  <th
-                    scope="col"
-                    className={cn(TH, grouped ? 'top-7' : 'top-0', 'w-10 py-1.5')}
-                    aria-label="View"
-                  />
-                )}
+                {viewCol && <th scope="col" className={cn('pl-th w-12', grouped ? 'top-7' : 'top-0')} aria-label="View" />}
               </tr>
             </thead>
 
             <tbody>
               {isFetching && !data ? (
                 <tr>
-                  <td colSpan={totalCols} className="text-muted-foreground h-24 text-center">
+                  <td colSpan={totalCols} className="pl-muted h-24 text-center">
                     <Loader2 className="mx-auto size-5 animate-spin" />
                   </td>
                 </tr>
               ) : rows.length === 0 ? (
                 <tr>
-                  <td
-                    colSpan={totalCols}
-                    className="text-muted-foreground h-24 text-center text-[13px] font-medium"
-                  >
+                  <td colSpan={totalCols} className="pl-muted h-28 text-center text-[13.5px] font-semibold">
                     No ledger entries for these filters.
                   </td>
                 </tr>
               ) : (
                 rows.map((r, i) => {
-                  const invoice = isOpenableRow(r);
-                  const note = noteRefOf(r);
+                  const openable = isOpenableRow(r);
+                  const view = viewTarget(r);
                   return (
                     <tr
                       key={`${r.voucherNo}-${r.txnDate}-${i}`}
-                      // Invoice rows open their receipts; keyboard users get the same
-                      // affordance via Enter / Space on the focused row.
-                      tabIndex={invoice ? 0 : undefined}
-                      role={invoice ? 'button' : undefined}
+                      data-lrow
+                      data-open={openable}
+                      // One tab stop for the grid; ↑ / ↓ move it (see rowKey).
+                      tabIndex={i === rowStop ? 0 : -1}
+                      role={openable ? 'button' : undefined}
                       aria-label={
-                        invoice
-                          ? isInvoiceRow(r)
-                            ? `Receipts against ${r.voucherNo}`
-                            : `Invoices cleared by ${r.voucherNo}`
-                          : undefined
+                        openable ? (isInvoiceRow(r) ? `Receipts against ${r.voucherNo}` : `Invoices cleared by ${r.voucherNo}`) : undefined
                       }
-                      onClick={invoice ? () => setReceiptFor(r) : undefined}
-                      onKeyDown={
-                        invoice
-                          ? (e) => {
-                              if (e.key === 'Enter' || e.key === ' ') {
-                                e.preventDefault();
-                                setReceiptFor(r);
-                              }
-                            }
-                          : undefined
-                      }
-                      className={cn(
-                        'border-b border-amber-200/70 outline-none dark:border-amber-400/10',
-                        'even:bg-amber-50/70 dark:even:bg-amber-400/[0.05]',
-                        // Tally moves a solid amber selection bar down the ledger.
-                        'hover:bg-amber-200/80 dark:hover:bg-amber-400/20',
-                        'focus-visible:ring-2 focus-visible:ring-amber-600 focus-visible:ring-inset',
-                        invoice && 'group cursor-pointer',
-                      )}
+                      onFocus={() => setFocusRow(i)}
+                      onClick={openable ? () => setReceiptFor(r) : undefined}
+                      onKeyDown={(e) => rowKey(e, r, openable)}
+                      className="pl-tr"
+                      style={{ '--rail': railOf(r), animationDelay: `${Math.min(i, 18) * 24}ms` } as CSSProperties}
                     >
-                      <td
-                        className={cn(
-                          TD,
-                          'whitespace-nowrap tabular-nums font-semibold text-slate-700 dark:text-slate-300',
-                        )}
-                      >
-                        {prettyDate(r.txnDate)}
-                      </td>
-                      <td className={cn(TD, 'font-semibold text-slate-800 dark:text-slate-200')}>
+                      <td className="pl-td font-bold whitespace-nowrap text-[#3a4256] tabular-nums dark:text-slate-300">{prettyDate(r.txnDate)}</td>
+                      <td className="pl-td font-bold text-[#1d2438] dark:text-slate-100">
                         {r.particulars}
+                        {multiParty && <span className="pl-muted block text-[11px] font-semibold">{r.customerName}</span>}
                       </td>
-                      <td
-                        className={cn(
-                          TD,
-                          'whitespace-nowrap text-[12px] font-medium text-slate-600 dark:text-slate-400',
-                        )}
-                      >
-                        {r.voucherType}
+                      <td className="pl-td pl-muted text-[12px] font-semibold whitespace-nowrap">{vtLabel(r.voucherType)}</td>
+                      <td className="pl-td">
+                        <span className="pl-vno" data-link={openable}>
+                          {r.voucherNo}
+                        </span>
                       </td>
-                      <td
-                        className={cn(
-                          TD,
-                          'whitespace-nowrap text-[12.5px] font-semibold',
-                          invoice &&
-                            'font-bold text-amber-900 underline-offset-2 group-hover:underline dark:text-amber-300',
-                        )}
-                      >
-                        {r.voucherNo}
+                      <td className="pl-td text-center">
+                        <StatusChip status={r.status} side={mode === 'BOTH' ? r.pendingSide : null} />
                       </td>
-                      <td className={cn(TD, 'text-center')}>
-                        <StatusChip
-                          status={r.status}
-                          side={mode === 'BOTH' ? r.pendingSide : null}
-                        />
-                      </td>
-                      <td className={cn(TD, 'whitespace-nowrap')}>
+                      <td className="pl-td whitespace-nowrap">
                         <DueFrom text={r.dueFrom} calc={r.dueFromCalc} />
                       </td>
                       {legs.flatMap((l) => [
-                        <td
-                          key={`${l.group}-dr`}
-                          className={cn(
-                            TD,
-                            NUM,
-                            'font-semibold text-slate-900 dark:text-slate-100',
-                          )}
-                        >
+                        <td key={`${l.group}-dr`} className="pl-td text-right font-bold whitespace-nowrap text-[#141a2b] tabular-nums dark:text-slate-100">
                           {money(r[l.dr])}
                           {/* A part-paid bill: what is still owed — the figure the
-                              ageing cards add up, so the two can be checked by eye. */}
-                          {r.status === 'P' && r.pendingAmount > 0 && !!r[l.dr] &&
-                            (!grouped || r.pendingSide === (l === BANK_LEG ? 'B' : 'C')) && (
-                              <div className="text-[11px] font-bold text-sky-700 dark:text-sky-300">
-                                {money(r.pendingAmount)} due
-                              </div>
-                            )}
-                        </td>,
-                        <td
-                          key={`${l.group}-cr`}
-                          className={cn(
-                            TD,
-                            NUM,
-                            'font-semibold text-emerald-700 dark:text-emerald-400',
+                              ageing tiles add up, so the two can be checked by eye. */}
+                          {r.status === 'P' && r.pendingAmount > 0 && !!r[l.dr] && (!grouped || r.pendingSide === (l === BANK_LEG ? 'B' : 'C')) && (
+                            <div className="text-[10.5px] font-extrabold text-[#0369a1] dark:text-sky-300">{money(r.pendingAmount)} due</div>
                           )}
-                        >
+                        </td>,
+                        <td key={`${l.group}-cr`} className="pl-td text-right font-bold whitespace-nowrap text-[#047857] tabular-nums dark:text-emerald-400">
                           {money(r[l.cr])}
                         </td>,
                       ])}
-                      <td className={cn(TD, NUM)}>
-                        {showBalance && running && <Balance net={running[i]} />}
-                      </td>
-                      {(canViewChallan || canViewNote) && (
-                        <td className={cn(TD, 'text-center')} onClick={(e) => e.stopPropagation()}>
-                          {/* A note opens its own note bill; anything else backed
-                              by a Challan opens the challan bill. */}
-                          {note && canViewNote ? (
-                            <button
-                              type="button"
-                              onClick={() => viewNote(r, note.mode)}
-                              className="text-muted-foreground hover:text-primary hover:bg-muted inline-flex size-6 items-center justify-center rounded transition-colors"
-                              title={`View ${note.label} ${r.voucherNo}`}
-                              aria-label={`View ${note.label} ${r.voucherNo}`}
-                            >
-                              <Eye className="size-3.5" />
+                      <td className="pl-td text-right">{showBalance && running && <Balance net={running[i]} />}</td>
+                      {viewCol && (
+                        <td className="pl-td text-center" onClick={(e) => e.stopPropagation()}>
+                          {view && (
+                            <button type="button" onClick={view.go} className="pl-eye" title={view.label} aria-label={view.label}>
+                              <Eye className="size-4" />
                             </button>
-                          ) : invoice && r.challanId && canViewChallan ? (
-                            <button
-                              type="button"
-                              onClick={() => viewChallan(r)}
-                              className="text-muted-foreground hover:text-primary hover:bg-muted inline-flex size-6 items-center justify-center rounded transition-colors"
-                              title="View challan"
-                              aria-label={`View challan ${r.voucherNo}`}
-                            >
-                              <Eye className="size-3.5" />
-                            </button>
-                          ) : null}
+                          )}
                         </td>
                       )}
                     </tr>
@@ -1025,44 +1027,42 @@ export function PartyLedgerPage() {
                   Reserving the footer's own height lets them scroll clear of it. */}
               {footer && (
                 <tr aria-hidden="true">
-                  <td colSpan={99} className="p-0" style={{ height: footRowCount * 30 }} />
+                  <td colSpan={99} className="p-0" style={{ height: footRowCount * 34 }} />
                 </tr>
               )}
             </tbody>
 
-            {/* Opening balance + current total + closing balance ride together at the
-                foot of the grid and stay visible while the body scrolls — Tally
-                always shows you the closing, and grouping all 3 summary rows here
-                (rather than opening at the top) keeps them in one glance. */}
+            {/* Opening balance + current total + closing balance ride together at
+                the foot of the grid and stay visible while the body scrolls. */}
             {footer && (
-              <tfoot className="sticky bottom-0 z-20">
+              <tfoot className="pl-sticky-foot">
                 {footer.opening && (
                   <FootRow
+                    kind="open"
                     label="Opening Balance"
                     cells={balanceCells(footer.opening)}
                     lead={LEAD_COLS}
-                    trailing={canViewChallan}
+                    trailing={viewCol}
                     balance={openingNet ?? undefined}
                     showBalance={showBalance}
-                    underline
                   />
                 )}
                 {/* Under a voucher-type filter this is the only honest line left, so it
                     carries the filter in its label and takes the bottom-line styling. */}
                 <FootRow
+                  kind={footer.closing ? 'current' : 'close'}
                   label={footer.closing ? 'Current Total' : `Current Total · ${voucherType} only`}
                   cells={balanceCells(footer.current)}
                   lead={LEAD_COLS}
-                  trailing={canViewChallan}
-                  strong={!footer.closing}
+                  trailing={viewCol}
                 />
                 {footer.closing && closingNet != null && (
                   <FootRow
+                    kind="close"
                     label="Closing Balance"
                     cells={balanceCells(footer.closing)}
                     lead={LEAD_COLS}
-                    trailing={canViewChallan}
-                    strong
+                    trailing={viewCol}
                     balance={closingNet}
                   />
                 )}
@@ -1072,209 +1072,207 @@ export function PartyLedgerPage() {
         </div>
 
         {/* Phones: one card per voucher — the grid is unusable at this width. */}
-        <div className="p-2 sm:hidden">
+        <div className="flex flex-col gap-2 p-2 sm:hidden" style={{ zoom }}>
           {isFetching && !data ? (
-            <div className="text-muted-foreground flex h-24 items-center justify-center">
+            <div className="pl-muted flex h-24 items-center justify-center">
               <Loader2 className="size-5 animate-spin" />
             </div>
           ) : rows.length === 0 ? (
-            <p className="text-muted-foreground px-4 py-10 text-center text-[13px] font-medium">
-              No ledger entries for these filters.
-            </p>
+            <p className="pl-muted px-3 py-9 text-center text-[13px] font-semibold">No ledger entries for these filters.</p>
           ) : (
-            <div className="space-y-2">
-              {rows.map((r, i) => {
-                const invoice = isOpenableRow(r);
-                const note = noteRefOf(r);
-                return (
-                  <div
-                    key={`${r.voucherNo}-${r.txnDate}-${i}`}
-                    role={invoice ? 'button' : undefined}
-                    tabIndex={invoice ? 0 : undefined}
-                    onClick={invoice ? () => setReceiptFor(r) : undefined}
-                    onKeyDown={
-                      invoice
-                        ? (e) => {
-                            if (e.key === 'Enter' || e.key === ' ') {
-                              e.preventDefault();
-                              setReceiptFor(r);
-                            }
+            rows.map((r, i) => {
+              const openable = isOpenableRow(r);
+              const view = viewTarget(r);
+              return (
+                <div
+                  key={`${r.voucherNo}-${r.txnDate}-${i}`}
+                  role={openable ? 'button' : undefined}
+                  tabIndex={openable ? 0 : undefined}
+                  data-open={openable}
+                  aria-label={openable ? (isInvoiceRow(r) ? `Receipts against ${r.voucherNo}` : `Invoices cleared by ${r.voucherNo}`) : undefined}
+                  onClick={openable ? () => setReceiptFor(r) : undefined}
+                  onKeyDown={
+                    openable
+                      ? (e) => {
+                          if (e.key === 'Enter' || e.key === ' ') {
+                            e.preventDefault();
+                            setReceiptFor(r);
                           }
-                        : undefined
-                    }
-                    className={cn(
-                      'bg-card rounded-[4px] border border-amber-200 p-2.5 shadow-sm dark:border-amber-400/20',
-                      invoice &&
-                        'cursor-pointer active:bg-amber-100/70 dark:active:bg-amber-400/15',
-                    )}
-                  >
-                    <div className="flex items-start justify-between gap-2">
-                      <div className="min-w-0">
-                        <p className="truncate text-[13.5px] leading-tight font-bold text-slate-900 dark:text-slate-100">
-                          {r.particulars}
-                        </p>
-                        <p className="text-muted-foreground mt-0.5 text-[11.5px] font-medium">
-                          {r.voucherType} · <span className="font-semibold">{r.voucherNo}</span>
-                        </p>
+                        }
+                      : undefined
+                  }
+                  className="pl-card"
+                  style={{ '--rail': railOf(r), animationDelay: `${Math.min(i, 18) * 24}ms` } as CSSProperties}
+                >
+                  <div className="flex items-start gap-2">
+                    <div className="min-w-0 flex-1">
+                      <div className="text-[14px] leading-tight font-extrabold">{r.particulars}</div>
+                      {multiParty && <div className="pl-muted text-[11px] font-semibold">{r.customerName}</div>}
+                      <div className="mt-0.5 flex flex-wrap items-center gap-1.5">
+                        <span className="pl-muted text-[11.5px] font-semibold">{vtLabel(r.voucherType)}</span>
+                        <span className="text-[#c3c9d6]" aria-hidden>
+                          ·
+                        </span>
+                        <span className="pl-vno text-[11.5px]" data-link={openable}>
+                          {r.voucherNo}
+                        </span>
                       </div>
-                      <span className="text-muted-foreground shrink-0 text-[11px] font-semibold tabular-nums">
-                        {prettyDate(r.txnDate)}
-                      </span>
                     </div>
-                    {(r.status || r.dueFrom) && (
-                      <div className="mt-1 flex items-center gap-1.5">
-                        <StatusChip
-                          status={r.status}
-                          side={mode === 'BOTH' ? r.pendingSide : null}
-                        />
-                        <DueFrom text={r.dueFrom} calc={r.dueFromCalc} />
-                      </div>
-                    )}
-                    <div className="mt-2 flex items-end justify-between gap-2 border-t pt-2">
-                      {/*
-                       * EVERY leg, including the empty ones.
-                       *
-                       * These used to render only when non-zero, so a bank-only
-                       * row simply had no cash figures on it — and a reader
-                       * could not tell "cash was nil" from "the card is not
-                       * showing me cash". The desktop grid always draws all four
-                       * money columns; a card that quietly drops half of them is
-                       * not the same statement.
-                       *
-                       * A dash for nil, matching the grid's own empty cell, so
-                       * the two read alike.
-                       */}
-                      <div className="grid grid-cols-2 gap-x-3 gap-y-0.5 text-[11.5px]">
-                        {legs.flatMap((l) => [
-                          <span
-                            key={`${l.group}-dr`}
-                            className="flex items-baseline justify-between gap-1.5"
-                          >
-                            <span className="text-muted-foreground text-[10px] font-bold tracking-wide uppercase">
-                              {grouped ? `${l.group} Dr` : 'Dr'}
+                    <span className="pl-muted text-[11.5px] font-bold whitespace-nowrap tabular-nums">{prettyDate(r.txnDate)}</span>
+                  </div>
+                  {(r.status || r.dueFrom) && (
+                    <div className="mt-[7px] flex items-center gap-1.5">
+                      <StatusChip status={r.status} side={mode === 'BOTH' ? r.pendingSide : null} />
+                      <DueFrom text={r.dueFrom} calc={r.dueFromCalc} />
+                    </div>
+                  )}
+                  <div className="pl-card-sum mt-2 flex items-end gap-2.5 pt-2">
+                    {/*
+                     * EVERY leg, including the empty ones — a bank-only row that
+                     * simply had no cash figures on it could not be told apart
+                     * from a card that is not showing cash. A dash for nil,
+                     * matching the grid's own empty cell, so the two read alike.
+                     */}
+                    <div className="grid flex-1 grid-cols-2 gap-x-3.5 gap-y-[3px]">
+                      {legs.flatMap((l) =>
+                        (['dr', 'cr'] as const).map((side) => {
+                          const v = r[l[side]];
+                          return (
+                            <span key={`${l.group}-${side}`} className="flex items-baseline justify-between gap-1.5">
+                              <span className="pl-mlabel">{grouped ? `${l.group} ${side === 'dr' ? 'Dr' : 'Cr'}` : side === 'dr' ? 'Dr' : 'Cr'}</span>
+                              <span
+                                className={cn(
+                                  'text-[12.5px] font-extrabold tabular-nums',
+                                  !v ? 'text-[#c3c9d6] dark:text-slate-600' : side === 'cr' ? 'text-[#047857] dark:text-emerald-400' : 'text-[#141a2b] dark:text-slate-100',
+                                )}
+                              >
+                                {moneyOrDash(v)}
+                              </span>
                             </span>
-                            <span
-                              className={cn(
-                                'tabular-nums font-bold',
-                                r[l.dr]
-                                  ? 'text-slate-800 dark:text-slate-200'
-                                  : 'text-muted-foreground/50',
-                              )}
-                            >
-                              {moneyOrDash(r[l.dr])}
-                            </span>
-                          </span>,
-                          <span
-                            key={`${l.group}-cr`}
-                            className="flex items-baseline justify-between gap-1.5"
-                          >
-                            <span className="text-muted-foreground text-[10px] font-bold tracking-wide uppercase">
-                              {grouped ? `${l.group} Cr` : 'Cr'}
-                            </span>
-                            <span
-                              className={cn(
-                                'tabular-nums font-bold',
-                                r[l.cr]
-                                  ? 'text-emerald-700 dark:text-emerald-400'
-                                  : 'text-muted-foreground/50',
-                              )}
-                            >
-                              {moneyOrDash(r[l.cr])}
-                            </span>
-                          </span>,
-                        ])}
-                      </div>
-                      {showBalance && running && (
-                        <Balance net={running[i]} className="shrink-0 text-[13px]" />
+                          );
+                        }),
                       )}
                     </div>
-                    {(note && canViewNote) || (invoice && r.challanId && canViewChallan) ? (
-                      <div
-                        className="mt-2 flex justify-end border-t pt-2"
-                        onClick={(e) => e.stopPropagation()}
-                      >
-                        <Button
-                          variant="outline"
-                          size="sm"
-                          className="h-7 rounded-[4px] text-[11.5px] font-semibold"
-                          onClick={() =>
-                            note && canViewNote ? viewNote(r, note.mode) : viewChallan(r)
-                          }
-                        >
-                          <Eye className="size-3.5" />{' '}
-                          {note && canViewNote
-                            ? `View ${note.mode === 'CREDIT' ? 'credit' : 'debit'} note`
-                            : 'View challan'}
-                        </Button>
-                      </div>
-                    ) : null}
+                    {showBalance && running && <Balance net={running[i]} className="shrink-0 text-[13px]" />}
                   </div>
-                );
-              })}
-            </div>
+                  {view && (
+                    <div className="mt-2 flex justify-end" onClick={(e) => e.stopPropagation()}>
+                      <button type="button" className="pl-view" onClick={view.go} aria-label={view.label}>
+                        {view.short}
+                      </button>
+                    </div>
+                  )}
+                </div>
+              );
+            })
           )}
-          {/* All 3 summary rows grouped at the bottom, in statement order —
-              Opening, Current Total, Closing — rather than opening at the top. */}
+          {/* All 3 summary rows grouped at the bottom, in statement order. */}
           {footer && (
-            <div className="mt-2 space-y-1.5 rounded-[4px] border-2 border-amber-600 bg-amber-100/80 px-3 py-2 dark:border-amber-400/60 dark:bg-amber-400/15">
+            <div className="pl-mfoot">
               {footer.opening && (
-                <div className="flex items-center justify-between">
-                  <span className="text-[11.5px] font-semibold uppercase tracking-wide text-amber-950 dark:text-amber-100">
-                    Opening Balance
-                  </span>
-                  <span className="text-[12.5px] font-bold tabular-nums">
-                    {balanceCells(footer.opening)
-                      .map((v) => moneyOrDash(v))
-                      .join('  /  ')}
-                  </span>
+                <div className="pl-mfoot-row flex items-center justify-between gap-2.5">
+                  <span className="pl-mfoot-label">Opening Balance</span>
+                  <span className="text-[12.5px] font-extrabold tabular-nums">{balanceCells(footer.opening).map((v) => moneyOrDash(v)).join('  /  ')}</span>
                 </div>
               )}
-              <div
-                className={cn(
-                  'flex items-center justify-between',
-                  footer.opening && 'border-t border-amber-600/30 pt-1.5 dark:border-amber-400/30',
-                )}
-              >
-                <span className="text-[11.5px] font-semibold uppercase tracking-wide text-amber-950 dark:text-amber-100">
-                  {footer.closing ? 'Current Total' : `Current Total · ${voucherType} only`}
-                </span>
-                <span className="text-[12.5px] font-bold tabular-nums">
-                  {balanceCells(footer.current)
-                    .map((v) => moneyOrDash(v))
-                    .join('  /  ')}
-                </span>
+              <div className="pl-mfoot-row flex items-center justify-between gap-2.5">
+                <span className="pl-mfoot-label">{footer.closing ? 'Current Total' : `Current Total · ${voucherType} only`}</span>
+                <span className="text-[12.5px] font-extrabold tabular-nums">{balanceCells(footer.current).map((v) => moneyOrDash(v)).join('  /  ')}</span>
               </div>
               {footer.closing && closingNet != null && (
-                <div className="flex items-center justify-between border-t border-amber-600/30 pt-1.5 dark:border-amber-400/30">
-                  <span className="text-[12px] font-extrabold uppercase tracking-wide text-amber-950 dark:text-amber-100">
-                    Closing Balance
-                  </span>
-                  <Balance net={closingNet} className="text-[15px]" />
+                <div className="pl-mfoot-row flex items-center justify-between gap-2.5">
+                  <span className="pl-mfoot-label">Closing Balance</span>
+                  <Balance net={closingNet} nilLabel="Settled" className="text-[15px]" />
                 </div>
               )}
             </div>
           )}
         </div>
-      </div>
+      </section>
+
+      {/* ── The phone's other filters ── */}
+      <Sheet open={filtersOpen} onOpenChange={setFiltersOpen}>
+        <SheetContent side="bottom" className="pl-tall gap-3 rounded-t-[22px] border-0 px-4 pt-3 pb-[calc(16px+env(safe-area-inset-bottom))]">
+          <span className="mx-auto h-1 w-10 shrink-0 rounded-full bg-slate-300 dark:bg-white/20" aria-hidden />
+          <SheetHeader className="flex-row items-center justify-between gap-2 pr-10">
+            <SheetTitle className="text-[17px] font-extrabold">Filters</SheetTitle>
+            <button type="button" className="text-[13px] font-extrabold text-rose-600 dark:text-rose-400" onClick={onReset}>
+              × Reset all
+            </button>
+          </SheetHeader>
+          {(
+            [
+              ['Agent', 'All agents', agent === 'All' ? '' : agent, onAgent, agentList],
+              ['Group', 'All groups', group, onGroup, groupList],
+              ['Voucher type', 'All voucher types', voucherType, (v: string) => patch({ voucherType: v }), data?.voucherTypes ?? []],
+            ] as [string, string, string, (v: string) => void, string[]][]
+          ).map(([label, all, value, onChange, options]) => (
+            <div key={label}>
+              <p className="pl-mlabel mb-1.5">{label}</p>
+              <PlSelect label={label} placeholder={all} value={value} onChange={onChange} options={options} />
+            </div>
+          ))}
+          <label
+            className={cn('pl-tile flex items-center justify-between gap-3 py-2.5', running ? 'cursor-pointer' : 'cursor-not-allowed opacity-50')}
+            title={balanceTitle}
+          >
+            <span>
+              <span className="block text-[14px] font-extrabold">Show running balance</span>
+              <span className="pl-muted block text-[12px]">Show the running balance on every row</span>
+            </span>
+            {balanceSwitch}
+          </label>
+          <div className="pl-tile flex items-center justify-between gap-3 py-2">
+            <span className="text-[14px] font-extrabold">Text size</span>
+            {zoomSeg}
+          </div>
+          <button type="button" className="pl-btn pl-btn-primary w-full text-[15px]" onClick={() => setFiltersOpen(false)}>
+            Show {rows.length} row{rows.length === 1 ? '' : 's'}
+          </button>
+        </SheetContent>
+      </Sheet>
+
+      {/* ── Keyboard shortcuts ── */}
+      <Dialog open={keysOpen} onOpenChange={setKeysOpen}>
+        <DialogContent className="max-w-sm gap-3 rounded-[18px]">
+          <DialogHeader>
+            <DialogTitle className="text-[16px] font-extrabold">Keyboard shortcuts</DialogTitle>
+          </DialogHeader>
+          <ul className="space-y-2.5">
+            {(
+              [
+                ['Move between ledger rows', '↑  ↓'],
+                ['Open receipts / allocation', 'Enter'],
+                ['Show how an ageing is worked out', 'Tab → Enter'],
+                ['Jump to the Customer filter', '/'],
+                ...(canPrintLedger ? [['Open the PDF (print inside it)', 'Ctrl + P']] : []),
+                ['Close any popup', 'Esc'],
+                ['Show this list', '?'],
+              ] as [string, string][]
+            ).map(([what, key]) => (
+              <li key={what} className="flex items-center justify-between gap-3 text-[13px] font-semibold">
+                <span>{what}</span>
+                <kbd className="pl-kbd">{key}</kbd>
+              </li>
+            ))}
+          </ul>
+        </DialogContent>
+      </Dialog>
 
       <Dialog open={!!pdfPreview} onOpenChange={(open) => !open && setPdfPreview(null)}>
-        <DialogContent className="flex h-[min(92vh,900px)] w-[min(96vw,920px)] max-w-none flex-col gap-0 overflow-hidden rounded-[6px] p-0">
-          <DialogHeader className="shrink-0 border-b px-4 py-3 pr-12 sm:flex-row sm:items-center sm:justify-between">
+        <DialogContent className="flex h-[min(92vh,900px)] w-[min(96vw,920px)] max-w-none flex-col gap-0 overflow-hidden rounded-[22px] p-0">
+          <DialogHeader className="shrink-0 border-b px-4 py-3 pr-14 sm:flex-row sm:items-center sm:justify-between">
             <div className="min-w-0">
-              <DialogTitle className="truncate text-base">Party Ledger PDF</DialogTitle>
-              <p className="text-muted-foreground truncate text-xs">{pdfPreview?.filename}</p>
+              <DialogTitle className="truncate text-[16px] font-extrabold">Party Ledger PDF</DialogTitle>
+              <p className="pl-muted truncate text-xs">{pdfPreview?.filename}</p>
             </div>
             <div className="flex shrink-0 items-center gap-2 pt-2 sm:pt-0">
-              <Button variant="outline" size="sm" onClick={printPreview} className="rounded-[4px]">
+              <button type="button" onClick={printPreview} className="pl-btn">
                 <Printer className="size-4" /> Print
-              </Button>
-              <Button
-                size="sm"
-                onClick={downloadPreview}
-                className="rounded-[4px] bg-rose-600 font-bold text-white hover:bg-rose-700 dark:bg-rose-600 dark:hover:bg-rose-500"
-              >
+              </button>
+              <button type="button" onClick={downloadPreview} className="pl-btn pl-btn-rose px-4">
                 <Download className="size-4" /> Download PDF
-              </Button>
+              </button>
             </div>
           </DialogHeader>
           {pdfPreview && <PdfCanvasPreview url={pdfPreview.url} />}
@@ -1296,78 +1294,54 @@ export function PartyLedgerPage() {
 
 /** Totals line at the foot of the grid — same column geometry as a data row. */
 function FootRow({
+  kind,
   label,
   cells,
   lead,
   trailing,
-  strong,
   balance,
   showBalance = true,
-  underline,
 }: {
+  /** Opening, Current Total or Closing — the band it is drawn in. Current Total
+   *  takes the closing band when a voucher-type filter leaves it the bottom line. */
+  kind: 'open' | 'current' | 'close';
   label: string;
   cells: number[];
   lead: number;
   trailing: boolean;
-  strong?: boolean;
   balance?: number;
   /** Hide the Balance cell's VALUE (the column itself always stays, so the grid
-   *  keeps its column count) — used to respect the page's "Show Balance" toggle
-   *  for every summary row except Closing Balance, which always shows its figure. */
+   *  keeps its column count) — the page's "Show balance" toggle, which every
+   *  summary row but Closing Balance respects. */
   showBalance?: boolean;
-  /** A thick rule under this row — e.g. separating Opening Balance from the
-   *  Current Total/Closing Balance rows below it. Box-shadow for the same
-   *  sticky+border-collapse reason as the Closing Balance rule above. */
-  underline?: boolean;
 }) {
-  // The Closing Balance rule is a box-shadow, not a border: this row sits inside
-  // a `position: sticky` tfoot over a `border-collapse` table, a combination
-  // browsers are known to mis-render top borders on once the row is actually
-  // stuck mid-scroll (the border silently disappears). A box-shadow paints
-  // independently of border-collapse's border-resolution algorithm, so the rule
-  // stays visible the whole time the ledger is scrolled, not just at rest.
-  const bg = strong
-    ? 'bg-amber-200/90 dark:bg-amber-400/20 shadow-[inset_0_2px_0_0_var(--color-amber-700)] dark:shadow-[inset_0_2px_0_0_var(--color-amber-400)]'
-    : underline
-      ? 'bg-amber-100/70 dark:bg-amber-400/10 shadow-[inset_0_-2px_0_0_var(--color-amber-700)] dark:shadow-[inset_0_-2px_0_0_var(--color-amber-400)]'
-      : 'bg-amber-100/70 dark:bg-amber-400/10 border-t border-t-amber-300 dark:border-t-amber-400/30';
-  // The grid line is scoped to the RIGHT edge only — a blanket `border-amber-200`
-  // also sets the top colour and would beat the totals rule above.
-  const cell = cn(
-    'border-r border-r-amber-300/60 px-2 py-1 dark:border-r-amber-400/15 last:border-r-0',
-    bg,
-  );
+  // Each band's rule is an inset box-shadow, not a border (see .pl-foot): this
+  // row sits in a `position: sticky` tfoot, where browsers drop a top border
+  // once the row is actually stuck mid-scroll.
+  const strong = kind === 'close';
   return (
-    <tr className={bg}>
+    <tr className="pl-foot" data-kind={kind}>
       {/* Date stays blank; the label runs across the remaining text columns. */}
-      <td className={cell} />
-      <td
-        className={cn(cell, strong ? 'text-[13.5px] font-extrabold' : 'text-[13px] font-bold')}
-        colSpan={lead - 1}
-      >
-        {label}
-      </td>
+      <td />
+      <td colSpan={lead - 1}>{label}</td>
       {cells.map((v, i) => (
-        <td
-          key={i}
-          className={cn(cell, NUM, strong ? 'text-[13.5px] font-extrabold' : 'font-bold')}
-        >
+        <td key={i} className="text-right whitespace-nowrap">
           {moneyOrDash(v)}
         </td>
       ))}
-      <td className={cn(cell, NUM)}>
+      <td className="text-right whitespace-nowrap">
         {/* Closing Balance ignores the toggle — it's the one figure this ledger
             always needs, not an optional detail like the per-row running balance. */}
         {balance === undefined || (!strong && !showBalance) ? null : (
           <Balance
             net={balance}
-            className={strong ? 'text-[13.5px]' : undefined}
+            className={strong ? 'text-[14px]' : undefined}
             // Only the bottom line names a nil balance; on the others a dash is right.
             nilLabel={strong ? 'Settled' : undefined}
           />
         )}
       </td>
-      {trailing && <td className={cell} />}
+      {trailing && <td />}
     </tr>
   );
 }
@@ -1382,50 +1356,24 @@ function FootRow({
  * open there is no single answer, so it stays a plain P rather than pick a side.
  */
 function StatusChip({ status, side }: { status: string; side?: 'B' | 'C' | null }) {
-  if (status === 'F')
-    return (
-      <span
-        className="rounded bg-emerald-100 px-1.5 text-[11.5px] font-bold text-emerald-700 dark:bg-emerald-400/15 dark:text-emerald-300"
-        title="Fully paid"
-      >
-        F
-      </span>
-    );
+  if (status === 'F') return <span className="pl-chip pl-tone-emerald" title="Fully paid">F</span>;
   if (status === 'P')
-    // Pale like the other two, but sky rather than amber: the rows behind it
-    // are amber-banded, so a pale amber chip would disappear into the banding.
     return (
       <span
-        className="rounded bg-sky-100 px-1.5 text-[11.5px] font-bold whitespace-nowrap text-sky-700 dark:bg-sky-400/15 dark:text-sky-300"
-        title={
-          side
-            ? `Partially paid — ${side === 'B' ? 'bank' : 'cash'} balance still pending`
-            : 'Partially paid'
-        }
+        className="pl-chip pl-tone-sky"
+        title={side ? `Partially paid — ${side === 'B' ? 'bank' : 'cash'} balance still pending` : 'Partially paid'}
       >
         P{side ? <span className="ml-0.5 opacity-75">({side})</span> : null}
       </span>
     );
-  if (status === 'D')
-    return (
-      <span
-        className="rounded bg-rose-100 px-1.5 text-[11.5px] font-bold text-rose-700 dark:bg-rose-400/15 dark:text-rose-300"
-        title="Due"
-      >
-        D
-      </span>
-    );
+  if (status === 'D') return <span className="pl-chip pl-tone-rose" title="Due">D</span>;
   return null;
 }
 
 /** Ageing text — "45 Over", "36 Late", "12 Left", "Due Today". Overdue reads red;
  *  Early / On Time / Late describe an already-settled bill, so they read green. */
 const dueTone = (t: string) =>
-  /Over/i.test(t)
-    ? 'text-rose-600 dark:text-rose-400'
-    : /Early|On Time|Late/i.test(t)
-      ? 'text-emerald-600 dark:text-emerald-400'
-      : 'text-slate-600 dark:text-slate-400';
+  /Over/i.test(t) ? 'pl-tone-rose' : /Early|On Time|Late/i.test(t) ? 'pl-tone-emerald' : 'pl-tone-indigo';
 
 /** The card's accent, keyed off the same test `dueTone` uses so a figure and the
  *  card it opens are never two different colours. */
@@ -1501,13 +1449,10 @@ function DueFrom({ text, calc }: { text: string; calc?: DueFromCalc | null }) {
   const [pinned, setPinned] = useState(false);
   const open = hovered || pinned;
 
-  if (!text) return <span className="text-muted-foreground/50">—</span>;
-  const badge = (
-    <span className={cn('text-[12px] font-semibold uppercase', dueTone(text))}>{text}</span>
-  );
+  if (!text) return <span className="text-[#c3c9d6] dark:text-slate-600">—</span>;
   // A row with no workings on record — an older cached response — keeps the
   // plain badge rather than offering a card that would open empty.
-  if (!calc) return badge;
+  if (!calc) return <span className={cn('pl-due inline-flex items-center no-underline', dueTone(text))}>{text}</span>;
 
   const accent = dueAccent(text);
   const head =
@@ -1516,12 +1461,6 @@ function DueFrom({ text, calc }: { text: string; calc?: DueFromCalc | null }) {
       : accent === 'emerald'
         ? 'from-emerald-600 to-teal-700'
         : 'from-blue-700 to-indigo-800';
-  const ring =
-    accent === 'rose'
-      ? 'bg-rose-50/60 decoration-rose-400 ring-rose-200/70 hover:bg-rose-100/80 focus-visible:ring-rose-400 dark:bg-rose-950/30 dark:ring-rose-900/60'
-      : accent === 'emerald'
-        ? 'bg-emerald-50/60 decoration-emerald-400 ring-emerald-200/70 hover:bg-emerald-100/80 focus-visible:ring-emerald-400 dark:bg-emerald-950/30 dark:ring-emerald-900/60'
-        : 'bg-blue-50/60 decoration-blue-400 ring-blue-200/70 hover:bg-blue-100/80 focus-visible:ring-blue-400 dark:bg-blue-950/30 dark:ring-blue-900/60';
 
   const basisLabel = calc.basis === 'DUE_DATE' ? 'Due date' : 'Invoice date';
   const receipts = calc.receipts ?? [];
@@ -1567,12 +1506,9 @@ function DueFrom({ text, calc }: { text: string; calc?: DueFromCalc | null }) {
           }}
           onFocus={() => setHovered(true)}
           onBlur={() => setHovered(false)}
-          className={cn(
-            'cursor-pointer rounded-[3px] px-1 underline decoration-dotted underline-offset-[3px] ring-1 outline-none transition-colors focus-visible:ring-2',
-            ring,
-          )}
+          className={cn('pl-due inline-flex items-center', dueTone(text))}
         >
-          {badge}
+          {text}
         </span>
       </PopoverAnchor>
 
@@ -1588,7 +1524,7 @@ function DueFrom({ text, calc }: { text: string; calc?: DueFromCalc | null }) {
         onCloseAutoFocus={(e) => e.preventDefault()}
         onClick={(e) => e.stopPropagation()}
         className={cn(
-          'w-[17.5rem] overflow-hidden rounded-[10px] border-0 p-0 shadow-xl',
+          'w-[18rem] overflow-hidden rounded-[14px] border-0 p-0 shadow-xl',
           'ring-1 ring-slate-900/10 dark:ring-white/10',
           !pinned && 'pointer-events-none',
         )}
@@ -1728,49 +1664,6 @@ function DueFrom({ text, calc }: { text: string; calc?: DueFromCalc | null }) {
   );
 }
 
-type Tone = 'slate' | 'muted' | 'rose' | 'amber' | 'emerald';
-const toneCls: Record<Tone, string> = {
-  slate: 'text-slate-800 dark:text-slate-200',
-  muted: 'text-muted-foreground',
-  rose: 'text-rose-600 dark:text-rose-400',
-  amber: 'text-amber-600 dark:text-amber-400',
-  emerald: 'text-emerald-600 dark:text-emerald-400',
-};
-
-/** Compact ageing tile — label above, figure below, count trailing. */
-function Kpi({
-  label,
-  value,
-  note,
-  tone = 'slate',
-}: {
-  label: string;
-  value: string;
-  note?: string;
-  tone?: Tone;
-}) {
-  return (
-    <div className="bg-card rounded-[4px] border border-amber-200 px-2.5 py-1.5 shadow-sm dark:border-amber-400/20">
-      <div className="text-[9.5px] font-bold tracking-widest text-amber-900/70 uppercase dark:text-amber-200/60">
-        {label}
-      </div>
-      <div className="flex items-baseline gap-1.5">
-        <span
-          className={cn('truncate text-[15px] font-bold tabular-nums', toneCls[tone])}
-          title={value}
-        >
-          {value}
-        </span>
-        {note && (
-          <span className="text-muted-foreground shrink-0 text-[10.5px] font-medium tabular-nums">
-            {note}
-          </span>
-        )}
-      </div>
-    </div>
-  );
-}
-
 /** "Inv Due From" gets its own two-line tile: the date reads as the headline
  *  figure, the invoice code (and party, on a multi-party ledger) sits below as
  *  a small mono line — cramming both onto one row (the old layout) truncated
@@ -1799,31 +1692,16 @@ function InvDueFromKpi({
   const ref = m ? m[2] : null;
   const outside = !!detail && !detail.inRange;
   return (
-    <div
-      className={cn(
-        'bg-card rounded-[4px] border px-2.5 py-1.5 shadow-sm',
-        outside
-          ? 'border-amber-400 dark:border-amber-400/50'
-          : 'border-amber-200 dark:border-amber-400/20',
-      )}
-    >
-      <div className="text-[9.5px] font-bold tracking-widest text-amber-900/70 uppercase dark:text-amber-200/60">
-        Inv Due From
-      </div>
-      <div className="truncate text-[15px] font-bold tabular-nums text-slate-800 dark:text-slate-200">
-        {date}
-      </div>
-      {ref && (
-        <div className="text-muted-foreground truncate text-[10.5px] font-mono font-medium">
-          {ref}
-        </div>
-      )}
+    <div className="pl-kpi" data-warn={outside}>
+      <span className="pl-kpi-label">Inv due from</span>
+      <span className="truncate text-[17px] font-extrabold tabular-nums">{date}</span>
+      {ref && <span className="pl-muted truncate font-mono text-[11.5px]">{ref}</span>}
       {outside && detail && (
         <button
           type="button"
           onClick={() => onShowInvoice?.(detail.invDate)}
           title={`Raised ${formatDate(detail.invDate)}, before the dates shown. Click to widen the range back to it.`}
-          className="mt-0.5 cursor-pointer text-left text-[10px] leading-tight font-semibold text-amber-700 underline-offset-2 hover:underline dark:text-amber-300"
+          className="mt-[3px] cursor-pointer self-start rounded-full bg-[#fffbeb] px-[9px] py-[3px] text-left text-[11px] leading-snug font-extrabold text-[#b45309] shadow-[inset_0_0_0_1px_#fde68a] dark:bg-amber-400/10 dark:text-amber-300 dark:shadow-[inset_0_0_0_1px_rgba(251,191,36,0.3)]"
         >
           Raised {formatDate(detail.invDate)} — before these dates. Show it
         </button>
@@ -1833,45 +1711,36 @@ function InvDueFromKpi({
 }
 
 /**
- * A filter dropdown that grows to fit whatever was picked, so a long customer name
- * isn't truncated, with a clear button once it has a value.
+ * A filter field in the mockup's style: the app's searchable combo inside,
+ * tinted once it holds a value, with a clear button. `id` is what "/" jumps to.
  */
-function FitSelect({
+function PlSelect({
+  id,
   label,
+  placeholder,
   value,
   onChange,
   options,
   className,
 }: {
+  id?: string;
   label: string;
+  /** What the empty field reads; the label itself where it stands alone. */
+  placeholder?: string;
   value: string;
   onChange: (v: string) => void;
   options: string[];
   className?: string;
 }) {
-  const fitted = value ? `${Math.min(Math.max(value.length + 6, 12), 34)}ch` : undefined;
   return (
-    <div
-      className={cn('relative', className, value && 'sm:w-[var(--fit)]')}
-      style={fitted ? ({ '--fit': fitted } as CSSProperties) : undefined}
-    >
-      <Label className="sr-only">{label}</Label>
-      <NativeSelect
-        value={value}
-        onChange={onChange}
-        options={['', ...options]}
-        placeholder={label}
-        className={cn(CONTROL, 'font-medium', value && CONTROL_ON)}
-      />
+    <div className={cn('pl-field', className)} data-on={!!value}>
+      <Label htmlFor={id} className="sr-only">
+        {label}
+      </Label>
+      <NativeSelect id={id} value={value} onChange={onChange} options={['', ...options]} placeholder={placeholder ?? label} />
       {value && (
-        <button
-          type="button"
-          onClick={() => onChange('')}
-          aria-label={`Clear ${label} filter`}
-          title={`Clear ${label} filter`}
-          className="absolute top-1/2 right-6 z-10 flex size-5 -translate-y-1/2 cursor-pointer items-center justify-center rounded text-amber-700/70 transition-colors hover:bg-amber-100 hover:text-amber-900"
-        >
-          <X className="size-3" />
+        <button type="button" onClick={() => onChange('')} aria-label={`Clear ${label} filter`} title={`Clear ${label} filter`} className="pl-field-clear">
+          <X className="size-3.5" />
         </button>
       )}
     </div>
@@ -1936,8 +1805,8 @@ function PdfCanvasPreview({ url }: { url: string }) {
   }, [document, page]);
 
   return (
-    <div className="flex min-h-0 flex-1 flex-col bg-slate-100">
-      <div className="flex h-10 shrink-0 items-center justify-center gap-2 border-b bg-white px-3">
+    <div className="flex min-h-0 flex-1 flex-col bg-[#e9edf5] dark:bg-slate-900">
+      <div className="bg-card flex h-10 shrink-0 items-center justify-center gap-2 border-b px-3">
         <Button
           variant="ghost"
           size="icon"
@@ -1948,7 +1817,7 @@ function PdfCanvasPreview({ url }: { url: string }) {
         >
           <ChevronLeft className="size-4" />
         </Button>
-        <span className="min-w-24 text-center text-xs font-semibold tabular-nums">
+        <span className="min-w-24 text-center text-xs font-extrabold tabular-nums">
           Page {page} of {pageCount || 1}
         </span>
         <Button
@@ -1964,7 +1833,7 @@ function PdfCanvasPreview({ url }: { url: string }) {
       </div>
       <div className="relative min-h-0 flex-1 overflow-auto p-3 sm:p-5">
         {loading && !error && (
-          <div className="absolute inset-0 z-10 flex items-center justify-center bg-slate-100/80 text-sm font-medium text-slate-600">
+          <div className="absolute inset-0 z-10 flex items-center justify-center bg-[#e9edf5]/80 text-sm font-medium text-slate-600 dark:bg-slate-900/80 dark:text-slate-300">
             <Loader2 className="mr-2 size-4 animate-spin" /> Rendering preview…
           </div>
         )}
@@ -1973,7 +1842,7 @@ function PdfCanvasPreview({ url }: { url: string }) {
             Could not render the PDF preview.
           </div>
         ) : (
-          <canvas ref={canvasRef} className="mx-auto h-auto max-w-full bg-white shadow-md" />
+          <canvas ref={canvasRef} className="mx-auto h-auto max-w-full rounded-[4px] bg-white shadow-[0_12px_32px_-12px_rgba(20,30,60,0.35)]" />
         )}
       </div>
     </div>
@@ -2091,53 +1960,87 @@ function ReceiptDialog({ row, mode, onClose }: { row: PartyLedgerRow | null; mod
 
   const verb = (t: string) =>
     t === 'CREDIT NOTE' ? 'Cleared' : t === 'ADVANCE' ? 'Adjusted' : 'Paid';
+
+  /*
+   * Where the bill stands, from the row's own figures — the same status and
+   * pending the grid shows, so the dialog cannot disagree with the row that
+   * opened it. Only for an invoice: a receipt row has its own reconciliation.
+   */
+  const bill = row ? (mode === 'B' ? row.bankDr : mode === 'C' ? row.cashDr : row.bankDr + row.cashDr) : 0;
+  const pending = !row ? 0 : row.status === 'F' ? 0 : row.status === 'P' ? Math.min(bill, row.pendingAmount) : bill;
+  const clearedAmt = Math.max(0, bill - pending);
+  const showStanding = !isReceipt && bill > 0 && !!row?.status;
+
   return (
     <Dialog open={!!row} onOpenChange={(o) => !o && onClose()}>
-      <DialogContent className={isReceipt ? 'max-w-lg' : 'max-w-md'}>
-        <DialogHeader>
-          <DialogTitle>
-            {row?.voucherType} —{' '}
-            <span className="font-semibold tabular-nums">{row?.voucherNo}</span>
+      <DialogContent className={cn('gap-0 overflow-hidden rounded-[20px] p-0', isReceipt ? 'max-w-lg' : 'max-w-md')}>
+        <div className="pl-dlg-head">
+          <DialogTitle className="text-[15px] font-extrabold tracking-[0.01em] text-white uppercase">
+            {row?.voucherType} — <span className="tabular-nums">{row?.voucherNo}</span>
           </DialogTitle>
-        </DialogHeader>
-        <p className="text-muted-foreground -mt-2 text-sm">{row?.particulars}</p>
-        {loading ? (
-          <div className="flex items-center gap-2 py-4 text-sm text-muted-foreground">
-            <Loader2 className="size-4 animate-spin" /> Loading{isReceipt ? ' allocation' : ' receipts'}…
-          </div>
-        ) : isReceipt ? (
-          <ClearedBreakdown data={cleared} />
-        ) : lines && lines.length ? (
-          <ul className="space-y-1.5 py-1 text-sm">
-            {lines.map((l, i) => (
-              <li key={i} className="flex items-center gap-2">
-                <span className="size-1.5 rounded-full bg-amber-500" />
-                <span
-                  className={cn(
-                    'rounded-[3px] px-1 text-[10px] font-bold',
-                    l.bucket === 'B'
-                      ? 'bg-sky-100 text-sky-700 dark:bg-sky-500/15 dark:text-sky-300'
-                      : 'bg-amber-100 text-amber-800 dark:bg-amber-400/15 dark:text-amber-300',
-                  )}
-                  title={l.bucket === 'B' ? 'Settled the bank side' : 'Settled the cash side'}
-                >
-                  {l.bucket}
-                </span>
-                {verb(l.recType)} on {prettyDate(l.recDate)} vide{' '}
-                <span className="font-semibold">{l.refRecId || '?'}</span>
-                {l.recAmt > 0 && (
-                  <span className="ml-auto tabular-nums font-semibold">₹ {inr(l.recAmt)}</span>
-                )}
-              </li>
-            ))}
-          </ul>
-        ) : (
-          <p className="py-3 text-sm text-muted-foreground">
-            {mode === 'BOTH'
-              ? 'No payments / clearances recorded yet.'
-              : `No ${mode === 'B' ? 'bank' : 'cash'} payments against this invoice. Switch to Both to see the other side.`}
+          <p className="mt-0.5 text-[12px] text-white/80">
+            {row?.particulars}
+            {row?.customerName && row.customerName !== row.particulars ? ` · ${row.customerName}` : ''}
           </p>
-        )}
+        </div>
+        <div className="max-h-[70vh] overflow-y-auto p-4">
+          {loading ? (
+            <div className="pl-muted flex items-center gap-2 py-4 text-sm">
+              <Loader2 className="size-4 animate-spin" /> Loading{isReceipt ? ' allocation' : ' receipts'}…
+            </div>
+          ) : isReceipt ? (
+            <ClearedBreakdown data={cleared} />
+          ) : lines && lines.length ? (
+            <ol className="relative space-y-2">
+              {/* The thread through the payments, oldest first. */}
+              {lines.length > 1 && <span className="absolute top-4 bottom-4 left-[15px] w-px bg-emerald-200 dark:bg-emerald-400/30" aria-hidden />}
+              {lines.map((l, i) => (
+                <li
+                  key={i}
+                  className="relative flex items-center gap-2.5 rounded-[12px] border border-[#e6eaf3] bg-[#f7f9fd] py-2 pr-3 pl-2.5 text-[13px] dark:border-white/10 dark:bg-white/5"
+                >
+                  <span className="relative size-2 shrink-0 rounded-full bg-emerald-500 ring-2 ring-white dark:ring-slate-900" />
+                  <span className={cn('pl-chip', l.bucket === 'B' ? 'pl-tone-indigo' : 'pl-tone-emerald')} title={l.bucket === 'B' ? 'Settled the bank side' : 'Settled the cash side'}>
+                    {l.bucket}
+                  </span>
+                  <span className="min-w-0 flex-1">
+                    {verb(l.recType)} on <strong className="tabular-nums">{prettyDate(l.recDate)}</strong> vide <span className="pl-vno">{l.refRecId || '?'}</span>
+                  </span>
+                  {l.recAmt > 0 && <span className="shrink-0 font-extrabold tabular-nums">₹{inr(l.recAmt)}</span>}
+                </li>
+              ))}
+            </ol>
+          ) : (
+            <p className="pl-muted py-3 text-sm">
+              {mode === 'BOTH'
+                ? 'No payments / clearances recorded yet.'
+                : `No ${mode === 'B' ? 'bank' : 'cash'} payments against this invoice. Switch to Both to see the other side.`}
+            </p>
+          )}
+          {!loading && showStanding && (
+            <div className="mt-3 space-y-2.5">
+              <div className="grid grid-cols-3 gap-2">
+                <div className="pl-tile">
+                  <div className="pl-tile-label">Bill</div>
+                  <div className="text-[15px] font-extrabold tabular-nums">₹{inr(bill)}</div>
+                </div>
+                <div className="pl-tile" data-tone="emerald">
+                  <div className="pl-tile-label">Cleared</div>
+                  <div className="text-[15px] font-extrabold text-[#047857] tabular-nums dark:text-emerald-400">₹{inr(clearedAmt)}</div>
+                </div>
+                <div className="pl-tile" data-tone={pending > 0 ? 'rose' : 'emerald'}>
+                  <div className="pl-tile-label">Pending</div>
+                  <div className={cn('text-[15px] font-extrabold tabular-nums', pending > 0 ? 'text-[#be123c] dark:text-rose-400' : 'text-[#047857] dark:text-emerald-400')}>
+                    ₹{inr(pending)}
+                  </div>
+                </div>
+              </div>
+              <div className="pl-kpi-track h-[7px]" role="img" aria-label={`${Math.round((clearedAmt / bill) * 100)}% of the bill cleared`}>
+                <span style={{ width: `${(clearedAmt / bill) * 100}%`, background: 'linear-gradient(90deg,#6ee7b7,#10b981)' }} />
+              </div>
+            </div>
+          )}
+        </div>
       </DialogContent>
     </Dialog>
   );
