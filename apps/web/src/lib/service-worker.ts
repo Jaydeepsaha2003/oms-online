@@ -51,6 +51,17 @@ export const isWorkerCertRefused = () => workerCertRefused;
  *  Settings, which needs the file in Downloads (see the servers' route). */
 export const CERT_DOWNLOAD_URL = '/oms-rootCA.crt?download=1';
 export const isAndroid = () => typeof navigator !== 'undefined' && /Android/i.test(navigator.userAgent);
+/** Start the certificate download. No page can install a CA — the phone only
+ *  lets its owner do that, in Settings — so fetching the file is as far as
+ *  automation goes. */
+export function downloadCertificate(): void {
+  const a = document.createElement('a');
+  a.href = CERT_DOWNLOAD_URL;
+  a.download = 'OMS-rootCA.crt';
+  document.body.appendChild(a);
+  a.click();
+  a.remove();
+}
 /** Where Android keeps "install a CA", which moves between makers — hence the search. */
 export const ANDROID_CERT_STEPS =
   'open Settings and search “CA certificate” (usually Security → More security settings → Encryption & credentials → Install a certificate → CA certificate; on Samsung, Biometrics and security → Other security settings → Install from device storage → CA certificate), tap Install anyway and pick OMS-rootCA.crt from Downloads. Then close OMS completely and open it again.';

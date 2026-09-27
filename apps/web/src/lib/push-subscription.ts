@@ -1,5 +1,5 @@
 import type { PushSubscriptionRequest, VapidPublicKeyResult } from '@oms/shared';
-import { ANDROID_CERT_STEPS, CERT_DOWNLOAD_URL, currentRegistration, isAndroid } from './service-worker';
+import { ANDROID_CERT_STEPS, CERT_DOWNLOAD_URL, currentRegistration, downloadCertificate, isAndroid, reportWorkerFailure } from './service-worker';
 import { http } from './api';
 
 export type SubscribeResult = { ok: true } | { ok: false; reason: string };
@@ -33,9 +33,12 @@ function registrationFailureReason(err: unknown): string {
   }
   const host = typeof window !== 'undefined' ? window.location.host : '';
   // Android installs a CA only from Settings — the plain certificate link just
-  // shows "Can't install CA certificates" there.
+  // shows "Can't install CA certificates" there. The download is started for
+  // them from this Turn-on tap; installing it is the one step left to the owner.
   if (isAndroid()) {
-    return `This phone doesn’t trust OMS’s security certificate yet, so it can’t turn notifications on. Download it from https://${host}${CERT_DOWNLOAD_URL}, then ${ANDROID_CERT_STEPS} Then tap Turn on again.${detail}`;
+    reportWorkerFailure(err);
+    downloadCertificate();
+    return `This phone doesn’t trust OMS’s security certificate yet, so it can’t turn notifications on. OMS has started downloading it (OMS-rootCA.crt — if nothing arrived, open https://${host}${CERT_DOWNLOAD_URL}). To install it, ${ANDROID_CERT_STEPS} After that, tap Turn on again.`;
   }
   return `Notifications need the app’s background service, which this device refused to start. This is usually the security certificate: open https://${host}/oms-rootCA.crt to install the OMS certificate, then reload and try again.${detail}`;
 }
