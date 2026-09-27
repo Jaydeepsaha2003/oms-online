@@ -1,5 +1,6 @@
 import { Injectable, Logger } from '@nestjs/common';
 import { Interval } from '@nestjs/schedule';
+import { PrismaService } from '../prisma/prisma.service';
 import { TallyService } from './tally.service';
 import { TallyBillsService } from './tally-bills.service';
 import { currentFy } from './tally-parties.service';
@@ -14,6 +15,9 @@ const ALTERIDS_TDL =
  *
  * Every 3 s: read the company's AltVchId (~70 ms) — Tally raises it whenever
  * any voucher is saved, altered or cancelled, IRN / e-way bill included.
+ * Also every 3 s: the OMS notes' count + last edit, so a credit / debit note or
+ * purchase saved in OMS is looked for in Tally at once, before anyone is
+ * offered "Post to Tally".
  * Changed → run the full bill check (the same as the "Check now" button).
  *
  * Every 60 s: the count and highest AlterID of this FY's Sales vouchers, which
@@ -30,8 +34,10 @@ export class TallySyncScheduler {
   /** Last values reconciled; null after a restart, so the first tick always checks. */
   private lastAlt: number | null = null;
   private lastSignature: string | null = null;
+  private lastNotes: string | null = null;
 
   constructor(
+    private readonly prisma: PrismaService,
     private readonly tally: TallyService,
     private readonly bills: TallyBillsService,
   ) {}
@@ -40,9 +46,15 @@ export class TallySyncScheduler {
   async fast(): Promise<void> {
     await this.guarded(async () => {
       const alt = (await this.tally.lockedCompany()).altVchId;
-      if (alt === this.lastAlt) return;
-      await this.sync(`voucher change ${this.lastAlt ?? '—'} → ${alt}`);
+      const [cn, dn] = await Promise.all([
+        this.prisma.creditNote.aggregate({ _count: true, _max: { updatedAt: true } }),
+        this.prisma.challan.aggregate({ where: { transaction: 'DEBIT NOTE' }, _count: true, _max: { updatedAt: true } }),
+      ]);
+      const notes = `${cn._count}:${cn._max.updatedAt?.getTime()}:${dn._count}:${dn._max.updatedAt?.getTime()}`;
+      if (alt === this.lastAlt && notes === this.lastNotes) return;
+      await this.sync(alt !== this.lastAlt ? `voucher change ${this.lastAlt ?? '—'} → ${alt}` : 'OMS note saved');
       this.lastAlt = alt;
+      this.lastNotes = notes;
     });
   }
 

@@ -28,7 +28,7 @@ sqlite.exec(sql.stdout);
 sqlite.close();
 
 const prisma = new PrismaClient({ datasources: { db: { url: process.env.DATABASE_URL } } });
-const notes = new NotesService(prisma, {});
+const notes = new NotesService(prisma, {}, new (require("../apps/api/src/payments/payments.service.ts").PaymentsService)(prisma));
 
 const PARTY = 'RAMSON FIXTURE';
 const tests = [];
@@ -105,6 +105,17 @@ test('nothing outstanding at all is not reported as a side mismatch', async () =
   assert.equal((await advanceOf(res.code)).length, 1);
 });
 
+test('a billed note off a billed sale already paid is not called a side mismatch', async () => {
+  // MINAL CN/22: SSS/1766 billed and paid, the party owed only on no-bill.
+  const party = { customerId: 3, customerName: 'MINAL FIXTURE' };
+  await prisma.challan.create({ data: { code: 'SSS/D1', prefix: 'SSS', invDate: new Date('2026-06-30'), ...party, challanStatus: 'CONFIRMED', b: 100, c: 0, total: 100 } });
+  await prisma.challan.create({ data: { code: 'SSS/D2', prefix: 'SSS', invDate: new Date('2026-06-30'), ...party, challanStatus: 'CONFIRMED', b: 0, c: 40000, total: 40000 } });
+  await notes.save({ ...note([line('SSS/D1', 1)]), ...party }, 'Tester'); // pays SSS/D1 off
+  const res = await notes.save({ ...note([line('SSS/D1', 1)]), ...party }, 'Tester');
+  assert.notEqual(res.clearance.skipped, 'OTHER_SIDE');
+  assert.equal((await advanceOf(res.code)).length, 1, 'parked as an advance, as in Tally');
+});
+
 test('the past-sale picker reports which side each sale was on', async () => {
   const rows = await notes.recentSold(1);
   const byInv = new Map(rows.map((r) => [r.invNo, r.billed]));
@@ -117,6 +128,7 @@ test('the past-sale picker reports which side each sale was on', async () => {
   try {
     await prisma.customer.create({ data: { id: 1, partyName: PARTY, payBy: 'PARTY' } });
     await prisma.customer.create({ data: { id: 2, partyName: 'EMPTY FIXTURE', payBy: 'PARTY' } });
+    await prisma.customer.create({ data: { id: 3, partyName: 'MINAL FIXTURE', payBy: 'PARTY' } });
     for (const [name, fn] of tests) {
       try { await fn(); console.log(`PASS ${name}`); }
       catch (e) { failures++; console.error(`FAIL ${name}: ${e.message}`); }

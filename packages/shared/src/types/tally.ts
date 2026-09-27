@@ -162,6 +162,8 @@ export type TallyRecon =
   | 'AMOUNT_MISMATCH'
   | 'PARTY_MISMATCH'
   | 'DATE_MISMATCH'
+  /** Tally has this note, but as another voucher type (e.g. a Purchase, not a Credit Note). */
+  | 'TYPE_MISMATCH'
   | 'TALLY_ONLY';
 
 export interface TallyReconRow {

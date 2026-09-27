@@ -329,7 +329,7 @@ export interface NoteDirectoryRow {
   c: number;
   total: number;
   /** The Tally voucher this note is linked to (credit notes: Tally's own number, e.g. "14"). */
-  tally?: { status: 'NOT_POSTED' | 'POSTING' | 'POSTED' | 'FAILED' | 'UNKNOWN'; vchNo: string | null } | null;
+  tally?: { status: 'NOT_POSTED' | 'POSTING' | 'POSTED' | 'FAILED' | 'UNKNOWN'; vchNo: string | null; recon: string; note: string | null; /** Tally voucher type it is linked to (a Credit Note may be a Purchase in Tally). */ vchType: string } | null;
 }
 
 export interface NoteDirectoryQuery {

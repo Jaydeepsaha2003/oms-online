@@ -21,6 +21,7 @@ import {
   classifyDueType,
   payBucketOf,
   payByFor,
+  PAY_BUCKETS,
 } from '@oms/shared';
 import { PrismaService } from '../prisma/prisma.service';
 import { EditPaymentDto, LedgerQueryDto, PaymentContextQueryDto, SavePaymentDto } from './dto/payment.dto';
@@ -941,16 +942,52 @@ export class PaymentsService {
   }
 
   /**
+   * Write a note (credit note, purchase, debit note — new, edited or deleted)
+   * in its date's place among the receipts, not after them.
+   *
+   * Receipts dated on or after `from` are taken out, `write` posts the note,
+   * and they settle again in arrival order. So a back-dated credit note clears
+   * its own bill, and the receipt that had paid that bill moves on to the next
+   * ones — as if it had been entered on time. Money left over is then spent on
+   * open bills like any money on account. The party's own receipts move, and
+   * its agent's too when either money bucket is paid through one.
+   */
+  async settleInPlace(tx: Db, custId: number, from: Date, write: () => Promise<void>): Promise<void> {
+    const c = custId ? await tx.customer.findUnique({ where: { id: custId }, select: { payBy: true, payByModes: true, agentName: true } }) : null;
+    const agent = c?.agentName?.trim() && PAY_BUCKETS.some((b) => payByFor(c, b) === 'AGENT') ? c.agentName.trim() : null;
+    const dayBefore = new Date(dayOf(from));
+    dayBefore.setDate(dayBefore.getDate() - 1);
+    const heads = [
+      { headId: custId, agentName: null, rows: await this.chainAfter(tx, custId, null, dayBefore) },
+      ...(agent ? [{ headId: 0, agentName: agent, rows: await this.chainAfter(tx, 0, agent, dayBefore) }] : []),
+    ];
+    const all = heads.flatMap((h) => h.rows);
+    // A receipt saved before replay support cannot be replayed: post as before.
+    if (!all.length || all.some((r) => r.adjMode == null)) {
+      await write();
+    } else {
+      const claims = await this.claimsOf(tx, all);
+      await this.reverseChain(tx, [...all].sort((a, b) => a.id - b.id));
+      await write();
+      for (const h of heads) {
+        await this.claimExact(tx, h.headId, h.agentName, h.rows.map(entryOf), claims);
+        await this.replayInOrder(tx, h.rows, claims);
+      }
+    }
+    await this.applyOnAccount(tx, custId);
+  }
+
+  /**
    * Settle the party's open bills from money it already has on account: oldest
    * bill first, oldest money first, bank and cash kept apart. Runs after every
    * receipt change and every bill save, so a bill the party has already paid
    * for never shows as due. Each settlement is dated the later of the bill and
    * the money â€” it was paid the moment both existed.
    *
-   * Only money a receipt parked for this party is used, plus a CREDIT opening:
-   * an agent's money is spread over several parties, and notes manage what
-   * they park themselves. The rows carry the parking receipt as their source,
-   * so reversing that receipt takes them back out; a CREDIT opening's rows have
+   * Only money a receipt or a credit note / purchase parked for this party is
+   * used, plus a CREDIT opening: an agent's money is spread over several parties.
+   * The rows carry the parking voucher as their source, so reversing that
+   * receipt or note takes them back out; a CREDIT opening's rows have
    * none and stay put (a changed bill lifts them, see ChallansService).
    */
   async applyOnAccount(tx: Db, custId: number): Promise<void> {
@@ -1018,7 +1055,7 @@ export class PaymentsService {
     const customers = [{ id: c.id, name: c.partyName ?? `#${c.id}` }];
     const advs = (await this.advancePending(db, customers)).filter((a) => a.takeAccOn !== 'AGENT');
     const parked = advs.length ? await db.acctPartyAdvance.findMany({ where: { refId: { in: advs.map((a) => a.refId) } }, select: { refId: true, refRecId: true } }) : [];
-    const owners = new Set((await db.acctLedger.findMany({ where: { voucherType: 'RECEIPT', voucherNo: { in: parked.map((p) => p.refRecId ?? '') } }, select: { voucherNo: true } })).map((v) => v.voucherNo));
+    const owners = new Set((await db.acctLedger.findMany({ where: { voucherType: { in: ['RECEIPT', 'CREDIT NOTE', 'PURCHASE'] }, voucherNo: { in: parked.map((p) => p.refRecId ?? '') } }, select: { voucherNo: true } })).map((v) => v.voucherNo));
     const ownerOf = new Map(parked.filter((p) => p.refRecId && owners.has(p.refRecId)).map((p) => [p.refId, p.refRecId!]));
     return { customers, ownerOf, money: advs.filter((a) => ownerOf.has(a.refId) || a.refId.startsWith(OPENING_CREDIT)) };
   }

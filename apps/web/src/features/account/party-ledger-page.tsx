@@ -40,6 +40,7 @@ import { Popover, PopoverAnchor, PopoverContent, PopoverTrigger } from '@/compon
 import { Switch } from '@/components/ui/switch';
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from '@/components/ui/dialog';
 import { fetchLedgerCleared, fetchLedgerReceipts, usePartyLedger, usePartyLedgerLookups } from './use-party-ledger';
+import { DemandPlanDialog } from '@/features/crm/demand-plan-dialog';
 
 const inr = (v: number) => (v ?? 0).toLocaleString('en-IN', { maximumFractionDigits: 0 });
 GlobalWorkerOptions.workerSrc = pdfWorker;
@@ -309,20 +310,6 @@ export function PartyLedgerPage() {
         footer.closingCashNet * (mode === 'B' ? 0 : 1)
       : null;
 
-  /**
-   * How much of the closing balance has been settled since the window closed.
-   *
-   * The closing balance is the position AT the window's end; the ageing cards
-   * count what is still unpaid NOW. The difference is money that was open then
-   * and has been received since — not an error in either figure. Declared after
-   * `closingNet` because it is derived from it. Only meaningful on a DEBIT
-   * balance (money owed to us) in a window that has already closed.
-   */
-  const settledSinceWindow =
-    windowEndsInPast && closingNet != null && closingNet > 0 && kpis
-      ? Math.round(closingNet - (kpis.overDue.amount + kpis.pastDue.amount + kpis.normal.amount))
-      : null;
-
   const onReset = () => clear();
   const applyPreset = (p: Preset) => {
     const { from: f, to: t } = presetRange(p);
@@ -341,6 +328,7 @@ export function PartyLedgerPage() {
     return `/party-ledger/export.${fmt}?${params.toString()}`;
   };
   const [pdfLoading, setPdfLoading] = useState(false);
+  const [planOpen, setPlanOpen] = useState(false);
   const [pdfPreview, setPdfPreview] = useState<{ url: string; filename: string } | null>(null);
   const pdfFrameRef = useRef<HTMLIFrameElement>(null);
   const [excelLoading, setExcelLoading] = useState(false);
@@ -668,6 +656,14 @@ export function PartyLedgerPage() {
                 {isFetching && <Loader2 className="ml-1 inline size-3 animate-spin align-[-2px]" />}
               </p>
             )}
+            {query.customerId != null && can('payment:view') && (
+              <Button variant="outline" className="h-9 rounded-[4px] font-semibold" onClick={() => setPlanOpen(true)} title="How much to ask for, to a target average age">
+                Demand plan
+              </Button>
+            )}
+            {planOpen && query.customerId != null && (
+              <DemandPlanDialog open onOpenChange={setPlanOpen} customerId={query.customerId} partyName={party} defaultSide={mode === 'C' ? 'C' : 'B'} />
+            )}
             {canPrintLedger && (
               <Button
                 variant="outline"
@@ -714,16 +710,8 @@ export function PartyLedgerPage() {
               ? `${inr(Math.abs(closingNet))}${closingNet !== 0 ? ` ${closingNet < 0 ? 'Cr' : 'Dr'}` : ''}`
               : '—'
           }
-          /*
-           * Say WHEN this figure is from.
-           *
-           * It is the closing balance — the party's position at the END of the
-           * window — while the three ageing cards beside it count what is still
-           * unpaid TODAY. On a window ending in the past those are different
-           * questions with different answers, and nothing said so: a June
-           * filter showed ₹25,02,518 outstanding next to ₹7,24,518 of due
-           * invoices and read as if one of them was wrong.
-           */
+          /* Say WHEN this figure is from. On a window ending in the past, the
+             ageing cards and every row's status are as at that same day. */
           note={
             closingNet == null && footer
               ? 'clear voucher type'
@@ -754,22 +742,6 @@ export function PartyLedgerPage() {
           tone="emerald"
         />
       </div>
-
-      {/*
-        Reconcile the two, in words, whenever they differ.
-
-        Both figures are right; they answer different questions. Saying so here
-        is cheaper than every reader working it out — and the amount named is
-        exactly what was settled after the window closed, which is the fact
-        somebody staring at the gap actually wants.
-      */}
-      {settledSinceWindow != null && settledSinceWindow > 0 && (
-        <div className="rounded-[4px] border border-sky-300 bg-sky-50/70 px-3 py-2 text-[12.5px] text-sky-900 dark:border-sky-400/30 dark:bg-sky-400/10 dark:text-sky-200">
-          <strong>{inr(settledSinceWindow)}</strong> of the {inr(Math.abs(closingNet ?? 0))} outstanding on{' '}
-          {formatDate(to)} has been paid since. The three cards above count only what is still unpaid
-          today, which is why they come to less than the closing balance.
-        </div>
-      )}
 
       {/* ── The ledger ──────────────────────────────────────────────────────── */}
       <div
@@ -992,6 +964,14 @@ export function PartyLedgerPage() {
                           )}
                         >
                           {money(r[l.dr])}
+                          {/* A part-paid bill: what is still owed — the figure the
+                              ageing cards add up, so the two can be checked by eye. */}
+                          {r.status === 'P' && r.pendingAmount > 0 && !!r[l.dr] &&
+                            (!grouped || r.pendingSide === (l === BANK_LEG ? 'B' : 'C')) && (
+                              <div className="text-[11px] font-bold text-sky-700 dark:text-sky-300">
+                                {money(r.pendingAmount)} due
+                              </div>
+                            )}
                         </td>,
                         <td
                           key={`${l.group}-cr`}

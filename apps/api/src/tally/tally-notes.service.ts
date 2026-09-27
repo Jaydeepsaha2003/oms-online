@@ -2,6 +2,7 @@ import { BadRequestException, ConflictException, Injectable, NotFoundException }
 import type { TallyPostResult, TallyPreview } from '@oms/shared';
 import { PrismaService } from '../prisma/prisma.service';
 import { TallyService } from './tally.service';
+import { TallyBillsService } from './tally-bills.service';
 import { currentFy } from './tally-parties.service';
 import { TallyPostingService, LINES_TDL, parseActual, differences, parseImport, type Actual, type Ctx } from './tally-posting.service';
 import { buildSalesVoucher, salesVoucherXml, type SalesVoucher } from './tally-voucher';
@@ -29,6 +30,7 @@ export class TallyNotesService {
     private readonly prisma: PrismaService,
     private readonly tally: TallyService,
     private readonly posting: TallyPostingService,
+    private readonly bills: TallyBillsService,
   ) {}
 
   private load(code: string) {
@@ -46,6 +48,7 @@ export class TallyNotesService {
   private async build(note: Note, ctx: Ctx) {
     const { party, partyBlock } = this.posting.partyFor(note.customerId, note.customerName, ctx);
     const own: string[] = [];
+    if (note.status === 'PURCHASE') own.push('Purchase voucher — enter it in Tally by hand.');
     if (!(n(note.b) > 0)) own.push('No-bill credit note (B = 0) — it does not go to Tally.');
     if (n(note.billingRate) > 0) own.push('Half-bill credit note — enter it in Tally by hand.');
     if (n(note.otherCharges) !== 0) own.push('This note has "other charges" — enter it in Tally by hand.');
@@ -133,7 +136,11 @@ export class TallyNotesService {
     });
     const note = await this.load(code);
     if (!note) throw new NotFoundException(`No credit note ${code.trim()} in OMS.`);
+    // Look in Tally first (the full note sweep): a note already there — any number,
+    // same party, B amount and date — is linked, never sent again.
+    await this.bills.run();
     const row = await this.prisma.tallyVoucher.findUnique({ where: { creditNoteId: note.id } });
+    if (row?.recon === 'TYPE_MISMATCH') throw new ConflictException(`${note.code}: ${row.reconNote}.`);
     if (row?.status === 'POSTED') throw new ConflictException(`${note.code} is already in Tally as credit note ${row.vchNo}.`);
     if (row?.status === 'POSTING' || row?.status === 'UNKNOWN') {
       throw new ConflictException(`An earlier attempt for ${note.code} has no clear answer yet. Press "Check again" — OMS looks in Tally first.`);

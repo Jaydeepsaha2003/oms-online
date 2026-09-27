@@ -49,6 +49,42 @@ export function classifyDueType(invDate: Date, dueDate: Date | null, asOf: Date)
   return daysLeft / termDays > 0.5 ? 'NORMAL' : 'PAST DUE';
 }
 
+/** Whole days from a bill's date to `asOf` (local calendar days). */
+export function billAgeDays(invDate: string | Date, asOf: Date): number {
+  const d = new Date(invDate);
+  const day = (x: Date) => new Date(x.getFullYear(), x.getMonth(), x.getDate()).getTime();
+  return Math.round((day(asOf) - day(d)) / DUE_DAY_MS);
+}
+
+/** Total and amount-weighted average age of a set of bills. */
+export function demandStats(bills: { balance: number; age: number }[]): { total: number; avgAge: number | null } {
+  const total = bills.reduce((t, b) => t + b.balance, 0);
+  return { total, avgAge: total > 0 ? bills.reduce((t, b) => t + b.balance * b.age, 0) / total : null };
+}
+
+/**
+ * Demand plan: which open bills to ask for so their amount-weighted average
+ * age comes closest to `targetDays` (the credit period plus the owner's
+ * allowance). Oldest first, whole bills only; an overdue bill pulls the average
+ * up, a younger one down, so the plan stops where the average is nearest the
+ * target. Nothing is asked while even the oldest bill is younger than it.
+ */
+export function planDemand<T extends { code: string; balance: number; age: number }>(bills: T[], targetDays: number): string[] {
+  const open = bills.filter((b) => b.balance > 0).sort((a, b) => b.age - a.age || a.code.localeCompare(b.code));
+  if (!open.length || open[0].age < targetDays) return [];
+  let total = 0;
+  let weighted = 0;
+  let best = 0;
+  let bestGap = Infinity;
+  open.forEach((b, i) => {
+    total += b.balance;
+    weighted += b.balance * b.age;
+    const gap = Math.abs(weighted / total - targetDays);
+    if (gap < bestGap) [best, bestGap] = [i + 1, gap];
+  });
+  return open.slice(0, best).map((b) => b.code);
+}
+
 /** One CONFIRMED challan with money still to receive (InvPendingSummary row). */
 export interface PendingInvoiceRow {
   invNo: string;

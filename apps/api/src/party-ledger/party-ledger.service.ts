@@ -269,10 +269,15 @@ export class PartyLedgerService {
     const raw = await this.collectRows(from, toExclusive, custIds, agentName);
 
     // ── 2) Per-invoice pending (bank/cash bal + amount) + last receipt date ───
-    const pending = await this.invoicePending();
-    const lastRec = await this.receiptsByInvoice();
-    const today = new Date();
-    today.setHours(0, 0, 0, 0);
+    // A window that ended in the past shows the bills as they stood THEN — like
+    // Tally: a payment made after `to` has not paid anything yet, a bill raised
+    // after it does not exist yet, and ageing runs to `to`, not to today.
+    const now = new Date();
+    now.setHours(0, 0, 0, 0);
+    const asAt = to < now ? toExclusive : null;
+    const today = asAt ? to : now;
+    const pending = await this.invoicePending(asAt);
+    const lastRec = await this.receiptsByInvoice(asAt);
 
     const inMode: PartyLedgerRow[] = raw
       .map((rr) => this.decorate(rr, pending, lastRec, mode, today))
@@ -308,7 +313,7 @@ export class PartyLedgerService {
 
     // ── 5) KPIs ───────────────────────────────────────────────────────────────
     // A group lists several parties, exactly like an agent's view.
-    const kpis = await this.computeKpis(pending, custIds, scope === 'GROUP' ? 'AGENT' : scope, q.customerId ?? null, mode, from, toExclusive);
+    const kpis = await this.computeKpis(pending, custIds, scope === 'GROUP' ? 'AGENT' : scope, q.customerId ?? null, mode, from, toExclusive, today);
 
     // Derived BEFORE the voucher-type filter, so picking one type doesn't collapse
     // the dropdown to that single option and strand the user on it.
@@ -637,10 +642,12 @@ export class PartyLedgerService {
 
   /* ── pending + receipt derivations ──────────────────────────────────────── */
 
-  /** InvPendingSummary equivalent: per CONFIRMED challan, bank/cash amount & balance. */
-  private async invoicePending(): Promise<Map<string, PendingInvoice>> {
+  /** InvPendingSummary equivalent: per CONFIRMED challan, bank/cash amount & balance
+   *  — as it stood before `asAt` when given. */
+  private async invoicePending(asAt: Date | null = null): Promise<Map<string, PendingInvoice>> {
+    const before = asAt ? { lt: asAt } : undefined;
     const challans = await this.prisma.challan.findMany({
-      where: { challanStatus: 'CONFIRMED' },
+      where: { challanStatus: 'CONFIRMED', ...(before && { invDate: before }) },
       // customerId / customerName / invDate let the ageing KPIs find a party's
       // oldest unpaid bill across its whole history, not just the shown period.
       select: { code: true, b: true, c: true, dueDate: true, invDate: true, customerId: true, customerName: true },
@@ -649,8 +656,8 @@ export class PartyLedgerService {
     if (!challans.length) return map;
     const codes = challans.map((c) => c.code);
     const [recs, discs] = await Promise.all([
-      this.prisma.acctPaymentReceipt.groupBy({ by: ['invNo', 'payMode'], where: { invNo: { in: codes } }, _sum: { recAmt: true } }),
-      this.prisma.acctPartyDiscount.groupBy({ by: ['invNo', 'billType'], where: { invNo: { in: codes } }, _sum: { disAmt: true } }),
+      this.prisma.acctPaymentReceipt.groupBy({ by: ['invNo', 'payMode'], where: { invNo: { in: codes }, ...(before && { recDate: before }) }, _sum: { recAmt: true } }),
+      this.prisma.acctPartyDiscount.groupBy({ by: ['invNo', 'billType'], where: { invNo: { in: codes }, ...(before && { disDate: before }) }, _sum: { disAmt: true } }),
     ]);
     const bankRec = new Map<string, number>();
     const cashRec = new Map<string, number>();
@@ -683,8 +690,8 @@ export class PartyLedgerService {
 
   /** Every receipt allocated to each invoice, not just the last one — the
    *  Early/Late figure needs each payment's date AND amount to weight them. */
-  private async receiptsByInvoice(): Promise<Map<string, InvoiceReceipt[]>> {
-    const rows = await this.prisma.acctPaymentReceipt.findMany({ select: { invNo: true, recDate: true, recAmt: true } });
+  private async receiptsByInvoice(asAt: Date | null = null): Promise<Map<string, InvoiceReceipt[]>> {
+    const rows = await this.prisma.acctPaymentReceipt.findMany({ where: asAt ? { recDate: { lt: asAt } } : undefined, select: { invNo: true, recDate: true, recAmt: true } });
     const map = new Map<string, InvoiceReceipt[]>();
     for (const r of rows) {
       if (!r.recDate) continue;
@@ -786,6 +793,8 @@ export class PartyLedgerService {
      *  "Inv due from" KPI names is visible in the table below it. */
     from: Date,
     toExclusive: Date,
+    /** The day bills are aged to: today, or the window's end when it is past. */
+    today: Date,
   ): Promise<PartyLedgerKpis> {
     /*
      * Ageing buckets over the party's WHOLE open position, not the vouchers on
@@ -799,8 +808,6 @@ export class PartyLedgerService {
     const over = { amount: 0, count: 0 };
     const past = { amount: 0, count: 0 };
     const normal = { amount: 0, count: 0 };
-    const today = new Date();
-    today.setHours(0, 0, 0, 0);
     const inScope = custIds ? new Set(custIds) : null;
     for (const inv of pending.values()) {
       if (inScope && (inv.customerId == null || !inScope.has(inv.customerId))) continue;

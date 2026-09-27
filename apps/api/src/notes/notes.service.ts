@@ -18,6 +18,7 @@ import {
 import { PrismaService } from '../prisma/prisma.service';
 import { formatDate } from '../common/date.util';
 import { PdfService } from '../pdf/pdf.service';
+import { PaymentsService } from '../payments/payments.service';
 import { NoteDirectoryQueryDto, SaveNoteDto } from './dto/note.dto';
 
 
@@ -73,7 +74,17 @@ export class NotesService {
   constructor(
     private readonly prisma: PrismaService,
     private readonly pdf: PdfService,
+    private readonly payments: PaymentsService,
   ) {}
+
+  /**
+   * Post (or un-post) a note in its date's place among the party's receipts —
+   * see PaymentsService.settleInPlace. `from` is the earliest date involved
+   * (an edit that moves the date starts from the older of the two).
+   */
+  private async inPlace(custId: number, from: Date, write: (tx: Db) => Promise<void>): Promise<void> {
+    await this.prisma.$transaction((tx) => this.payments.settleInPlace(tx, custId, from, () => write(tx)), { timeout: 300_000, maxWait: 60_000 });
+  }
 
   /* ── Product picker: this customer's last 12 months of sold items ──────────── */
 
@@ -197,18 +208,15 @@ export class NotesService {
         orderBy: [{ invDate: 'desc' }, { id: 'desc' }],
       });
       // The Tally link: shows which Tally credit note this is (Tally numbers them itself).
-      const links = new Map(
-        (await this.prisma.tallyVoucher.findMany({ where: { creditNoteId: { in: rows.map((r) => r.id) } }, select: { creditNoteId: true, status: true, vchNo: true } })).map(
-          (t) => [t.creditNoteId, { status: t.status as NonNullable<NoteDirectoryRow['tally']>['status'], vchNo: t.vchNo }],
-        ),
-      );
+      const links = await this.tallyLinks({ creditNoteId: { in: rows.map((r) => r.id) } }, (t) => t.creditNoteId);
       items = rows.map((r) => ({ mode, id: r.id, code: r.code, invDate: r.invDate.toISOString(), customerName: r.customerName, b: r.b ?? 0, c: r.c ?? 0, total: r.total ?? 0, tally: links.get(r.id) ?? null }));
     } else {
       const rows = await this.prisma.challan.findMany({
         where: { ...(commonWhere as Prisma.ChallanWhereInput), transaction: 'DEBIT NOTE' },
         orderBy: [{ invDate: 'desc' }, { id: 'desc' }],
       });
-      items = rows.map((r) => ({ mode, id: r.id, code: r.code, invDate: r.invDate.toISOString(), customerName: r.customerName, b: r.b ?? 0, c: r.c ?? 0, total: r.total ?? 0 }));
+      const links = await this.tallyLinks({ challanId: { in: rows.map((r) => r.id) } }, (t) => t.challanId);
+      items = rows.map((r) => ({ mode, id: r.id, code: r.code, invDate: r.invDate.toISOString(), customerName: r.customerName, b: r.b ?? 0, c: r.c ?? 0, total: r.total ?? 0, tally: links.get(r.id) ?? null }));
     }
     return { items, total: items.length, page: 1, pageSize: items.length, totalPages: 1 };
   }
@@ -393,6 +401,15 @@ export class NotesService {
       userName: userName ?? null,
     }));
 
+    // An edit re-settles from the older of its old and new dates, and a party
+    // change gives the old party's receipts back their bills too.
+    const prev = dto.code?.trim()
+      ? isCreditLike(mode)
+        ? await this.prisma.creditNote.findUnique({ where: { code }, select: { invDate: true, customerId: true } })
+        : await this.prisma.challan.findUnique({ where: { code }, select: { invDate: true, customerId: true } })
+      : null;
+    const from = prev && prev.invDate < invDate ? prev.invDate : invDate;
+
     // Re-saving a credit note deletes and recreates its lines, which would
     // cascade away the `returnDispatchId` links and strand any reversal rows the
     // previous save created. Take them out first, while the links still exist.
@@ -516,14 +533,19 @@ export class NotesService {
       }
     });
 
-    // 2) Accounting (each in its own transaction, mirroring the legacy post-commit calls).
+    // 2) Accounting, in the note's date's place among the receipts.
     let clearance: NoteClearance | undefined;
-    if (isCreditLike(mode)) {
-      const ledgerType = creditCfg(mode).ledgerType;
-      await this.reverseCreditNote(code, ledgerType);
-      clearance = await this.applyCreditNote(code, invDate, dto.customerId, dto.customerName, b, c, dto.items, userName ?? null, ledgerType);
-    } else {
-      await this.insertDebitNoteLedger(code, invDate, dto.customerId, dto.customerName, b, c, dto.items, userName ?? null, !skipAdvance);
+    await this.inPlace(dto.customerId, from, async (tx) => {
+      if (isCreditLike(mode)) {
+        const ledgerType = creditCfg(mode).ledgerType;
+        await this.reverseCreditNote(tx, code, ledgerType);
+        clearance = await this.applyCreditNote(tx, code, invDate, dto.customerId, dto.customerName, b, c, dto.items, userName ?? null, ledgerType);
+      } else {
+        await this.insertDebitNoteLedger(tx, code, invDate, dto.customerId, dto.customerName, b, c, dto.items, userName ?? null, !skipAdvance);
+      }
+    });
+    if (prev?.customerId && prev.customerId !== dto.customerId) {
+      await this.prisma.$transaction((tx) => this.payments.resettleParty(tx, prev.customerId!), { timeout: 300_000, maxWait: 60_000 });
     }
 
     // 3) "Undispatched" — credit-side notes only. The previous run's reversals were
@@ -681,27 +703,32 @@ export class NotesService {
       const cn = await this.prisma.creditNote.findUnique({ where: { code } });
       if (!cn) throw new NotFoundException(`${mode === 'PURCHASE' ? 'Purchase Voucher' : 'Credit Note'} not found.`);
       await this.assertNotInTally(code, 'delete it');
-      await this.reverseCreditNote(code, creditCfg(mode).ledgerType);
       // Any quantity this note put back in the pending pool has to come out
       // again — the return is only true for as long as the note exists. Runs
       // before the delete, while the links are still there.
       await this.clearUndispatch(code);
-      await this.prisma.creditNote.deleteMany({ where: { code } });
+      // The receipts after it settle again without it.
+      await this.inPlace(cn.customerId ?? 0, cn.invDate, async (tx) => {
+        await this.reverseCreditNote(tx, code, creditCfg(mode).ledgerType);
+        await tx.creditNote.deleteMany({ where: { code } });
+      });
     } else {
       const ch = await this.prisma.challan.findUnique({ where: { code } });
       if (!ch || ch.transaction !== 'DEBIT NOTE') throw new NotFoundException('Debit Note not found.');
-      // Reverse DN ledger + advance square-off receipts.
-      await this.prisma.$transaction(async (tx) => {
+      // Reverse the DN ledger and whatever advance paid it; the receipts after
+      // it settle again without it (their own payments on it were taken back).
+      await this.inPlace(ch.customerId ?? 0, ch.invDate, async (tx) => {
         await tx.acctLedger.deleteMany({ where: { voucherNo: code, voucherType: 'DEBIT NOTE' } });
-        await tx.acctPaymentReceipt.deleteMany({ where: { invNo: code, recType: 'ADVANCE' } });
+        await tx.acctPaymentReceipt.deleteMany({ where: { invNo: code, OR: [{ recType: 'ADVANCE' }, { refRecId: { startsWith: 'ADV' } }] } });
+        await tx.challan.deleteMany({ where: { code } });
       });
-      await this.prisma.challan.deleteMany({ where: { code } });
     }
   }
 
   /* ── DEBIT NOTE posting ────────────────────────────────────────────────────── */
 
   private async insertDebitNoteLedger(
+    tx: Db,
     code: string,
     dnDate: Date,
     custId: number,
@@ -713,64 +740,62 @@ export class NotesService {
     /** False when the operator chose to keep the party's advance for later. */
     squareOff = true,
   ): Promise<void> {
+    // Clear any prior DN ledger + advance square-offs, and advance spent on it
+    // since (re-save). Receipts' own payments on it were taken back by the replay.
+    await tx.acctLedger.deleteMany({ where: { voucherNo: code, voucherType: 'DEBIT NOTE' } });
+    await tx.acctPaymentReceipt.deleteMany({ where: { invNo: code, OR: [{ recType: 'ADVANCE' }, { refRecId: { startsWith: 'ADV' } }] } });
     if (bAmt <= 0 && cAmt <= 0) return;
     const { payBy, agentName } = await this.readPayBy(custId);
     const particulars = this.debitParticulars(items);
     const transMode = transModeOf(bAmt, cAmt);
 
-    await this.prisma.$transaction(async (tx) => {
-      // Clear any prior DN ledger + advance square-offs (re-save).
-      await tx.acctLedger.deleteMany({ where: { voucherNo: code, voucherType: 'DEBIT NOTE' } });
-      await tx.acctPaymentReceipt.deleteMany({ where: { invNo: code, recType: 'ADVANCE' } });
-
-      await tx.acctLedger.create({
-        data: {
-          voucherNo: code,
-          transDate: dnDate,
-          customerName: custName,
-          custId,
-          agentName: payBy === 'AGENT' ? agentName : null,
-          particulars,
-          voucherType: 'DEBIT NOTE',
-          transMode,
-          bankDebit: bAmt,
-          cashDebit: cAmt,
-          bankCredit: 0,
-          cashCredit: 0,
-          userName,
-        },
-      });
-
-      // Auto square-off from advances FIFO — BANK then CASH.
-      if (!squareOff) return;
-      let receiptId: string | null = null;
-      const advs = payBy === 'AGENT' && agentName ? await this.agentAdvancePending(tx, agentName) : await this.advancePending(tx, custId);
-      let bankNeed = r2(Math.max(0, bAmt));
-      let cashNeed = r2(Math.max(0, cAmt));
-      const nameForReceipt = payBy === 'AGENT' && agentName ? agentName : custName;
-      const idForReceipt = payBy === 'AGENT' && agentName ? 0 : custId;
-
-      for (const a of advs) {
-        if (bankNeed <= EPS) break;
-        if (a.bankBal <= EPS) continue;
-        const use = r2(Math.min(bankNeed, a.bankBal));
-        receiptId ??= await this.nextRefId(tx, 'REC', dnDate);
-        await tx.acctPaymentReceipt.create({
-          data: { refId: receiptId, recDate: a.recDate, invNo: code, customerName: nameForReceipt, custId: idForReceipt, recType: 'ADVANCE', recAmt: use, payMode: BANK, modeOfAdj: 'AUTOMATIC', refRecId: a.refId },
-        });
-        bankNeed = r2(bankNeed - use);
-      }
-      for (const a of advs) {
-        if (cashNeed <= EPS) break;
-        if (a.cashBal <= EPS) continue;
-        const use = r2(Math.min(cashNeed, a.cashBal));
-        receiptId ??= await this.nextRefId(tx, 'REC', dnDate);
-        await tx.acctPaymentReceipt.create({
-          data: { refId: receiptId, recDate: a.recDate, invNo: code, customerName: nameForReceipt, custId: idForReceipt, recType: 'ADVANCE', recAmt: use, payMode: CASH, modeOfAdj: 'AUTOMATIC', refRecId: a.refId },
-        });
-        cashNeed = r2(cashNeed - use);
-      }
+    await tx.acctLedger.create({
+      data: {
+        voucherNo: code,
+        transDate: dnDate,
+        customerName: custName,
+        custId,
+        agentName: payBy === 'AGENT' ? agentName : null,
+        particulars,
+        voucherType: 'DEBIT NOTE',
+        transMode,
+        bankDebit: bAmt,
+        cashDebit: cAmt,
+        bankCredit: 0,
+        cashCredit: 0,
+        userName,
+      },
     });
+
+    // Auto square-off from advances FIFO — BANK then CASH.
+    if (!squareOff) return;
+    let receiptId: string | null = null;
+    const advs = payBy === 'AGENT' && agentName ? await this.agentAdvancePending(tx, agentName) : await this.advancePending(tx, custId);
+    let bankNeed = r2(Math.max(0, bAmt));
+    let cashNeed = r2(Math.max(0, cAmt));
+    const nameForReceipt = payBy === 'AGENT' && agentName ? agentName : custName;
+    const idForReceipt = payBy === 'AGENT' && agentName ? 0 : custId;
+
+    for (const a of advs) {
+      if (bankNeed <= EPS) break;
+      if (a.bankBal <= EPS) continue;
+      const use = r2(Math.min(bankNeed, a.bankBal));
+      receiptId ??= await this.nextRefId(tx, 'REC', dnDate);
+      await tx.acctPaymentReceipt.create({
+        data: { refId: receiptId, recDate: a.recDate, invNo: code, customerName: nameForReceipt, custId: idForReceipt, recType: 'ADVANCE', recAmt: use, payMode: BANK, modeOfAdj: 'AUTOMATIC', refRecId: a.refId },
+      });
+      bankNeed = r2(bankNeed - use);
+    }
+    for (const a of advs) {
+      if (cashNeed <= EPS) break;
+      if (a.cashBal <= EPS) continue;
+      const use = r2(Math.min(cashNeed, a.cashBal));
+      receiptId ??= await this.nextRefId(tx, 'REC', dnDate);
+      await tx.acctPaymentReceipt.create({
+        data: { refId: receiptId, recDate: a.recDate, invNo: code, customerName: nameForReceipt, custId: idForReceipt, recType: 'ADVANCE', recAmt: use, payMode: CASH, modeOfAdj: 'AUTOMATIC', refRecId: a.refId },
+      });
+      cashNeed = r2(cashNeed - use);
+    }
   }
 
   /** The advances a Debit Note for this party squares off from: the agent's
@@ -789,16 +814,26 @@ export class NotesService {
 
   /* ── CREDIT NOTE posting ───────────────────────────────────────────────────── */
 
-  private async reverseCreditNote(code: string, ledgerType = 'CREDIT NOTE'): Promise<void> {
-    await this.prisma.$transaction(async (tx) => {
-      await tx.acctPaymentReceipt.deleteMany({ where: { refRecId: code } });
-      await tx.acctPartyAdvance.deleteMany({ where: { refRecId: code } });
-      await tx.acctLedger.deleteMany({ where: { voucherNo: code, voucherType: ledgerType } });
-      await tx.acctOpeningTrans.deleteMany({ where: { refRecId: code, kind: 'CLEARANCE' } });
-    });
+  private async reverseCreditNote(tx: Db, code: string, ledgerType = 'CREDIT NOTE'): Promise<void> {
+    // What its parked advance paid since goes too — that money no longer exists.
+    const parked = await tx.acctPartyAdvance.findMany({ where: { refRecId: code }, select: { refId: true } });
+    if (parked.length) await tx.acctPaymentReceipt.deleteMany({ where: { refRecId: { in: parked.map((a) => a.refId) } } });
+    await tx.acctPaymentReceipt.deleteMany({ where: { refRecId: code } });
+    await tx.acctPartyAdvance.deleteMany({ where: { refRecId: code } });
+    await tx.acctLedger.deleteMany({ where: { voucherNo: code, voucherType: ledgerType } });
+    await tx.acctOpeningTrans.deleteMany({ where: { refRecId: code, kind: 'CLEARANCE' } });
+  }
+
+  /** Each note's Tally link (the sweep's row), keyed by the note's id. */
+  private async tallyLinks(where: Prisma.TallyVoucherWhereInput, idOf: (t: { creditNoteId: number | null; challanId: number | null }) => number | null) {
+    const rows = await this.prisma.tallyVoucher.findMany({ where, select: { creditNoteId: true, challanId: true, status: true, vchNo: true, recon: true, reconNote: true, vchType: true } });
+    return new Map(
+      rows.map((t) => [idOf(t), { status: t.status as NonNullable<NoteDirectoryRow['tally']>['status'], vchNo: t.vchNo, recon: t.recon, note: t.reconNote, vchType: t.vchType }]),
+    );
   }
 
   private async applyCreditNote(
+    tx: Db,
     code: string,
     cnDate: Date,
     custId: number,
@@ -812,165 +847,169 @@ export class NotesService {
     if (bAmt <= 0 && cAmt <= 0) return undefined;
     const { payBy, agentName } = await this.readPayBy(custId);
 
-    return await this.prisma.$transaction(async (tx) => {
-      // 1) Ledger: credit side. A credit note reads as SALES RETURN; a purchase
-      //    voucher as PURCHASE — same posting, its own name in the ledger.
-      await tx.acctLedger.create({
-        data: {
-          voucherNo: code,
-          transDate: cnDate,
-          customerName: custName,
-          custId,
-          agentName: payBy === 'AGENT' ? agentName : null,
-          particulars: `${ledgerType === 'PURCHASE' ? 'PURCHASE' : 'SALES RETURN'} (${items.length} ITEMS)`,
-          voucherType: ledgerType,
-          transMode: transModeOf(bAmt, cAmt),
-          bankDebit: 0,
-          cashDebit: 0,
-          bankCredit: bAmt,
-          cashCredit: cAmt,
-          userName,
-        },
-      });
+    // 1) Ledger: credit side. A credit note reads as SALES RETURN; a purchase
+    //    voucher as PURCHASE — same posting, its own name in the ledger.
+    await tx.acctLedger.create({
+      data: {
+        voucherNo: code,
+        transDate: cnDate,
+        customerName: custName,
+        custId,
+        agentName: payBy === 'AGENT' ? agentName : null,
+        particulars: `${ledgerType === 'PURCHASE' ? 'PURCHASE' : 'SALES RETURN'} (${items.length} ITEMS)`,
+        voucherType: ledgerType,
+        transMode: transModeOf(bAmt, cAmt),
+        bankDebit: 0,
+        cashDebit: 0,
+        bankCredit: bAmt,
+        cashCredit: cAmt,
+        userName,
+      },
+    });
 
-      let bankLeft = r2(Math.max(0, bAmt));
-      let cashLeft = r2(Math.max(0, cAmt));
-      let receiptId: string | null = null;
+    let bankLeft = r2(Math.max(0, bAmt));
+    let cashLeft = r2(Math.max(0, cAmt));
+    let receiptId: string | null = null;
 
-      // 2) TARGETED clearance. When every line points at the same Ref Inv No,
-      //    that invoice is settled before anything else — a return off INV/500
-      //    has to knock money off INV/500, not off whichever bill happens to be
-      //    oldest. Anything left over falls through the normal cascade below.
-      const refs = noteRefInvoices(items);
-      const pending = await this.invoicePending(tx, custId, custName, cnDate);
-      const side: 'BANK' | 'CASH' = bAmt > EPS ? BANK : CASH;
-      const clearance: NoteClearance = { invNo: null, bank: 0, cash: 0, spillBank: 0, spillCash: 0, refs, side };
+    // 2) TARGETED clearance. When every line points at the same Ref Inv No,
+    //    that invoice is settled before anything else — a return off INV/500
+    //    has to knock money off INV/500, not off whichever bill happens to be
+    //    oldest. Anything left over falls through the normal cascade below.
+    const refs = noteRefInvoices(items);
+    const pending = await this.invoicePending(tx, custId, custName, cnDate);
+    const side: 'BANK' | 'CASH' = bAmt > EPS ? BANK : CASH;
+    const clearance: NoteClearance = { invNo: null, bank: 0, cash: 0, spillBank: 0, spillCash: 0, refs, side };
 
-      if (refs.length !== 1) {
-        clearance.skipped = refs.length === 0 ? 'NO_REF' : 'MULTIPLE_REFS';
-      } else {
-        const key = refs[0].toUpperCase();
-        const target = pending.find((p) => p.invNo.trim().toUpperCase() === key);
-        if (!target) {
-          // Distinguish "paid off already" from "no such bill" — the two need
-          // very different action from whoever reads the warning.
-          const exists = await tx.challan.findFirst({
-            where: { code: refs[0], customerName: custName, challanStatus: 'CONFIRMED' },
-            select: { id: true },
-          });
-          clearance.skipped = exists ? 'ALREADY_SETTLED' : 'NOT_FOUND';
-        } else {
-          if (bankLeft > EPS && target.bankBal > EPS) {
-            const use = r2(Math.min(bankLeft, target.bankBal));
-            receiptId ??= await this.nextRefId(tx, 'REC', cnDate);
-            await tx.acctPaymentReceipt.create({
-              data: { refId: receiptId, recDate: cnDate, invNo: target.invNo, customerName: custName, custId, recType: ledgerType, recAmt: use, payMode: BANK, refRecId: code },
-            });
-            bankLeft = r2(bankLeft - use);
-            // Mutate the row so the FIFO pass below cannot spend it twice.
-            target.bankBal = r2(target.bankBal - use);
-            clearance.bank = use;
-          }
-          if (cashLeft > EPS && target.cashBal > EPS) {
-            const use = r2(Math.min(cashLeft, target.cashBal));
-            receiptId ??= await this.nextRefId(tx, 'REC', cnDate);
-            await tx.acctPaymentReceipt.create({
-              data: { refId: receiptId, recDate: cnDate, invNo: target.invNo, customerName: custName, custId, recType: ledgerType, recAmt: use, payMode: CASH, refRecId: code },
-            });
-            cashLeft = r2(cashLeft - use);
-            target.cashBal = r2(target.cashBal - use);
-            clearance.cash = use;
-          }
-          // Claimed only when money actually landed on it. Naming the invoice
-          // after applying ₹0 read as "cleared against SSS/…: ₹0", which sounds
-          // like the bill was settled for nothing rather than not touched.
-          if (clearance.bank > EPS || clearance.cash > EPS) clearance.invNo = target.invNo;
-        }
-      }
-      clearance.spillBank = Math.max(0, bankLeft);
-      clearance.spillCash = Math.max(0, cashLeft);
-
-      // 3) Clear OPENING balance next (oldest dues).
-      const openings = await this.openingPending(tx, custId, custName);
-      for (const o of openings) {
-        if (bankLeft <= EPS && cashLeft <= EPS) break;
-        const bankApply = r2(Math.min(bankLeft, o.pendingBank));
-        const cashApply = r2(Math.min(cashLeft, o.pendingCash));
-        if (bankApply <= EPS && cashApply <= EPS) continue;
-        await tx.acctOpeningTrans.create({
-          data: { kind: 'CLEARANCE', customerName: o.customerName, custId: o.customerId, transDate: cnDate, bankAmt: Math.max(0, bankApply), cashAmt: Math.max(0, cashApply), refRecId: code, userName },
+    if (refs.length !== 1) {
+      clearance.skipped = refs.length === 0 ? 'NO_REF' : 'MULTIPLE_REFS';
+    } else {
+      const key = refs[0].toUpperCase();
+      const target = pending.find((p) => p.invNo.trim().toUpperCase() === key);
+      if (!target) {
+        // Distinguish "paid off already" from "no such bill" — the two need
+        // very different action from whoever reads the warning.
+        const exists = await tx.challan.findFirst({
+          where: { code: refs[0], customerName: custName, challanStatus: 'CONFIRMED' },
+          select: { id: true },
         });
-        bankLeft = r2(bankLeft - Math.max(0, bankApply));
-        cashLeft = r2(cashLeft - Math.max(0, cashApply));
-      }
-
-      // 4) Clear the remaining pending invoices FIFO. `pending` was read before
-      //    the targeted pass and its balances were decremented in place, so the
-      //    referenced invoice simply has nothing left to take here.
-      for (const inv of pending) {
-        if (bankLeft <= EPS && cashLeft <= EPS) break;
-        if (bankLeft > EPS && inv.bankBal > EPS) {
-          const use = r2(Math.min(bankLeft, inv.bankBal));
+        clearance.skipped = exists ? 'ALREADY_SETTLED' : 'NOT_FOUND';
+      } else {
+        if (bankLeft > EPS && target.bankBal > EPS) {
+          const use = r2(Math.min(bankLeft, target.bankBal));
           receiptId ??= await this.nextRefId(tx, 'REC', cnDate);
           await tx.acctPaymentReceipt.create({
-            data: { refId: receiptId, recDate: cnDate, invNo: inv.invNo, customerName: custName, custId, recType: ledgerType, recAmt: use, payMode: BANK, refRecId: code },
+            data: { refId: receiptId, recDate: cnDate, invNo: target.invNo, customerName: custName, custId, recType: ledgerType, recAmt: use, payMode: BANK, refRecId: code },
           });
           bankLeft = r2(bankLeft - use);
+          // Mutate the row so the FIFO pass below cannot spend it twice.
+          target.bankBal = r2(target.bankBal - use);
+          clearance.bank = use;
         }
-        if (cashLeft > EPS && inv.cashBal > EPS) {
-          const use = r2(Math.min(cashLeft, inv.cashBal));
+        if (cashLeft > EPS && target.cashBal > EPS) {
+          const use = r2(Math.min(cashLeft, target.cashBal));
           receiptId ??= await this.nextRefId(tx, 'REC', cnDate);
           await tx.acctPaymentReceipt.create({
-            data: { refId: receiptId, recDate: cnDate, invNo: inv.invNo, customerName: custName, custId, recType: ledgerType, recAmt: use, payMode: CASH, refRecId: code },
+            data: { refId: receiptId, recDate: cnDate, invNo: target.invNo, customerName: custName, custId, recType: ledgerType, recAmt: use, payMode: CASH, refRecId: code },
           });
           cashLeft = r2(cashLeft - use);
+          target.cashBal = r2(target.cashBal - use);
+          clearance.cash = use;
         }
+        // Claimed only when money actually landed on it. Naming the invoice
+        // after applying ₹0 read as "cleared against SSS/…: ₹0", which sounds
+        // like the bill was settled for nothing rather than not touched.
+        if (clearance.bank > EPS || clearance.cash > EPS) clearance.invNo = target.invNo;
       }
+    }
+    clearance.spillBank = Math.max(0, bankLeft);
+    clearance.spillCash = Math.max(0, cashLeft);
 
-      /*
-       * Nothing settled at all, anywhere — and the party DOES owe money, just on
-       * the other side of the books.
-       *
-       * Billed and no-bill money never net against each other here (see the
-       * `bankBal`/`cashBal` tests above, and the same rule in the payments
-       * engine), so a no-bill credit note against a GST-billed invoice can only
-       * become an advance. That is correct, but it looks identical to a note
-       * that simply found nothing outstanding — and the two need opposite
-       * action. Name it, or the value sits as an advance nobody goes looking for.
-       */
-      const untouched = r2(bankLeft + cashLeft) >= r2(bAmt + cAmt) - EPS;
-      if (untouched) {
-        const otherSide = r2(pending.reduce((a, p) => a + (side === BANK ? p.cashBal : p.bankBal), 0));
-        if (otherSide > EPS) {
-          clearance.skipped = 'OTHER_SIDE';
-          clearance.dueOtherSide = otherSide;
-        }
-      }
+    // 3) Clear OPENING balance next (oldest dues).
+    const openings = await this.openingPending(tx, custId, custName);
+    for (const o of openings) {
+      if (bankLeft <= EPS && cashLeft <= EPS) break;
+      const bankApply = r2(Math.min(bankLeft, o.pendingBank));
+      const cashApply = r2(Math.min(cashLeft, o.pendingCash));
+      if (bankApply <= EPS && cashApply <= EPS) continue;
+      await tx.acctOpeningTrans.create({
+        data: { kind: 'CLEARANCE', customerName: o.customerName, custId: o.customerId, transDate: cnDate, bankAmt: Math.max(0, bankApply), cashAmt: Math.max(0, cashApply), refRecId: code, userName },
+      });
+      bankLeft = r2(bankLeft - Math.max(0, bankApply));
+      cashLeft = r2(cashLeft - Math.max(0, cashApply));
+    }
 
-      // 5) Spillover parks as a party (or agent) advance.
-      if (bankLeft > EPS || cashLeft > EPS) {
-        const advRefId = await this.nextRefId(tx, 'ADV', cnDate);
-        const payMode = bankLeft > EPS && cashLeft > EPS ? 'BOTH' : bankLeft > EPS ? BANK : CASH;
-        const isAgent = payBy === 'AGENT' && !!agentName;
-        await tx.acctPartyAdvance.create({
-          data: {
-            refId: advRefId,
-            recDate: cnDate,
-            custId: isAgent ? 0 : custId,
-            customerName: isAgent ? agentName! : custName,
-            agentName: isAgent ? agentName : null,
-            bankAmt: Math.max(0, bankLeft),
-            cashAmt: Math.max(0, cashLeft),
-            payMode,
-            recType: ledgerType,
-            refRecId: code,
-            takeAccOn: isAgent ? 'AGENT' : 'PARTY',
-          },
+    // 4) Clear the remaining pending invoices FIFO. `pending` was read before
+    //    the targeted pass and its balances were decremented in place, so the
+    //    referenced invoice simply has nothing left to take here.
+    for (const inv of pending) {
+      if (bankLeft <= EPS && cashLeft <= EPS) break;
+      if (bankLeft > EPS && inv.bankBal > EPS) {
+        const use = r2(Math.min(bankLeft, inv.bankBal));
+        receiptId ??= await this.nextRefId(tx, 'REC', cnDate);
+        await tx.acctPaymentReceipt.create({
+          data: { refId: receiptId, recDate: cnDate, invNo: inv.invNo, customerName: custName, custId, recType: ledgerType, recAmt: use, payMode: BANK, refRecId: code },
         });
+        bankLeft = r2(bankLeft - use);
       }
+      if (cashLeft > EPS && inv.cashBal > EPS) {
+        const use = r2(Math.min(cashLeft, inv.cashBal));
+        receiptId ??= await this.nextRefId(tx, 'REC', cnDate);
+        await tx.acctPaymentReceipt.create({
+          data: { refId: receiptId, recDate: cnDate, invNo: inv.invNo, customerName: custName, custId, recType: ledgerType, recAmt: use, payMode: CASH, refRecId: code },
+        });
+        cashLeft = r2(cashLeft - use);
+      }
+    }
 
-      return clearance;
-    });
+    /*
+     * Nothing settled at all, anywhere — and the party DOES owe money, just on
+     * the other side of the books.
+     *
+     * Billed and no-bill money never net against each other here (see the
+     * `bankBal`/`cashBal` tests above, and the same rule in the payments
+     * engine), so a no-bill credit note against a GST-billed invoice can only
+     * become an advance. That is correct, but it looks identical to a note
+     * that simply found nothing outstanding — and the two need opposite
+     * action. Name it, or the value sits as an advance nobody goes looking for.
+     */
+    // Only when the referenced sale itself sits on the other side. A billed
+    // return off a billed sale whose billed part is already paid is simply an
+    // advance (as in Tally) — telling the user to switch sides would be wrong.
+    const untouched = r2(bankLeft + cashLeft) >= r2(bAmt + cAmt) - EPS;
+    const refSale = untouched && refs.length === 1
+      ? await tx.challan.findFirst({ where: { code: refs[0], customerName: custName }, select: { b: true } })
+      : null;
+    if (refSale && ((refSale.b ?? 0) > 0) !== (side === BANK)) {
+      const otherSide = r2(pending.reduce((a, p) => a + (side === BANK ? p.cashBal : p.bankBal), 0));
+      if (otherSide > EPS) {
+        clearance.skipped = 'OTHER_SIDE';
+        clearance.dueOtherSide = otherSide;
+      }
+    }
+
+    // 5) Spillover parks as a party (or agent) advance.
+    if (bankLeft > EPS || cashLeft > EPS) {
+      const advRefId = await this.nextRefId(tx, 'ADV', cnDate);
+      const payMode = bankLeft > EPS && cashLeft > EPS ? 'BOTH' : bankLeft > EPS ? BANK : CASH;
+      const isAgent = payBy === 'AGENT' && !!agentName;
+      await tx.acctPartyAdvance.create({
+        data: {
+          refId: advRefId,
+          recDate: cnDate,
+          custId: isAgent ? 0 : custId,
+          customerName: isAgent ? agentName! : custName,
+          agentName: isAgent ? agentName : null,
+          bankAmt: Math.max(0, bankLeft),
+          cashAmt: Math.max(0, cashLeft),
+          payMode,
+          recType: ledgerType,
+          refRecId: code,
+          takeAccOn: isAgent ? 'AGENT' : 'PARTY',
+        },
+      });
+    }
+
+    return clearance;
   }
 
   /* ── Derivations (single-party variants of the payments engine) ────────────── */

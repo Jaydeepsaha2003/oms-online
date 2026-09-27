@@ -27,6 +27,8 @@ import { Button } from '@/components/ui/button';
 import { RowCheckbox } from '@/components/common/row-checkbox';
 import { Chip, initials, urgencyMeta } from './crm-shared';
 import { useFollowupList, usePartyBalance, usePartyBalances } from './use-crm';
+import { DemandPlanDialog } from './demand-plan-dialog';
+import { usePermissions } from '@/hooks/use-permissions';
 
 /** What a "Collect" action hands back to the page to pre-fill the form. */
 export interface CollectPrefill {
@@ -682,6 +684,8 @@ export function PartyBalancePanel({ customerId, party, onPickAmount, onPickInvoi
   const enabled = customerId != null || party.trim().length > 0;
   const { data, isLoading } = usePartyBalance(customerId, party, enabled);
   const [showInvoices, setShowInvoices] = useState(false);
+  const [planOpen, setPlanOpen] = useState(false);
+  const canPlan = usePermissions().can('payment:view');
 
   /*
    * Multi-select over the open invoices.
@@ -751,6 +755,21 @@ export function PartyBalancePanel({ customerId, party, onPickAmount, onPickInvoi
         <button type="button" onClick={() => onPickAmount(money(data.outstanding), fullLabel)} className="bg-card cursor-pointer rounded-md border border-slate-400 px-2.5 py-1 text-xs font-semibold tabular-nums text-slate-700 transition-colors hover:bg-slate-100 dark:border-white/25 dark:text-slate-200 dark:hover:bg-white/10">
           Full {inrCompact(money(data.outstanding))}
         </button>
+        {customerId != null && canPlan && (
+          <button type="button" onClick={() => setPlanOpen(true)} className="bg-card cursor-pointer rounded-md border border-indigo-300 px-2.5 py-1 text-xs font-semibold text-indigo-700 transition-colors hover:bg-indigo-50 dark:border-indigo-400/40 dark:text-indigo-300 dark:hover:bg-indigo-400/10">
+            Demand plan
+          </button>
+        )}
+        {planOpen && customerId != null && (
+          <DemandPlanDialog
+            open
+            onOpenChange={setPlanOpen}
+            customerId={customerId}
+            partyName={data.partyName || party}
+            defaultSide={data.invoices.reduce((n, i) => n + i.cash - i.bank, 0) > 0 ? 'C' : 'B'}
+            onUse={onPickAmount}
+          />
+        )}
         {data.advanceHeld > 0 && (
           <span className="text-emerald-700 dark:text-emerald-400 text-xs" title={`Invoices total ${inrFull(data.outstanding)}; ${inrFull(data.advanceHeld)} of their own money is already with us.`}>
             · {inrCompact(data.advanceHeld)} advance already applied

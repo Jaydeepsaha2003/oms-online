@@ -411,6 +411,13 @@ export function NotesPage() {
     setParty(name);
     setLines([]);
     setEntry({ ...EMPTY_ENTRY });
+    setInvoiceChoice({});
+    setAskInvoice(null);
+    setPouch('');
+    setTcs('');
+    setNoBill(false);
+    setNoBillWithoutGst(false);
+    setRemarks('');
     resetHeaderFromCustomer(name);
   };
 
@@ -1168,6 +1175,7 @@ export function NotesPage() {
                       (its `w-full` then resolves against that shrunken box). */}
                   <div className="min-w-0 flex-1">
                     <Combobox
+                      key={party} // a new party starts with an empty search
                       value=""
                       onChange={pickRecent}
                       options={recentSold.map((r: RecentSoldRow, i) => ({
@@ -1775,35 +1783,59 @@ function NoteDirectoryDialog({
         <span className={cn(TEXT_CELL, 'tabular-nums font-bold')}>{money0(r.total)}</span>
       ),
     },
-    // Tally numbers credit notes itself — this shows which Tally CN this one is.
-    ...(mode === 'CREDIT'
-      ? [
-          {
-            id: 'tally',
-            label: 'Tally',
-            cell: (r: NoteDirectoryRow) => {
-              const s = r.tally?.status ?? 'NOT_POSTED';
-              if (s === 'NOT_POSTED' && !r.b) return <span className="text-muted-foreground/60 text-[12px]">—</span>;
-              const [text, tone] =
-                s === 'POSTED'
-                  ? [`Tally CN ${r.tally?.vchNo ?? ''}`, 'bg-emerald-50 text-emerald-700 ring-emerald-200']
-                  : s === 'POSTING'
-                    ? ['Sending…', 'bg-sky-50 text-sky-700 ring-sky-200']
-                    : s === 'UNKNOWN'
-                      ? ['Not sure — Sync Center', 'bg-rose-50 text-rose-700 ring-rose-200']
-                      : s === 'FAILED'
-                        ? ['Tally refused', 'bg-rose-50 text-rose-700 ring-rose-200']
-                        : ['Not in Tally', 'bg-amber-50 text-amber-800 ring-amber-200'];
-              return <span className={cn('inline-flex rounded-[4px] px-2 py-0.5 text-[11.5px] font-bold whitespace-nowrap ring-1 ring-inset', tone)}>{text}</span>;
-            },
-          } satisfies DataColumn<NoteDirectoryRow>,
-        ]
-      : []),
+    // Tally numbers notes itself — this shows which Tally voucher this one is.
+    // The link comes from the sweep (party + B amount + date), so a note typed in
+    // Tally by hand shows here too, whatever its number.
+    {
+      id: 'tally',
+      label: 'Tally',
+      cell: (r: NoteDirectoryRow) => {
+        if (!r.b) return <span className="text-muted-foreground/60 text-[12px]">—</span>;
+        // Offered only once the sweep has looked in Tally and found nothing of any type.
+        if (canPostTally && mode === 'CREDIT' && r.tally && r.tally.recon !== 'TYPE_MISMATCH' && (r.tally.status === 'NOT_POSTED' || r.tally.status === 'FAILED'))
+          return (
+            <Button
+              size="sm"
+              variant="outline"
+              className="h-7 gap-1 px-2 text-[11.5px] font-bold"
+              disabled={tallyPost.pendingCode === r.code}
+              onClick={(e) => {
+                e.stopPropagation();
+                void tallyPost.post(r.code, `${r.customerName} · B ₹${r.b.toLocaleString('en-IN')}`);
+              }}
+              title={r.tally.note ?? 'Not in Tally — post this credit note'}
+            >
+              {tallyPost.pendingCode === r.code ? <Loader2 className="size-3.5 animate-spin" /> : <Send className="size-3.5" />}
+              Post to Tally
+            </Button>
+          );
+        const s = r.tally?.status;
+        const recon = r.tally?.recon;
+        const [text, tone] =
+          !s
+            ? ['Not checked yet', 'bg-slate-50 text-slate-600 ring-slate-200']
+            : recon === 'TYPE_MISMATCH'
+            ? ['Other type in Tally', 'bg-rose-50 text-rose-700 ring-rose-200']
+            : s === 'POSTED'
+            ? [
+                `Tally ${({ 'Credit Note': 'CN', 'Debit Note': 'DN' } as Record<string, string>)[r.tally?.vchType ?? ''] ?? r.tally?.vchType} ${r.tally?.vchNo ?? ''}${recon === 'DATE_MISMATCH' ? ' · date differs' : ''}`,
+                recon === 'DATE_MISMATCH' ? 'bg-amber-50 text-amber-800 ring-amber-200' : 'bg-emerald-50 text-emerald-700 ring-emerald-200',
+              ]
+            : s === 'POSTING'
+              ? ['Sending…', 'bg-sky-50 text-sky-700 ring-sky-200']
+              : s === 'UNKNOWN'
+                ? ['Not sure — Sync Center', 'bg-rose-50 text-rose-700 ring-rose-200']
+                : s === 'FAILED'
+                  ? ['Tally refused', 'bg-rose-50 text-rose-700 ring-rose-200']
+                  : ['Not in Tally', 'bg-amber-50 text-amber-800 ring-amber-200'];
+        return <span title={r.tally?.note ?? undefined} className={cn('inline-flex rounded-[4px] px-2 py-0.5 text-[11.5px] font-bold whitespace-nowrap ring-1 ring-inset', tone)}>{text}</span>;
+      },
+    } satisfies DataColumn<NoteDirectoryRow>,
   ];
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent className="max-w-5xl">
+      <DialogContent className="w-[96vw] max-w-7xl">
         <DialogHeader>
           <DialogTitle>{noteModeLabel(mode)} Directory</DialogTitle>
         </DialogHeader>
@@ -1852,22 +1884,6 @@ function NoteDirectoryDialog({
             className={DIRECTORY_GRID_CLASSES}
             actions={(r) => (
               <div className="flex justify-end gap-1">
-                {canPostTally && mode === 'CREDIT' && r.b > 0 && (!r.tally || r.tally.status === 'NOT_POSTED' || r.tally.status === 'FAILED') && (
-                  <Button
-                    size="sm"
-                    variant="outline"
-                    className="h-8 gap-1 px-2 text-[11.5px] font-bold"
-                    disabled={tallyPost.pendingCode === r.code}
-                    onClick={(e) => {
-                      e.stopPropagation();
-                      void tallyPost.post(r.code, `${r.customerName} · B ₹${r.b.toLocaleString('en-IN')}`);
-                    }}
-                    title="Post this credit note to Tally"
-                  >
-                    {tallyPost.pendingCode === r.code ? <Loader2 className="size-3.5 animate-spin" /> : <Send className="size-3.5" />}
-                    Post to Tally
-                  </Button>
-                )}
                 {/* Opens the letterhead bill page and PREVIEWS the finished PDF
                     there, exactly as the challan list does. It used to auto-print,
                     which handed over the browser's Save-as-PDF chooser instead of

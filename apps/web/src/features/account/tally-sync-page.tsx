@@ -63,6 +63,7 @@ const RECON_LABEL: Record<TallyRecon, string> = {
   AMOUNT_MISMATCH: 'Amount differs',
   PARTY_MISMATCH: 'Party differs',
   DATE_MISMATCH: 'Date differs',
+  TYPE_MISMATCH: 'Other voucher type in Tally',
   TALLY_ONLY: 'In Tally, not in OMS',
 };
 const rs = (n: number | null | undefined) => (n == null ? '—' : `₹${n.toLocaleString('en-IN')}`);
