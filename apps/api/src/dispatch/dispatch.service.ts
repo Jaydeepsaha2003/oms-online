@@ -11,13 +11,13 @@ import {
   type DispatchDto,
   type DispatchFilterOptions,
   type DispatchList,
-  type DispatchHoldInfo,
   type DispatchPhotoCheckDto,
   type DraftPhotoCheckInput,
   type DraftPhotoCheckResult,
   type DispatchStatus,
   RETURNED_DISPATCH_STATUS,
   type DispatchReturnRef,
+  type HeldPartyDto,
   type PendingLineDto,
   type Paginated,
   type SubmitDispatchResult,
@@ -401,6 +401,45 @@ export class DispatchService implements OnModuleInit {
   }
 
   /**
+   * The pending pool less every held party's lines — what Dispatch Order works
+   * from. A held party's orders leave that screen and wait on Party On Hold.
+   *
+   * The held set is read fresh, never from the cached pool: a hold has to bite
+   * the moment it is placed, not once the cache expires.
+   */
+  private async dispatchablePendingLines(): Promise<PendingLineDto[]> {
+    const [lines, held] = await Promise.all([
+      this.computePendingLines(),
+      this.prisma.customer.findMany({ where: { dispatchHold: true }, select: { id: true } }),
+    ]);
+    const ids = new Set(held.map((h) => h.id));
+    return ids.size ? lines.filter((l) => l.customerId == null || !ids.has(l.customerId)) : lines;
+  }
+
+  /** Every party on dispatch hold with the pending lines it is holding back —
+   *  the Party On Hold page. Most recently held first. */
+  async heldParties(): Promise<HeldPartyDto[]> {
+    const [parties, lines] = await Promise.all([
+      this.prisma.customer.findMany({
+        where: { dispatchHold: true },
+        select: { id: true, partyName: true, agentName: true, region: true, dispatchHoldReason: true, dispatchHoldBy: true, dispatchHoldAt: true },
+        orderBy: [{ dispatchHoldAt: 'desc' }, { partyName: 'asc' }],
+      }),
+      this.computePendingLines(),
+    ]);
+    const byParty = new Map<number, PendingLineDto[]>();
+    for (const l of lines) if (l.customerId != null) byParty.set(l.customerId, [...(byParty.get(l.customerId) ?? []), l]);
+    return parties.map((p) => ({
+      id: p.id,
+      name: p.partyName ?? `#${p.id}`,
+      agentName: p.agentName,
+      region: p.region,
+      hold: { reason: p.dispatchHoldReason, by: p.dispatchHoldBy, at: p.dispatchHoldAt ? p.dispatchHoldAt.toISOString() : null },
+      lines: byParty.get(p.id) ?? [],
+    }));
+  }
+
+  /**
    * The hold check from an order-line id, for callers that have not loaded the
    * line yet — {@link submit}, which has to refuse before its other gates run.
    *
@@ -454,7 +493,7 @@ export class DispatchService implements OnModuleInit {
       .join(' ');
     throw new BadRequestException(
       `${who} is on dispatch hold${why ? ` — ${why}` : ''}.` +
-        `${placed ? ` Held ${placed}.` : ''} Release the hold on the Customers page to dispatch again.`,
+        `${placed ? ` Held ${placed}.` : ''} Release the hold on the Party On Hold page to dispatch again.`,
     );
   }
 
@@ -550,7 +589,7 @@ export class DispatchService implements OnModuleInit {
    *  each field's option list reflects the OTHER active filters (but not itself),
    *  so a dropdown only ever offers values that would actually return rows. */
   async pendingFilterOptions(query: PendingQueryDto = {} as PendingQueryDto): Promise<DispatchFilterOptions> {
-    const all = await this.computePendingLines();
+    const all = await this.dispatchablePendingLines();
     // Options for one field = the pool filtered by every OTHER active filter.
     const poolFor = (exclude: keyof PendingQueryDto) => this.applyPendingFilters(all, { ...query, [exclude]: undefined } as PendingQueryDto);
     const distinct = (lines: PendingLineDto[], pick: (l: PendingLineDto) => string | null | undefined) => {
@@ -603,7 +642,7 @@ export class DispatchService implements OnModuleInit {
   }
 
   async pending(query: PendingQueryDto): Promise<Paginated<PendingLineDto>> {
-    const lines = this.applyPendingFilters(await this.computePendingLines(), query);
+    const lines = this.applyPendingFilters(await this.dispatchablePendingLines(), query);
     const total = lines.length;
     const page = lines.slice(query.skip, query.skip + query.pageSize);
     const pendingIds = await this.pendingApprovalOrderItemIds();
@@ -652,35 +691,12 @@ export class DispatchService implements OnModuleInit {
         }
       }
     }
-    /*
-     * Which of these lines belong to a held party.
-     *
-     * Resolved for the page rather than inside `computePendingLines`, which is
-     * cached for PENDING_CACHE_TTL_MS — a hold has to show the moment it is
-     * placed, not once a cache expires. Same reasoning as the line locks above.
-     */
-    const holds = new Map<number, DispatchHoldInfo>();
-    const custIds = [...new Set(page.map((l) => l.customerId).filter((id): id is number => id != null))];
-    if (custIds.length) {
-      const held = await this.prisma.customer.findMany({
-        where: { id: { in: custIds }, dispatchHold: true },
-        select: { id: true, dispatchHoldReason: true, dispatchHoldBy: true, dispatchHoldAt: true },
-      });
-      for (const h of held) {
-        holds.set(h.id, {
-          reason: h.dispatchHoldReason,
-          by: h.dispatchHoldBy,
-          at: h.dispatchHoldAt ? h.dispatchHoldAt.toISOString() : null,
-        });
-      }
-    }
     const items = page.map((l) => ({
       ...l,
       ...(pendingIds.has(l.orderItemId) ? { hasPendingApproval: true } : {}),
       lockedByName: locks.get(l.orderItemId) ?? null,
       photoCount: photoCounts.get(l.orderItemId) ?? 0,
       billedChallanCode: billedOn.get(l.orderItemId) ?? null,
-      onHold: (l.customerId != null ? holds.get(l.customerId) : undefined) ?? null,
     }));
     return { items, total, page: query.page, pageSize: query.pageSize, totalPages: Math.max(1, Math.ceil(total / query.pageSize)) };
   }
@@ -728,7 +744,7 @@ export class DispatchService implements OnModuleInit {
 
   /** All pending lines matching the filters (no pagination) — for the Excel export. */
   async pendingExport(query: PendingQueryDto): Promise<PendingLineDto[]> {
-    return this.applyPendingFilters(await this.computePendingLines(), query);
+    return this.applyPendingFilters(await this.dispatchablePendingLines(), query);
   }
 
   /* ── Dispatch records ───────────────────────────────────────────────────── */

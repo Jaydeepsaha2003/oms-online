@@ -41,6 +41,7 @@ import {
   Trash2,
   Truck,
   X,
+  PauseCircle,
 } from 'lucide-react';
 import { toast } from 'sonner';
 import {
@@ -415,6 +416,14 @@ const focusField = (root: HTMLElement | null, key: string): boolean => {
   return true;
 };
 
+/** "Party on Hold" beside a held party's name — its orders wait on the Party On Hold page. */
+const HoldTag = () => (
+  <span className="ml-auto inline-flex shrink-0 items-center gap-1 rounded-full bg-amber-100 px-2 py-0.5 text-[11px] font-bold text-amber-900 ring-1 ring-amber-300 ring-inset dark:bg-amber-400/15 dark:text-amber-200 dark:ring-amber-400/30">
+    <PauseCircle className="size-3" />
+    Party on Hold
+  </span>
+);
+
 function Kbd({ children, className }: { children: ReactNode; className?: string }) {
   return (
     <kbd
@@ -453,6 +462,8 @@ export function OrderFormPage() {
 
   const lookupsQuery = useOrderLookups();
   const lookups = lookupsQuery.data;
+  /** Parties on dispatch hold, tagged in the customer search. */
+  const heldNames = useMemo(() => new Set((lookups?.customers ?? []).filter((c) => c.onHold).map((c) => c.name)), [lookups]);
   const { data: settings } = useSettings();
   const { data: qtyLayout } = useOrderQtyLayout();
   const orderQuery = useOrder(docKind === 'order' ? id : undefined);
@@ -2601,11 +2612,18 @@ export function OrderFormPage() {
           >
             <Label className="text-base">
               Customer <span className="text-rose-500">*</span>
+              {heldNames.has(customer) && <HoldTag />}
             </Label>
             <NativeSelect
               value={customer}
               onChange={onCustomer}
               options={(lookups?.customers ?? []).map((c) => c.name)}
+              renderOption={(v) => (
+                <>
+                  <span className="truncate">{v}</span>
+                  {heldNames.has(v) && <HoldTag />}
+                </>
+              )}
               placeholder="Select…"
               disabled={!isEdit && items.length > 0}
               onInvalidEntry={() => toast.error('Please select a correct customer')}

@@ -2699,7 +2699,9 @@ select:not(:disabled):not([multiple]):focus-visible {
 }
 .pls-page { font-family: var(--font-jakarta); color: #141a2b; }
 .pls-hero {
-  position: relative; overflow: hidden; border-radius: 22px; padding: 18px 20px; color: #fff;
+  /* clip, not hidden: its glow circle overhangs, and a focused field inside
+     could otherwise scroll the header sideways. */
+  position: relative; overflow: clip; border-radius: 22px; padding: 18px 20px; color: #fff;
   background: linear-gradient(135deg, #4f6ef7 0%, #3a4fd6 55%, #3140b8 100%);
   box-shadow: 0 20px 50px -18px rgba(49, 64, 184, 0.6), inset 0 1px 0 rgba(255, 255, 255, 0.3);
 }

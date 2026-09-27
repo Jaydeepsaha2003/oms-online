@@ -876,7 +876,7 @@ export class OrdersService {
     const [customers, prodCats, subCats, products, designs, combinations, allProducts, designNames] = await Promise.all([
       this.prisma.customer.findMany({
         where: { partyName: { not: null }, active: true },
-        select: { id: true, partyName: true, agentName: true, category: true },
+        select: { id: true, partyName: true, agentName: true, category: true, dispatchHold: true },
         orderBy: { partyName: 'asc' },
       }),
       this.prisma.product.findMany({ where: { category: { not: '' } }, select: { category: true }, distinct: ['category'], orderBy: { category: 'asc' } }),
@@ -912,7 +912,7 @@ export class OrdersService {
     const seen = new Set<string>();
     const custList = customers
       .filter((c) => c.partyName && !seen.has(c.partyName) && seen.add(c.partyName))
-      .map((c) => ({ id: c.id, name: c.partyName!, agentName: c.agentName, category: c.category }));
+      .map((c) => ({ id: c.id, name: c.partyName!, agentName: c.agentName, category: c.category, onHold: c.dispatchHold }));
 
     // designType code -> its first design name (fall back to the code itself).
     const nameByCode = new Map<string, string>();

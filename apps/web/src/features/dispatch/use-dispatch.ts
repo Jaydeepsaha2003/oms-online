@@ -8,6 +8,7 @@ import type {
   DispatchQuery,
   DraftPhotoCheckInput,
   DraftPhotoCheckResult,
+  HeldPartyDto,
   PendingList,
   PendingQuery,
   SubmitDispatchResult,
@@ -44,6 +45,15 @@ export function usePendingOrders(query: PendingQuery, opts: { autoRefresh?: bool
     placeholderData: (prev) => prev,
     staleTime: 15_000,
     refetchInterval: opts.autoRefresh ? 2000 : false,
+  });
+}
+
+/** Parties on dispatch hold and the pending lines they hold back. Under the
+ *  dispatch key, so placing or releasing a hold refreshes it. */
+export function useHeldParties() {
+  return useQuery({
+    queryKey: [...KEY, 'on-hold'],
+    queryFn: () => http.get<HeldPartyDto[]>('/dispatch/on-hold'),
   });
 }
 

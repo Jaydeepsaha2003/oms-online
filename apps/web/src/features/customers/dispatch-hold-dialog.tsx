@@ -20,10 +20,13 @@ import { useBulkSetCustomerHold, useSetCustomerHold } from './use-customers';
 /** How many party names the confirmation spells out before it starts counting. */
 const NAMES_SHOWN = 6;
 
-const nameOf = (c: CustomerDto) => c.partyName ?? `#${c.id}`;
+/** What the dialog needs of a party — a full CustomerDto satisfies it. */
+export type HoldParty = Pick<CustomerDto, 'id' | 'partyName' | 'dispatchHold' | 'dispatchHoldReason' | 'dispatchHoldBy' | 'dispatchHoldAt'>;
+
+const nameOf = (c: HoldParty) => c.partyName ?? `#${c.id}`;
 
 /** "A, B and C" / "A, B, C and 4 more" — a list somebody can actually check. */
-function partyList(parties: CustomerDto[]): string {
+function partyList(parties: HoldParty[]): string {
   const names = parties.map(nameOf);
   if (names.length <= NAMES_SHOWN) {
     return names.length <= 1
@@ -51,7 +54,7 @@ export function DispatchHoldDialog({
   hold,
   onClose,
 }: {
-  parties: CustomerDto[];
+  parties: HoldParty[];
   /** true = place the hold, false = release it. */
   hold: boolean;
   onClose: () => void;
@@ -107,12 +110,13 @@ export function DispatchHoldDialog({
             {hold ? (
               <>
                 Nobody will be able to record a new dispatch for{' '}
-                {single ? 'this party' : 'these parties'}. Orders can still be taken, goods already
+                {single ? 'this party' : 'these parties'}: their pending orders leave Dispatch Order
+                and wait on the Party On Hold page. Orders can still be taken, goods already
                 dispatched can still be billed, and returns still go through — only shipping again
                 is blocked.
               </>
             ) : (
-              <>Dispatches can be recorded again straight away.</>
+              <>Their pending orders return to Dispatch Order straight away.</>
             )}
           </DialogDescription>
         </DialogHeader>

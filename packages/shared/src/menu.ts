@@ -393,6 +393,13 @@ export const MENU: MenuNode[] = [
         icon: 'Sparkles',
         permission: perm(RESOURCES.DESIGN_TRACK, ACTIONS.VIEW),
       },
+      {
+        id: 'party-on-hold',
+        label: 'Party On Hold',
+        to: '/dispatch/on-hold',
+        icon: 'PauseCircle',
+        permission: perm(RESOURCES.DISPATCH, ACTIONS.VIEW),
+      },
     ],
   },
   {

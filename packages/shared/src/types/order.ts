@@ -316,7 +316,8 @@ export interface OrderItemOption {
 /** Dropdown sources for the order form. Products/designs carry their rates so the
  *  form can auto-fill product/design rate and filter design types by category. */
 export interface OrderLookups {
-  customers: { id: number; name: string; agentName: string | null; category: string | null }[];
+  /** `onHold` = the party is on dispatch hold (see the Party On Hold page). */
+  customers: { id: number; name: string; agentName: string | null; category: string | null; onHold: boolean }[];
   categories: string[];
   subCategories: string[];
   products: OrderProductLite[];

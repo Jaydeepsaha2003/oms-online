@@ -78,6 +78,20 @@ export interface DispatchHoldInfo {
   at: string | null;
 }
 
+/**
+ * A party on dispatch hold, with the pending order lines it is holding back —
+ * the Party On Hold page. Those lines are left out of Dispatch Order until the
+ * hold is released.
+ */
+export interface HeldPartyDto {
+  id: number;
+  name: string;
+  agentName: string | null;
+  region: string | null;
+  hold: DispatchHoldInfo;
+  lines: PendingLineDto[];
+}
+
 /** An order line with its still-to-dispatch (remaining) quantities. */
 export interface PendingLineDto {
   /** Source reservation for this order line; absent for regular orders. */
@@ -135,16 +149,6 @@ export interface PendingLineDto {
    *  DispatchService's in-memory line lock), so other users see it's taken
    *  before they even try to open it. Null/absent = free to open. */
   lockedByName?: string | null;
-  /**
-   * Set when this line's PARTY is on dispatch hold, so the pending list can say
-   * so before anyone opens the line. The server refuses the dispatch either
-   * way — this exists so the refusal isn't the first the user hears of it.
-   *
-   * Resolved per PAGE rather than baked into the cached pending pool, the same
-   * way the line locks are: a hold placed now must bite now, not once the
-   * pool's cache expires.
-   */
-  onHold?: DispatchHoldInfo | null;
   /** How many reference photos this line already has. Counted server-side per
    *  page so a mobile card can offer "view photos" without each card firing its
    *  own request. 0 = nothing attached yet. */

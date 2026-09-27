@@ -173,6 +173,7 @@ export function useSetCustomerHold() {
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: KEY });
       qc.invalidateQueries({ queryKey: ['dispatch'] });
+      qc.invalidateQueries({ queryKey: ['orders', 'lookups'] });
     },
   });
 }
@@ -191,6 +192,7 @@ export function useBulkSetCustomerHold() {
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: KEY });
       qc.invalidateQueries({ queryKey: ['dispatch'] });
+      qc.invalidateQueries({ queryKey: ['orders', 'lookups'] });
     },
   });
 }

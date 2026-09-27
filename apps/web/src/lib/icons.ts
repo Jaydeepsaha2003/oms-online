@@ -57,6 +57,7 @@ import {
   Warehouse,
   Sparkles,
   TrendingUp,
+  PauseCircle,
   type LucideIcon,
 } from 'lucide-react';
 
@@ -96,6 +97,7 @@ const ICONS: Record<string, LucideIcon> = {
   Warehouse,
   Sparkles,
   TrendingUp,
+  PauseCircle,
   BarChart3,
   Settings,
   UserCog,

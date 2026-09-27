@@ -98,6 +98,14 @@ export class DispatchController {
     return this.dispatch.pendingFilterOptions(query);
   }
 
+  /** The Party On Hold page: held parties and the pending lines they hold back. */
+  @Get('on-hold')
+  @Permissions(perm(R, ACTIONS.VIEW))
+  async heldParties(@CurrentUser() user: AuthenticatedUser) {
+    const parties = await this.dispatch.heldParties();
+    return parties.map((p) => ({ ...p, lines: this.redactRates(p.lines, user) }));
+  }
+
   /** Bulk row-selection action: mark a batch of ticked pending lines URGENT (or
    *  back to NORMAL) in one call. Declared above `:id`-shaped routes for the
    *  same reason the Products bulk routes are — `pending` here is a fixed
