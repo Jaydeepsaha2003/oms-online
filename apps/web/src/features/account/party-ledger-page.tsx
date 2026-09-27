@@ -107,6 +107,16 @@ const AGEING = [
 const DUE_OPTIONS: ComboboxOption[] = LEDGER_DUE_FILTERS.map((f) => ({ value: f.value, label: f.label }));
 const dueLabelOf = (v: string) => LEDGER_DUE_FILTERS.find((f) => f.value === v)?.label ?? v;
 
+/** The keys that walk the ledger's rows, and how far each one moves. */
+const ROW_STEP: Record<string, number> = { ArrowDown: 1, ArrowUp: -1, PageDown: 10, PageUp: -10 };
+const ROW_KEYS = new Set([...Object.keys(ROW_STEP), 'Home', 'End']);
+/** Focus a row and bring it into view clear of the sticky header and foot
+ *  (their room is the row's scroll-margin in index.css). */
+const goToRow = (row: HTMLElement) => {
+  row.focus({ preventScroll: true });
+  row.scrollIntoView({ block: 'nearest' });
+};
+
 /** Text size for the ledger (A · A · A), remembered per device. */
 const ZOOM_KEY = 'oms:ledger-zoom';
 const ZOOMS = [
@@ -443,13 +453,24 @@ export function PartyLedgerPage() {
     return () => window.removeEventListener('keydown', onKey);
   }, [canPrintLedger, pdfLoading, pdfPreview, rows.length]);
   // "/" jumps to the customer filter and "?" lists the shortcuts — never while
-  // typing in a field or with a dialog up, where both are ordinary keys.
+  // typing in a field or with a dialog up, where both are ordinary keys. The
+  // row keys work from anywhere too: with nothing focused, the first press
+  // lands on the grid (where rowKey takes over) instead of doing nothing until
+  // a row has been clicked.
   useEffect(() => {
     const onKey = (event: KeyboardEvent) => {
       if (event.ctrlKey || event.metaKey || event.altKey) return;
       const target = event.target as HTMLElement | null;
       if (target && (target.isContentEditable || /^(INPUT|TEXTAREA|SELECT)$/.test(target.tagName))) return;
       if (document.querySelector('[role="dialog"], [role="alertdialog"]')) return;
+      if (ROW_KEYS.has(event.key) && !target?.closest('[data-lrow], button, a, [role="combobox"], [role="listbox"]')) {
+        const rows = [...document.querySelectorAll<HTMLElement>('[data-lrow]')].filter((el) => el.offsetParent);
+        const row = event.key === 'End' ? rows[rows.length - 1] : event.key === 'Home' ? rows[0] : rows.find((el) => el.tabIndex === 0) ?? rows[0];
+        if (!row) return; // a phone: cards, no grid to walk
+        event.preventDefault();
+        goToRow(row);
+        return;
+      }
       if (event.key === '/') {
         const field = [...document.querySelectorAll<HTMLInputElement>('#pl-customer, #pl-customer-m')].find((el) => el.offsetParent);
         if (!field) return;
@@ -552,15 +573,17 @@ export function PartyLedgerPage() {
       .join(' ');
   }, [running, openingNet]);
 
-  /** ↑ / ↓ walk the desktop rows; Enter or Space opens one that has detail. */
+  /** ↑ / ↓ walk the desktop rows, Page Up / Down ten at a time, Home / End to
+   *  either end; Enter or Space opens one that has detail. */
   const rowKey = (e: React.KeyboardEvent<HTMLElement>, r: PartyLedgerRow, openable: boolean) => {
     if (e.target !== e.currentTarget) return;
-    if (e.key === 'ArrowDown' || e.key === 'ArrowUp') {
+    if (ROW_KEYS.has(e.key)) {
       const all = [...document.querySelectorAll<HTMLElement>('[data-lrow]')];
-      const next = all[all.indexOf(e.currentTarget) + (e.key === 'ArrowDown' ? 1 : -1)];
-      if (!next) return;
+      const at = all.indexOf(e.currentTarget);
+      const to = e.key === 'Home' ? 0 : e.key === 'End' ? all.length - 1 : Math.max(0, Math.min(all.length - 1, at + (ROW_STEP[e.key] ?? 0)));
+      if (to === at || !all[to]) return;
       e.preventDefault();
-      next.focus();
+      goToRow(all[to]);
     } else if ((e.key === 'Enter' || e.key === ' ') && openable) {
       e.preventDefault();
       setReceiptFor(r);
@@ -1266,7 +1289,9 @@ export function PartyLedgerPage() {
           <ul className="space-y-2.5">
             {(
               [
-                ['Move between ledger rows', '↑  ↓'],
+                ['Move between ledger rows (from anywhere on the page)', '↑  ↓'],
+                ['Jump ten rows', 'PgUp  PgDn'],
+                ['First / last row', 'Home  End'],
                 ['Open receipts / allocation', 'Enter'],
                 ['Show how an ageing is worked out', 'Tab → Enter'],
                 ['Jump to the Customer filter', '/'],

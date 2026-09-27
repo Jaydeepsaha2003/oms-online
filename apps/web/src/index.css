@@ -2567,7 +2567,9 @@ select:not(:disabled):not([multiple]):focus-visible {
 }
 .pl-th-group { height: 28px; padding: 0 10px; letter-spacing: 0.14em; border-bottom: 1px solid rgba(255, 255, 255, 0.14); border-right-color: rgba(255, 255, 255, 0.15); }
 .pl-th-key { display: inline-block; width: 9px; height: 9px; margin-right: 7px; border-radius: 3px; vertical-align: -1px; box-shadow: 0 0 0 2px rgba(255, 255, 255, 0.3); }
-.pl-tr { outline: none; animation: plRow 0.42s cubic-bezier(0.22, 1, 0.36, 1) both; }
+/* scroll-margin: room for the sticky column band above and the three foot bands
+   below, so a row walked to with the keyboard is never hidden behind either. */
+.pl-tr { outline: none; animation: plRow 0.42s cubic-bezier(0.22, 1, 0.36, 1) both; scroll-margin: 64px 0 112px; }
 .pl-td { padding: 6px 10px; vertical-align: middle; background: #fff; border-bottom: 1px solid #e8ecf4; border-right: 1px solid #eef1f6; }
 .pl-tr:nth-child(even) .pl-td { background: #f6f8fc; }
 .pl-tr .pl-td:first-child { box-shadow: inset 3px 0 0 var(--rail, transparent); }
