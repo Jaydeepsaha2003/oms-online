@@ -195,8 +195,9 @@ export function PartyListsPage() {
         </div>
       ) : (
         <>
-          {/* ── One card per list ── */}
-          <section className="grid grid-cols-[repeat(auto-fill,minmax(min(100%,280px),1fr))] gap-3">
+          {/* ── One card per list — auto-fit, so however many lists there are
+              they share the full width instead of leaving empty columns. ── */}
+          <section className="grid grid-cols-[repeat(auto-fit,minmax(min(100%,280px),1fr))] gap-3">
             {lists.map((l, i) => {
               const k = KIND[l.kind];
               const c = counts.m.get(l.id) ?? { members: 0, outstanding: 0 };
