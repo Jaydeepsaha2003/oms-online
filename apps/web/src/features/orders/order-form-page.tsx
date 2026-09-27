@@ -2006,6 +2006,19 @@ export function OrderFormPage() {
     }, 950);
   };
 
+  /**
+   * A held party takes no new orders — the server refuses them too
+   * (OrdersService.assertTakingOrders). Stopped here before the confirm, for
+   * creating an order, confirming a draft or converting a quotation; an order
+   * already taken for the party can still be edited.
+   */
+  const holdBlocks = () => {
+    const name = customer.trim();
+    if (!heldNames.has(name) || (savedStatus && savedStatus !== 'DRAFT' && existing?.customerName === name)) return false;
+    toast.error(`${name} is on hold — orders can't be created for this party. Release the hold on the Party On Hold page first.`);
+    return true;
+  };
+
   const validate = (forDraft = false): boolean => {
     if (!customer.trim()) return !toast.error('Please select a correct customer');
     if (!forDraft && !completionDay.trim()) return !toast.error('Please Select the Completion Day');
@@ -2136,7 +2149,7 @@ export function OrderFormPage() {
   // Edit-&-convert: save the quotation's edits, then convert it to an order and
   // open the order's printable page. Only used when editing a quotation.
   const saveAndConvert = async () => {
-    if (!validate()) return;
+    if (holdBlocks() || !validate()) return;
     const ok = await confirm({
       title: 'Save changes and convert to order?',
       description: `${items.length} item${items.length === 1 ? '' : 's'} · total ₹${total.toLocaleString('en-IN')} for ${customer.trim()}.`,
@@ -2198,7 +2211,7 @@ export function OrderFormPage() {
     // Editing a DRAFT and saving it as CONFIRMED is not an ordinary update —
     // it is the moment the order becomes real, so it says so.
     const confirmingDraft = isEdit && !isDraft && status === 'DRAFT';
-    if (!validate(isDraft)) return;
+    if ((!isDraft && holdBlocks()) || !validate(isDraft)) return;
     const ok = await confirm({
       title: isEdit
         ? confirmingDraft
@@ -2263,7 +2276,7 @@ export function OrderFormPage() {
   const createAndDispatch = async () => {
     const fromDraft = isEdit && docKind === 'order' && status === 'DRAFT';
     if ((isEdit && !fromDraft) || docKind !== 'order' || !can('dispatch:create')) return;
-    if (!validate()) return;
+    if (holdBlocks() || !validate()) return;
     // Dispatching is what triggers the photo rule — see photoLines above. Block
     // before the confirm, not after: the order must not be created either, or
     // the user is left with a half-done job they didn't ask for.
@@ -2334,7 +2347,7 @@ export function OrderFormPage() {
     if (isEdit) return saveOrder(status === 'DRAFT' ? 'CONFIRMED' : status, false);
     // Users who can't print a bill have nothing to preview — save straight away.
     if (!can('order:print')) return saveOrder('CONFIRMED', false);
-    if (!validate()) return;
+    if (holdBlocks() || !validate()) return;
     setSavePrompt(true);
   };
 
@@ -2628,6 +2641,11 @@ export function OrderFormPage() {
               disabled={!isEdit && items.length > 0}
               onInvalidEntry={() => toast.error('Please select a correct customer')}
             />
+            {heldNames.has(customer.trim()) && (
+              <p className="rounded-md bg-amber-50 px-2 py-1 text-[12px] leading-snug font-semibold text-amber-900 dark:bg-amber-400/10 dark:text-amber-200">
+                On hold — orders can&apos;t be created for this party{docKind === 'order' ? '; a draft or quotation still can' : ''}.
+              </p>
+            )}
           </div>
           <div className="min-w-0 space-y-1.5" data-tabfield="poNumber">
             <Label className="text-base whitespace-nowrap">PO Number</Label>

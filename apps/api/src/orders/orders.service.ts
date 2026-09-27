@@ -274,6 +274,7 @@ export class OrdersService {
     actor?: { id?: string | null; name?: string | null; isSuperAdmin?: boolean },
   ): Promise<OrderDto> {
     const data = await this.toHeaderData(dto);
+    await this.assertTakingOrders(data.customerId ?? null, data.status);
     // Booking-sourced lines are re-priced at their booking's frozen date rates and
     // checked against what's left on the booking before anything is written.
     await this.applyBookingPricing(dto.items ?? [], undefined, actor?.isSuperAdmin ?? false);
@@ -315,7 +316,7 @@ export class OrdersService {
   ): Promise<OrderDto> {
     const current = await this.prisma.order.findUnique({
       where: { id },
-      select: { status: true, completionDate: true, quotationSource: { select: { code: true } } },
+      select: { status: true, customerId: true, completionDate: true, quotationSource: { select: { code: true } } },
     });
     if (!current) throw new NotFoundException('Order not found.');
     if (current.status === 'QUOTED' && !opts?.revivingQuotation) {
@@ -325,6 +326,11 @@ export class OrdersService {
       );
     }
     const data = await this.toHeaderData(dto as CreateOrderDto);
+    // Confirming a draft, reviving a parked quotation, or moving an order onto
+    // another party takes a new order for that party.
+    if (isUncommittedOrder(current.status) || current.customerId !== (data.customerId ?? null)) {
+      await this.assertTakingOrders(data.customerId ?? null, data.status);
+    }
     await this.assertMayRescheduleAfterDispatch(id, current.completionDate, data.completionDate ?? null, opts?.isSuperAdmin ?? false);
     // Bookings that were already drawn into this order — they may lose lines (which
     // frees their quantity) so they must be recomputed even if no line references
@@ -697,8 +703,10 @@ export class OrdersService {
     note?: string,
     actorName?: string | null,
   ): Promise<OrderDto> {
-    const order = await this.prisma.order.findUnique({ where: { id }, select: { id: true, items: { select: { id: true } } } });
+    const order = await this.prisma.order.findUnique({ where: { id }, select: { id: true, status: true, customerId: true, items: { select: { id: true } } } });
     if (!order) throw new NotFoundException('Order not found.');
+    // Bringing a cancelled order back takes it again.
+    if (status === 'CONFIRMED' && order.status === 'CANCELLED') await this.assertTakingOrders(order.customerId, status);
     if (status === 'CANCELLED' && order.items.length) {
       const dispatched = await this.prisma.dispatch.count({ where: { orderItemId: { in: order.items.map((i) => i.id) } } });
       if (dispatched > 0) {
@@ -1349,6 +1357,24 @@ export class OrdersService {
     if (!dispatched) return;
     throw new ForbiddenException(
       'This order has already been dispatched, so its completion date is locked — only a System Administrator can change it now. Every other detail is still editable.',
+    );
+  }
+
+  /**
+   * A party on hold takes no new orders.
+   *
+   * Checked where an order becomes real — created as one, a draft or parked
+   * quotation confirmed, a cancelled one restored. Drafts and quotations stay
+   * open (they commit nothing), and editing an order taken before the hold is
+   * left alone, like a dispatch recorded before it.
+   */
+  private async assertTakingOrders(customerId: number | null, status: string | null | undefined): Promise<void> {
+    if (customerId == null || isUncommittedOrder(status ?? '')) return;
+    const c = await this.prisma.customer.findUnique({ where: { id: customerId }, select: { partyName: true, dispatchHold: true, dispatchHoldReason: true } });
+    if (!c?.dispatchHold) return;
+    const why = c.dispatchHoldReason?.trim();
+    throw new BadRequestException(
+      `${c.partyName || 'This party'} is on hold${why ? ` — ${why}` : ''}. Orders can't be created for it; release the hold on the Party On Hold page first.`,
     );
   }
 
