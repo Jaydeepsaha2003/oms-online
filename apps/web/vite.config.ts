@@ -100,13 +100,23 @@ for (const c of certCandidates) {
 // "Not secure". Serve the route ourselves, straight from the live plugin CA
 // (~/.vite-plugin-mkcert/rootCA.pem) so it also can't go stale if the CA is
 // ever regenerated. Mirrors the same route on the Nest server (main.ts).
-const sendRootCa = (_req: unknown, res: { setHeader: (k: string, v: string) => void; end: (body: string | Buffer) => void; statusCode: number }) => {
+//
+// `?download` sends the same CA as a plain file instead. Android 11+ refuses a
+// CA installed from a browser ("must be installed in Settings"), and Chrome hands
+// a file served as a certificate straight to that refusing installer, so it never
+// reaches Downloads for Settings to pick up. See CERT_DOWNLOAD_URL in the app.
+const sendRootCa = (req: { url?: string }, res: { setHeader: (k: string, v: string) => void; end: (body: string | Buffer) => void; statusCode: number }) => {
   // Try the live plugin CA first, then the project-local copy (the only one
   // available when running as SYSTEM via the boot-time autostart task).
   for (const caPath of [path.join(homedir(), '.vite-plugin-mkcert', 'rootCA.pem'), path.join(certsDir, 'rootCA.pem')]) {
     try {
       const ca = readFileSync(caPath);
-      res.setHeader('Content-Type', 'application/x-x509-ca-cert');
+      if (req.url?.includes('download')) {
+        res.setHeader('Content-Type', 'application/octet-stream');
+        res.setHeader('Content-Disposition', 'attachment; filename="OMS-rootCA.crt"');
+      } else {
+        res.setHeader('Content-Type', 'application/x-x509-ca-cert');
+      }
       res.end(ca);
       return;
     } catch {

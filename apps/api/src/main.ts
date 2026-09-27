@@ -154,8 +154,15 @@ async function bootstrap(): Promise<void> {
       app
         .getHttpAdapter()
         .getInstance()
-        .get('/oms-rootCA.crt', (_req: unknown, res: { setHeader: (k: string, v: string) => void; sendFile: (p: string) => void }) => {
-          res.setHeader('Content-Type', 'application/x-x509-ca-cert');
+        .get('/oms-rootCA.crt', (req: { query: Record<string, unknown> }, res: { setHeader: (k: string, v: string) => void; sendFile: (p: string) => void }) => {
+          // `?download`: a plain file for Android, whose browser installer refuses
+          // CAs — same as the Vite server's route (vite.config.ts).
+          if ('download' in req.query) {
+            res.setHeader('Content-Type', 'application/octet-stream');
+            res.setHeader('Content-Disposition', 'attachment; filename="OMS-rootCA.crt"');
+          } else {
+            res.setHeader('Content-Type', 'application/x-x509-ca-cert');
+          }
           res.sendFile(caFile);
         });
     }

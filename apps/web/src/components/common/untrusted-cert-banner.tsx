@@ -1,5 +1,6 @@
 import { useEffect, useState } from 'react';
 import { ShieldAlert, X } from 'lucide-react';
+import { ANDROID_CERT_STEPS, CERT_DOWNLOAD_URL, WORKER_CERT_EVENT, isAndroid, isWorkerCertRefused } from '@/lib/service-worker';
 
 const DISMISS_KEY = 'oms:cert-banner-dismissed';
 
@@ -16,10 +17,16 @@ const DISMISS_KEY = 'oms:cert-banner-dismissed';
  * already trusts the certificate (Windows only needs telling once) never sees
  * anything wrong — which is exactly the split this banner exists to explain.
  *
- * `window.isSecureContext` is the browser's own verdict on whether the
- * current connection is genuinely trusted — false here means untrusted-cert
- * or plain http, never a real server outage, so this and ApiStatusBanner
- * (server updating) never fire for the same cause.
+ * Two signals, because neither covers both cases. `window.isSecureContext`
+ * false means plain http. A certificate the device does not trust leaves it
+ * TRUE once the warning is tapped through, so that case is caught by Chrome
+ * refusing the service worker (lib/service-worker.ts). Neither is a server
+ * outage, so this and ApiStatusBanner (server updating) never fire together.
+ *
+ * Android gets its own steps: since Android 11 a CA certificate can only be
+ * installed from Settings, and opening the certificate link just shows "Can't
+ * install CA certificates". So the link downloads the file, and the steps say
+ * where in Settings to install it.
  *
  * Dismissal is per-tab (sessionStorage): closing and reopening keeps it
  * gone for that session, but a fresh visit re-checks — so it comes back if
@@ -32,12 +39,15 @@ export function UntrustedCertBanner() {
 
   useEffect(() => {
     if (typeof window === 'undefined') return;
-    setInsecure(!window.isSecureContext);
+    const check = () => setInsecure(!window.isSecureContext || isWorkerCertRefused());
+    check();
+    window.addEventListener(WORKER_CERT_EVENT, check);
     try {
       setDismissed(sessionStorage.getItem(DISMISS_KEY) === '1');
     } catch {
       /* private browsing / storage blocked — just don't remember the dismissal */
     }
+    return () => window.removeEventListener(WORKER_CERT_EVENT, check);
   }, []);
 
   if (!insecure || dismissed) return null;
@@ -61,7 +71,15 @@ export function UntrustedCertBanner() {
     >
       <ShieldAlert className="mt-0.5 size-4 shrink-0" />
       <span className="flex-1">
-        {isHttps ? (
+        {isHttps && isAndroid() ? (
+          <>
+            This phone doesn’t trust OMS’s security certificate yet, so notifications can’t reach it.{' '}
+            <a href={CERT_DOWNLOAD_URL} download="OMS-rootCA.crt" className="font-semibold underline underline-offset-2">
+              Download the certificate
+            </a>
+            , then {ANDROID_CERT_STEPS}
+          </>
+        ) : isHttps ? (
           <>
             This device hasn’t trusted OMS’s security certificate yet — some things (notifications, background
             updates) may randomly fail until it does.{' '}

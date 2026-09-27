@@ -27,6 +27,7 @@ import '@fontsource/carlito/700.css';
 import App from '@/App';
 import { AppProviders } from '@/app/providers';
 import { watchForAppUpdates } from '@/lib/pwa-update';
+import { reportWorkerFailure } from '@/lib/service-worker';
 import { startApiStatusWatch } from '@/lib/api-status';
 // Applies the saved light/dark/system theme on load (keeps in step with the
 // no-flash inline script in index.html).
@@ -71,6 +72,7 @@ if ('serviceWorker' in navigator) {
       // is LOGGED now rather than silently dropped: without a worker there are
       // no notifications, and the swallowed error was the only clue why.
       console.warn('[OMS] service worker registration failed:', err);
+      reportWorkerFailure(err);
     });
 
   // Registering on 'load' keeps startup light, but that event may already have

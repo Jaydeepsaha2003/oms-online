@@ -1,5 +1,5 @@
 import type { PushSubscriptionRequest, VapidPublicKeyResult } from '@oms/shared';
-import { currentRegistration } from './service-worker';
+import { ANDROID_CERT_STEPS, CERT_DOWNLOAD_URL, currentRegistration, isAndroid } from './service-worker';
 import { http } from './api';
 
 export type SubscribeResult = { ok: true } | { ok: false; reason: string };
@@ -31,7 +31,13 @@ function registrationFailureReason(err: unknown): string {
   if (iOS && !standalone) {
     return `On iPhone, notifications only work when OMS is opened from the Home Screen. Tap Share → Add to Home Screen, open OMS from that icon, then turn notifications on.${detail}`;
   }
-  return `Notifications need the app’s background service, which this device refused to start. This is usually the security certificate: open https://${typeof window !== 'undefined' ? window.location.host : ''}/oms-rootCA.crt to install the OMS certificate, then reload and try again.${detail}`;
+  const host = typeof window !== 'undefined' ? window.location.host : '';
+  // Android installs a CA only from Settings — the plain certificate link just
+  // shows "Can't install CA certificates" there.
+  if (isAndroid()) {
+    return `This phone doesn’t trust OMS’s security certificate yet, so it can’t turn notifications on. Download it from https://${host}${CERT_DOWNLOAD_URL}, then ${ANDROID_CERT_STEPS} Then tap Turn on again.${detail}`;
+  }
+  return `Notifications need the app’s background service, which this device refused to start. This is usually the security certificate: open https://${host}/oms-rootCA.crt to install the OMS certificate, then reload and try again.${detail}`;
 }
 
 /**
