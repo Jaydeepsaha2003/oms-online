@@ -17,6 +17,7 @@ import {
 } from '@oms/shared';
 import type { TDocumentDefinitions } from 'pdfmake/interfaces';
 import { PrismaService } from '../prisma/prisma.service';
+import { assertPartyNotOnHold, partyHoldMessage } from '../customers/party-hold.util';
 import { formatDate } from '../common/date.util';
 import { PdfService } from '../pdf/pdf.service';
 import { BookingsService } from '../bookings/bookings.service';
@@ -274,7 +275,8 @@ export class OrdersService {
     actor?: { id?: string | null; name?: string | null; isSuperAdmin?: boolean },
   ): Promise<OrderDto> {
     const data = await this.toHeaderData(dto);
-    await this.assertTakingOrders(data.customerId ?? null, data.status);
+    // Drafts included — a held party gets no order of any kind.
+    await assertPartyNotOnHold(this.prisma, { id: data.customerId ?? null, name: data.customerName });
     // Booking-sourced lines are re-priced at their booking's frozen date rates and
     // checked against what's left on the booking before anything is written.
     await this.applyBookingPricing(dto.items ?? [], undefined, actor?.isSuperAdmin ?? false);
@@ -326,10 +328,15 @@ export class OrdersService {
       );
     }
     const data = await this.toHeaderData(dto as CreateOrderDto);
-    // Confirming a draft, reviving a parked quotation, or moving an order onto
-    // another party takes a new order for that party.
-    if (isUncommittedOrder(current.status) || current.customerId !== (data.customerId ?? null)) {
-      await this.assertTakingOrders(data.customerId ?? null, data.status);
+    // A held party's draft or parked quotation can't be saved or confirmed, an
+    // order can't be moved onto it, and one taken before the hold can only be
+    // corrected or cut back — a new line or a larger quantity is a new order.
+    const holdMsg = await partyHoldMessage(this.prisma, { id: data.customerId ?? null, name: data.customerName });
+    if (
+      holdMsg &&
+      (isUncommittedOrder(current.status) || current.customerId !== (data.customerId ?? null) || (await this.addsToOrder(id, dto.items)))
+    ) {
+      throw new BadRequestException(holdMsg);
     }
     await this.assertMayRescheduleAfterDispatch(id, current.completionDate, data.completionDate ?? null, opts?.isSuperAdmin ?? false);
     // Bookings that were already drawn into this order — they may lose lines (which
@@ -706,7 +713,7 @@ export class OrdersService {
     const order = await this.prisma.order.findUnique({ where: { id }, select: { id: true, status: true, customerId: true, items: { select: { id: true } } } });
     if (!order) throw new NotFoundException('Order not found.');
     // Bringing a cancelled order back takes it again.
-    if (status === 'CONFIRMED' && order.status === 'CANCELLED') await this.assertTakingOrders(order.customerId, status);
+    if (status === 'CONFIRMED' && order.status === 'CANCELLED') await assertPartyNotOnHold(this.prisma, { id: order.customerId });
     if (status === 'CANCELLED' && order.items.length) {
       const dispatched = await this.prisma.dispatch.count({ where: { orderItemId: { in: order.items.map((i) => i.id) } } });
       if (dispatched > 0) {
@@ -1360,22 +1367,19 @@ export class OrdersService {
     );
   }
 
-  /**
-   * A party on hold takes no new orders.
-   *
-   * Checked where an order becomes real — created as one, a draft or parked
-   * quotation confirmed, a cancelled one restored. Drafts and quotations stay
-   * open (they commit nothing), and editing an order taken before the hold is
-   * left alone, like a dispatch recorded before it.
-   */
-  private async assertTakingOrders(customerId: number | null, status: string | null | undefined): Promise<void> {
-    if (customerId == null || isUncommittedOrder(status ?? '')) return;
-    const c = await this.prisma.customer.findUnique({ where: { id: customerId }, select: { partyName: true, dispatchHold: true, dispatchHoldReason: true } });
-    if (!c?.dispatchHold) return;
-    const why = c.dispatchHoldReason?.trim();
-    throw new BadRequestException(
-      `${c.partyName || 'This party'} is on hold${why ? ` — ${why}` : ''}. Orders can't be created for it; release the hold on the Party On Hold page first.`,
-    );
+  /** Would saving these lines order more than the order holds now — a new
+   *  line, a cancelled one brought back, or any quantity raised? */
+  private async addsToOrder(orderId: number, items: Record<string, unknown>[] | undefined): Promise<boolean> {
+    if (!items) return false;
+    const saved = await this.prisma.orderItem.findMany({ where: { orderId }, select: { id: true, status: true, bags: true, pcs: true, gram: true, box: true } });
+    const byId = new Map(saved.map((s) => [s.id, s]));
+    return items.some((it) => {
+      const s = byId.get(toNum(it.id) ?? -1);
+      if (!s) return true;
+      if (uc(it.status) === 'CANCELLED') return false;
+      if (s.status === 'CANCELLED') return true;
+      return (['bags', 'pcs', 'gram', 'box'] as const).some((k) => (toNum(it[k]) ?? 0) > (toNum(s[k]) ?? 0) + 1e-9);
+    });
   }
 
   private async toHeaderData(dto: CreateOrderDto): Promise<Prisma.OrderUncheckedCreateInput> {

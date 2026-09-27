@@ -416,6 +416,10 @@ const focusField = (root: HTMLElement | null, key: string): boolean => {
   return true;
 };
 
+/** What a held party is told, wherever the form stops it. */
+const holdText = (name: string) =>
+  `${name} is on hold — no orders, drafts or quotations can be made for this party. Release the hold on the Party On Hold page first.`;
+
 /** "Party on Hold" beside a held party's name — its orders wait on the Party On Hold page. */
 const HoldTag = () => (
   <span className="ml-auto inline-flex shrink-0 items-center gap-1 rounded-full bg-amber-100 px-2 py-0.5 text-[11px] font-bold text-amber-900 ring-1 ring-amber-300 ring-inset dark:bg-amber-400/15 dark:text-amber-200 dark:ring-amber-400/30">
@@ -1008,6 +1012,8 @@ export function OrderFormPage() {
   // can apply that customer's special rates to each line.
   const onCustomer = (name: string) => {
     const isSame = name.trim().toUpperCase() === customer.trim().toUpperCase();
+    // A held party can't be picked for anything new — order, draft or quotation.
+    if (!isSame && heldNames.has(name.trim())) return void toast.error(holdText(name.trim()));
     // Every line already on the order was priced (rate, special rate, agent
     // commission — all of it) for the party currently selected. Once the first
     // item is on the list, the party is locked: swapping it out would leave
@@ -2007,15 +2013,15 @@ export function OrderFormPage() {
   };
 
   /**
-   * A held party takes no new orders — the server refuses them too
-   * (OrdersService.assertTakingOrders). Stopped here before the confirm, for
-   * creating an order, confirming a draft or converting a quotation; an order
-   * already taken for the party can still be edited.
+   * A held party gets no order, draft or quotation — the server refuses them
+   * too (party-hold.util). Stopped here before the confirm, on every save; an
+   * order taken before the hold can still be corrected, and the server turns
+   * away any new line or larger quantity on it.
    */
   const holdBlocks = () => {
     const name = customer.trim();
     if (!heldNames.has(name) || (savedStatus && savedStatus !== 'DRAFT' && existing?.customerName === name)) return false;
-    toast.error(`${name} is on hold — orders can't be created for this party. Release the hold on the Party On Hold page first.`);
+    toast.error(holdText(name));
     return true;
   };
 
@@ -2107,6 +2113,7 @@ export function OrderFormPage() {
   // Persist the form as either an order or a quotation. On /orders/new the two
   // footer buttons pick the target; when editing, the target follows the route.
   const persist = async (target: 'order' | 'quotation') => {
+    if (holdBlocks()) return;
     if (target === 'quotation' && items.some((i) => i.bookingId != null)) {
       toast.error('Booked items need an order. Use Create order or Save as Draft.');
       return;
@@ -2184,7 +2191,7 @@ export function OrderFormPage() {
    * alone either way, same promise the Orders list's "Save as Quotation" makes.
    */
   const saveDraftAsQuotation = async () => {
-    if (!validate(true)) return;
+    if (holdBlocks() || !validate(true)) return;
     const ok = await confirm({
       title: 'Save changes and create a quotation?',
       description: `${items.length} item${items.length === 1 ? '' : 's'} · a quotation will be created from this draft — the draft itself is left as-is.`,
@@ -2211,7 +2218,7 @@ export function OrderFormPage() {
     // Editing a DRAFT and saving it as CONFIRMED is not an ordinary update —
     // it is the moment the order becomes real, so it says so.
     const confirmingDraft = isEdit && !isDraft && status === 'DRAFT';
-    if ((!isDraft && holdBlocks()) || !validate(isDraft)) return;
+    if (holdBlocks() || !validate(isDraft)) return;
     const ok = await confirm({
       title: isEdit
         ? confirmingDraft
@@ -2643,7 +2650,7 @@ export function OrderFormPage() {
             />
             {heldNames.has(customer.trim()) && (
               <p className="rounded-md bg-amber-50 px-2 py-1 text-[12px] leading-snug font-semibold text-amber-900 dark:bg-amber-400/10 dark:text-amber-200">
-                On hold — orders can&apos;t be created for this party{docKind === 'order' ? '; a draft or quotation still can' : ''}.
+                On hold — no orders, drafts or quotations can be made for this party.
               </p>
             )}
           </div>

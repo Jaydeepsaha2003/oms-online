@@ -126,10 +126,10 @@ export function DispatchHoldDialog({
           <DialogDescription className="text-[12.5px] leading-relaxed">
             {hold ? (
               <>
-                No new orders can be created for {single ? 'this party' : 'these parties'} and nobody
-                can record a new dispatch: their pending orders leave Dispatch Order and wait on the
-                Party On Hold page. Drafts and quotations can still be saved, goods already dispatched
-                can still be billed, and returns still go through.
+                No orders, drafts, quotations or bookings can be made for{' '}
+                {single ? 'this party' : 'these parties'}, and nobody can record a new dispatch: their
+                pending orders leave Dispatch Order and wait on the Party On Hold page. Goods already
+                dispatched can still be billed, and returns still go through.
               </>
             ) : (
               <>Orders can be created again, and their pending orders return to Dispatch Order straight away.</>

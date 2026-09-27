@@ -27,6 +27,7 @@ import {
   withinBooked,
 } from '@oms/shared';
 import { PrismaService } from '../prisma/prisma.service';
+import { assertPartyNotOnHold } from '../customers/party-hold.util';
 import { PdfService } from '../pdf/pdf.service';
 import { toNum, toStr, uc } from '../common/coerce';
 import {
@@ -112,6 +113,7 @@ export class BookingsService {
     const customerName = (uc(dto.customerName) ?? '') as string;
     if (!customerName) throw new BadRequestException('Customer is required.');
     const customer = await this.prisma.customer.findFirst({ where: { partyName: customerName } });
+    await assertPartyNotOnHold(this.prisma, { id: customer?.id ?? null, name: customerName });
 
     const bookingDate = dto.bookingDate ? new Date(dto.bookingDate) : new Date();
     if (Number.isNaN(bookingDate.getTime())) throw new BadRequestException('Invalid booking date.');
@@ -152,6 +154,7 @@ export class BookingsService {
     const existing = await this.prisma.booking.findUnique({ where: { id }, include: { items: true } });
     if (!existing) throw new NotFoundException('Booking not found.');
     if (existing.status === 'CANCELLED') throw new BadRequestException('A cancelled booking cannot be edited.');
+    await assertPartyNotOnHold(this.prisma, { name: dto.customerName !== undefined ? uc(dto.customerName) : existing.customerName });
 
     const data: Prisma.BookingUpdateInput = {};
     if (dto.customerName !== undefined) data.customerName = (uc(dto.customerName) ?? '') as string;
@@ -728,6 +731,7 @@ export class BookingsService {
     const booking = await this.prisma.booking.findUnique({ where: { id }, include: { items: true } });
     if (!booking) throw new NotFoundException('Booking not found.');
     if (booking.status === 'CANCELLED') throw new BadRequestException('A cancelled booking cannot be converted.');
+    await assertPartyNotOnHold(this.prisma, { id: booking.customerId, name: booking.customerName });
 
     const lines = (dto.lines ?? []).filter((l) => (l.productName || l.product));
     if (!lines.length) throw new BadRequestException('Add at least one item to convert.');

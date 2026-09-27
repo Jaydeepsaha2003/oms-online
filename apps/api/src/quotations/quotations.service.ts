@@ -2,6 +2,7 @@ import { BadRequestException, Injectable, NotFoundException } from '@nestjs/comm
 import { Prisma } from '@prisma/client';
 import { type OrderDto, type QuotationDto, type QuotationStatus, type Paginated } from '@oms/shared';
 import { PrismaService } from '../prisma/prisma.service';
+import { assertPartyNotOnHold } from '../customers/party-hold.util';
 import { toNum, toStr, uc } from '../common/coerce';
 import { OrdersService } from '../orders/orders.service';
 import { CreateOrderDto } from '../orders/dto/order.dto';
@@ -73,6 +74,7 @@ export class QuotationsService {
 
   async create(dto: CreateQuotationDto): Promise<QuotationDto> {
     const data = await this.toHeaderData(dto);
+    await assertPartyNotOnHold(this.prisma, { id: data.customerId ?? null, name: data.customerName });
     const row = await this.prisma.quotation.create({
       data: { ...data, items: { create: (dto.items ?? []).map((it) => this.toItemData(it)) } },
       include: INCLUDE,
@@ -104,6 +106,7 @@ export class QuotationsService {
     if (order.status !== 'DRAFT') {
       throw new BadRequestException('Only a draft order can be saved as a quotation.');
     }
+    await assertPartyNotOnHold(this.prisma, { id: order.customerId, name: order.customerName });
     if (!order.items.length) throw new BadRequestException('This draft has no items to quote.');
     // sourceOrderId is @unique, so a second quotation off the same draft would
     // fail on the constraint — say why instead of surfacing a Prisma error.
@@ -167,6 +170,7 @@ export class QuotationsService {
     if (!current) throw new NotFoundException('Quotation not found.');
     if (current.status === 'CONVERTED') throw new BadRequestException('A converted quotation cannot be edited.');
     const data = await this.toHeaderData(dto as CreateQuotationDto);
+    await assertPartyNotOnHold(this.prisma, { id: data.customerId ?? null, name: data.customerName });
     const row = await this.prisma.quotation.update({
       where: { id },
       data: {
@@ -272,6 +276,8 @@ export class QuotationsService {
     if (!q) throw new NotFoundException('Quotation not found.');
     if (q.status === 'CONVERTED') throw new BadRequestException('This quotation has already been converted.');
     if (q.status === 'CANCELLED') throw new BadRequestException('A cancelled quotation cannot be converted.');
+    // Asked before anything is written — the order side refuses too.
+    await assertPartyNotOnHold(this.prisma, { id: q.customerId, name: q.customerName });
 
     const orderDto: CreateOrderDto = {
       customerName: q.customerName,

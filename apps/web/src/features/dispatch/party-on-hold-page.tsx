@@ -77,7 +77,7 @@ export function PartyOnHoldPage() {
               <span className="text-[40px] leading-none font-extrabold tracking-[-0.03em] tabular-nums">{isLoading ? '—' : parties.length}</span>
               <span className="text-[15px] font-bold text-white/90">{plural(parties.length, 'party', 'parties')} on hold</span>
             </div>
-            <p className="mt-1.5 text-[13px] text-white/80">No new orders can be created for them, and their orders are hidden from Dispatch Order, until the hold is released.</p>
+            <p className="mt-1.5 text-[13px] text-white/80">No orders, drafts, quotations or bookings can be made for them, and their orders are hidden from Dispatch Order, until the hold is released.</p>
           </div>
           {canHold && <HoldPicker onPick={(party) => setDialog({ party, hold: true })} />}
         </div>

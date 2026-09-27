@@ -108,8 +108,10 @@ export function BookingFormPage() {
   }, [lookups]);
 
   const onCustomer = (name: string) => {
-    setCustomer(name);
     const c = lookups?.customers.find((x) => x.name === name);
+    // A held party gets no booking — the server refuses it too.
+    if (c?.onHold) return void toast.error(`${name} is on hold — no bookings can be made for this party. Release the hold on the Party On Hold page first.`);
+    setCustomer(name);
     if (c) {
       setAgentName(c.agentName ?? '');
       if (c.category) setCategory(c.category);
