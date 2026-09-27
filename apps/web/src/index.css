@@ -2198,6 +2198,18 @@ select:not(:disabled):not([multiple]):focus-visible {
 .cs-stat { padding: 8px 11px; border-radius: 13px; background: rgba(255, 255, 255, 0.12); border: 1px solid rgba(255, 255, 255, 0.22); box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.18); }
 .cs-stat-label { font-size: 10px; font-weight: 800; letter-spacing: 0.09em; text-transform: uppercase; color: rgba(255, 255, 255, 0.75); }
 .cs-stat-value { margin-top: 2px; font-size: 18px; font-weight: 800; font-variant-numeric: tabular-nums; }
+/* Bank + Cash / Bank / Cash, each with what is owed on it — the phone's tab bar on the blue. */
+.cs-seg { display: flex; gap: 4px; margin-top: 12px; padding: 4px; border-radius: 15px; background: rgba(255, 255, 255, 0.14); border: 1px solid rgba(255, 255, 255, 0.2); }
+.cs-seg-btn {
+  flex: 1; min-width: 0; min-height: 46px; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 1px;
+  border: 0; border-radius: 11px; background: transparent; color: #dbe4ff; cursor: pointer; -webkit-tap-highlight-color: transparent;
+  transition: background 0.2s ease, color 0.2s ease, box-shadow 0.2s ease;
+}
+.cs-seg-btn[aria-pressed='true'] { background: rgba(255, 255, 255, 0.95); color: #2f3fb5; box-shadow: 0 6px 14px -7px rgba(9, 26, 74, 0.7); }
+.cs-seg-btn:active { transform: scale(0.97); }
+.cs-seg-btn:focus-visible { outline: 2px solid #fff; outline-offset: 1px; }
+.cs-seg-label { font-size: 11px; font-weight: 800; letter-spacing: 0.02em; white-space: nowrap; }
+.cs-seg-value { font-size: 13.5px; font-weight: 800; font-variant-numeric: tabular-nums; white-space: nowrap; }
 .cs-body { flex: 1; min-height: 0; overflow-y: auto; overscroll-behavior: contain; -webkit-overflow-scrolling: touch; padding: 14px 14px 18px; display: flex; flex-direction: column; gap: 14px; }
 .cs-card { border-radius: 18px; background: rgba(255, 255, 255, 0.9); border: 1px solid #fff; box-shadow: 0 1px 2px rgba(20, 30, 60, 0.05), 0 10px 24px -16px rgba(20, 30, 60, 0.25); }
 .cs-caption { font-size: 12px; font-weight: 800; letter-spacing: 0.08em; text-transform: uppercase; color: #7a849c; }

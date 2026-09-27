@@ -50,15 +50,19 @@ export interface CollectPrefill {
 const money = (v: number | undefined) => (Number.isFinite(v) ? (v as number) : 0);
 
 /** The form pre-fill for collecting `amount` from a party — naming the invoices
- *  when specific ones were picked, else the balance and how many bills it spans. */
-const prefillFor = (p: PartyBalanceSummary, amount: number, codes: string[] = []): CollectPrefill => ({
-  party: p.partyName,
-  customerId: p.customerId,
-  amount,
-  itemText: codes.length
-    ? `${inrFull(amount)} for ${codes.join(', ')}`
-    : `${inrFull(amount)} balance · ${p.invoiceCount} invoice${p.invoiceCount === 1 ? '' : 's'}`,
-});
+ *  when specific ones were picked, else the balance and how many bills it spans,
+ *  and the side of the book when only one is being asked for. */
+const prefillFor = (p: PartyBalanceSummary, amount: number, codes: string[] = [], view: LedgerView = 'ALL'): CollectPrefill => {
+  const on = view === 'BANK' ? ' bank' : view === 'CASH' ? ' cash' : '';
+  return {
+    party: p.partyName,
+    customerId: p.customerId,
+    amount,
+    itemText: codes.length
+      ? `${inrFull(amount)}${on} for ${codes.join(', ')}`
+      : `${inrFull(amount)}${on} balance · ${p.invoiceCount} invoice${p.invoiceCount === 1 ? '' : 's'}`,
+  };
+};
 
 const PILL = 'px-[9px] py-[3px] text-[11.5px] font-bold';
 const promiseChip = (s: PromiseState, className?: string) => {
@@ -262,7 +266,7 @@ export function OwingPartiesWorklist({ onCollect, view = 'ALL', onViewChange }: 
   const [search, setSearch] = useState('');
   const [priority, setPriority] = useState<Priority | ''>('');
   const [picked, setPicked] = useState('');
-  const [sheet, setSheet] = useState<PartyBalanceSummary | null>(null);
+  const [sheet, setSheet] = useState<string | null>(null);
   const asideRef = useRef<HTMLElement>(null);
   const { data: fetched = [], isLoading, isFetching } = usePartyBalances(search);
   const raw = useMemo(() => balancesInView(fetched, view), [fetched, view]);
@@ -285,7 +289,7 @@ export function OwingPartiesWorklist({ onCollect, view = 'ALL', onViewChange }: 
   // open it in, so the row opens the sheet instead, as on a phone.
   const selected = balances.find((p) => p.partyName === picked) ?? balances[0];
   const openParty = (p: PartyBalanceSummary) => {
-    if (!asideRef.current?.offsetParent) return setSheet(p);
+    if (!asideRef.current?.offsetParent) return setSheet(p.partyName);
     setPicked(p.partyName);
   };
 
@@ -458,7 +462,7 @@ export function OwingPartiesWorklist({ onCollect, view = 'ALL', onViewChange }: 
                     <span className={cn('rp-rail absolute inset-y-0 left-0 w-1 max-sm:w-[5px]', RAIL_TONE[pr])} aria-hidden style={{ background: SKIN_TONE[PRIORITY_SKIN[pr]].grad }} />
                     <div className="flex items-start gap-2 pl-1.5 max-sm:pl-0">
                       <span className="bg-primary/10 text-primary rp-avatar flex size-8 shrink-0 items-center justify-center rounded-full text-xs font-bold max-sm:size-[34px]" style={{ background: SKIN_TONE[PRIORITY_SKIN[pr]].bg, color: SKIN_TONE[PRIORITY_SKIN[pr]].fg }}>{initials(p.partyName)}</span>
-                      <button type="button" onClick={() => setSheet(p)} className="min-w-0 flex-1 cursor-pointer text-left" title={`Collect from ${p.partyName}`}>
+                      <button type="button" onClick={() => setSheet(p.partyName)} className="min-w-0 flex-1 cursor-pointer text-left" title={`Collect from ${p.partyName}`}>
                         <div className="truncate font-medium">{p.partyName}</div>
                         <div className="text-muted-foreground truncate text-xs">{p.agent || 'No agent'} · {p.invoiceCount} inv</div>
                       </button>
@@ -484,7 +488,7 @@ export function OwingPartiesWorklist({ onCollect, view = 'ALL', onViewChange }: 
                           <a href={`tel:${p.mobile}`} aria-label={`Call ${p.partyName}`} title={`Call ${p.mobile}`}><Phone className="size-4" /></a>
                         </Button>
                       )}
-                      <Button size="sm" className="rp-act rp-act-primary h-8 shrink-0 gap-1.5 rounded-full px-3 text-xs font-semibold shadow-sm transition-transform active:scale-95 max-sm:rounded-xl max-sm:px-4" onClick={() => setSheet(p)}>
+                      <Button size="sm" className="rp-act rp-act-primary h-8 shrink-0 gap-1.5 rounded-full px-3 text-xs font-semibold shadow-sm transition-transform active:scale-95 max-sm:rounded-xl max-sm:px-4" onClick={() => setSheet(p.partyName)}>
                         <HandCoins className="size-3.5" /> Collect
                       </Button>
                     </div>
@@ -499,7 +503,11 @@ export function OwingPartiesWorklist({ onCollect, view = 'ALL', onViewChange }: 
       {!isLoading && selected && (
         <PartyDetailAside key={selected.partyName} p={selected} view={view} onCollect={onCollect} asideRef={asideRef} />
       )}
-      {sheet && <CollectSheet key={sheet.partyName} p={sheet} view={view} onCollect={onCollect} onClose={() => setSheet(null)} />}
+      {/* Both sides of the book as the server sent them: the sheet switches
+          between them itself, where the list's rows are cut to its view. */}
+      {sheet && fetched.some((f) => f.partyName === sheet) && (
+        <CollectSheet key={sheet} party={fetched.find((f) => f.partyName === sheet)!} listView={view} onCollect={onCollect} onClose={() => setSheet(null)} />
+      )}
     </div>
   );
 }
@@ -526,6 +534,14 @@ function usePartyCollect(p: PartyBalanceSummary, view: LedgerView) {
   const { data: history } = useFollowupList({ kind: 'PAYMENT', party: p.partyName, pageSize: 20 });
   const [picked, setPicked] = useState<Set<string>>(new Set());
   const [amount, setAmount] = useState<number | null>(null);
+  // Ticks and a typed amount belong to one side's bills, so a switch of side
+  // starts them again (React's reset-on-prop-change, done during render).
+  const [forView, setForView] = useState(view);
+  if (forView !== view) {
+    setForView(view);
+    setPicked(new Set());
+    setAmount(null);
+  }
 
   const side = (inv: PartyOpenInvoice) => (view === 'BANK' ? inv.bank : view === 'CASH' ? inv.cash : inv.balance);
   const invoices = (data?.invoices ?? []).filter((inv) => side(inv) > 0);
@@ -562,7 +578,7 @@ function usePartyCollect(p: PartyBalanceSummary, view: LedgerView) {
     });
   if (p.lastReceiptAt) activity.push({ key: 0, text: 'Last payment received.', meta: formatDate(p.lastReceiptAt), dot: DOT.emerald });
 
-  return { data, invoices, side, picked, pickedCodes, pickedSum, amount, setAmount, ask, toggle, quick, stats, activity, prefill: () => prefillFor(p, ask, pickedCodes) };
+  return { data, invoices, side, picked, pickedCodes, pickedSum, amount, setAmount, ask, toggle, quick, stats, activity, prefill: () => prefillFor(p, ask, pickedCodes, view) };
 }
 
 function PartyDetailAside({ p, view, onCollect, asideRef }: {
@@ -683,22 +699,33 @@ function PartyDetailAside({ p, view, onCollect, asideRef }: {
   );
 }
 
+/** How many open invoices the sheet lists before "Show all". */
+const SHEET_INVOICES = 5;
+
+/** A party's figures on one side of the book — zeros where it owes nothing
+ *  there, rather than no party at all. */
+const partyInView = (party: PartyBalanceSummary, view: LedgerView): PartyBalanceSummary =>
+  balancesInView([party], view)[0] ?? { ...party, outstanding: 0, gross: 0, overdue: 0, dueSoon: 0, oldestDays: 0, invoiceCount: 0 };
+
 /**
  * The phone's Collect: the same party, opened full screen (the mobile mockup's
  * "Collect payment"). The party and its figures on the blue, the invoices to
  * tick and the amount below, and Log promise pinned where a thumb reaches it,
  * showing the sum it will ask for. Radix gives it the focus trap, Escape, the
  * scroll lock and the Android back gesture a hand-rolled overlay would not.
+ *
+ * Bank + Cash, Bank or Cash is switched here, each showing what is owed on it.
+ * It starts on the list's side and leaves the list behind it alone; figures,
+ * invoices, the quick amounts and Log promise all follow the switch.
  */
-/** How many open invoices the sheet lists before "Show all". */
-const SHEET_INVOICES = 5;
-
-function CollectSheet({ p, view, onCollect, onClose }: {
-  p: PartyBalanceSummary;
-  view: LedgerView;
+function CollectSheet({ party, listView, onCollect, onClose }: {
+  party: PartyBalanceSummary;
+  listView: LedgerView;
   onCollect: (c: CollectPrefill) => void;
   onClose: () => void;
 }) {
+  const [view, setView] = useState(listView);
+  const p = partyInView(party, view);
   const { data, invoices, side, picked, pickedCodes, pickedSum, amount, setAmount, ask, toggle, quick, stats, activity, prefill } = usePartyCollect(p, view);
   const pr = priorityOf(p);
   const log = () => { onClose(); onCollect(prefill()); };
@@ -727,7 +754,15 @@ function CollectSheet({ p, view, onCollect, onClose }: {
               </div>
               {statusChip(p, 'shrink-0 px-2.5 py-1 text-[11.5px] font-extrabold')}
             </div>
-            <div className="mt-3.5 grid grid-cols-2 gap-2">
+            <div className="cs-seg" role="group" aria-label="Collect on">
+              {LEDGER_VIEWS.map(({ v, label }) => (
+                <button key={v} type="button" className="cs-seg-btn" aria-pressed={view === v} onClick={() => setView(v)}>
+                  <span className="cs-seg-label">{label}</span>
+                  <span className="cs-seg-value">{inrCompact(money(partyInView(party, v).outstanding))}</span>
+                </button>
+              ))}
+            </div>
+            <div className="mt-3 grid grid-cols-2 gap-2">
               {stats.map((s) => (
                 <div key={s.label} className="cs-stat">
                   <div className="cs-stat-label">{s.label}</div>
@@ -783,9 +818,11 @@ function CollectSheet({ p, view, onCollect, onClose }: {
                     Overdue {inrCompact(p.overdue)}
                   </button>
                 )}
-                <button type="button" className="cs-quick cs-quick-slate" aria-pressed={amount === money(p.outstanding)} onClick={() => quick(money(p.outstanding))}>
-                  Full {inrCompact(money(p.outstanding))}
-                </button>
+                {money(p.outstanding) > 0 && (
+                  <button type="button" className="cs-quick cs-quick-slate" aria-pressed={amount === money(p.outstanding)} onClick={() => quick(money(p.outstanding))}>
+                    Full {inrCompact(money(p.outstanding))}
+                  </button>
+                )}
               </div>
               <label className="cs-amount">
                 <span className="cs-muted text-lg font-bold">₹</span>
