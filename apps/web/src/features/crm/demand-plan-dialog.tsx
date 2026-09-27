@@ -121,7 +121,7 @@ export function DemandPlanDialog({ open, onOpenChange, customerId, partyName, de
   const blurb =
     `Payment request — ${partyName}\n` +
     `₹${Math.round(total).toLocaleString('en-IN')} due on ${chosen.length} bill${chosen.length === 1 ? '' : 's'} as on ${formatDate(asOf)}. Kindly arrange the payment.` +
-    (company?.name ? `\n— ${company.name}` : '');
+    (company?.name && side === 'B' ? `\n— ${company.name}` : '');
   const planKey = `${side}|${asOf}|${creditDays}|${chosen.map((b) => b.code).join(',')}`;
 
   /** The share sheet with the picture and the message; where a browser cannot
@@ -162,6 +162,26 @@ export function DemandPlanDialog({ open, onOpenChange, customerId, partyName, de
         // Copy only the card (and the styles): the ledger behind the dialog is
         // thousands of nodes, and cloning it made the picture ~6x slower to draw.
         ignoreElements: (el) => !el.contains(node) && !node.contains(el) && !el.closest('head'),
+        // Carry the page's CSS rules into the copy html2canvas draws from, so the
+        // picture never waits on a stylesheet loading there — on a phone it drew
+        // before the app's CSS arrived and came out as bare, unstyled text.
+        onclone: async (doc) => {
+          const style = doc.createElement('style');
+          style.textContent = [...document.styleSheets]
+            .flatMap((s) => {
+              try {
+                return [...s.cssRules].map((r) => r.cssText);
+              } catch {
+                return [];
+              }
+            })
+            .join('\n');
+          doc.head.appendChild(style);
+          // Lay out once so the fonts start loading, then wait for them: text
+          // measured in a fallback font drew with the spaces between words lost.
+          void doc.body.offsetHeight;
+          await doc.fonts.ready;
+        },
       });
       const blob = await new Promise<Blob | null>((r) => canvas.toBlob(r, 'image/jpeg', 0.9));
       if (!blob) throw new Error('Canvas capture failed');
@@ -359,9 +379,12 @@ export function DemandPlanDialog({ open, onOpenChange, customerId, partyName, de
 }
 
 /**
- * The demand as a picture for the party — what Share attaches. Fixed colours
- * throughout (hex and rgba, never the theme's tokens or the dark-mode remapped
- * utilities), so it looks the same whatever theme the sender works in.
+ * The demand as a picture for the party — what Share attaches. A statement in
+ * three reads: the amount, how it splits (overdue / upcoming), and each bill's
+ * age against the credit period on its own track. Fixed colours throughout
+ * (hex and rgba, never the theme's tokens), so it looks the same whatever
+ * theme the sender works in; one line a bill so a chat app's resize keeps the
+ * figures readable.
  */
 function DemandCard({ cardRef, company, partyName, side, asOf, bills, total, avgAge, creditDays }: {
   cardRef: React.Ref<HTMLDivElement>;
@@ -375,6 +398,8 @@ function DemandCard({ cardRef, company, partyName, side, asOf, bills, total, avg
   creditDays: number;
 }) {
   const sum = (rows: { balance: number }[]) => Math.round(rows.reduce((n, b) => n + b.balance, 0));
+  // A cash demand goes out unbranded: no logo, no company name.
+  const brand = side === 'B' ? company : undefined;
   const dueOn = (b: { date: string }) => {
     const d = new Date(b.date);
     d.setDate(d.getDate() + creditDays);
@@ -383,121 +408,139 @@ function DemandCard({ cardRef, company, partyName, side, asOf, bills, total, avg
   const over = bills.filter((b) => b.age > creditDays);
   const upcoming = bills.filter((b) => b.age <= creditDays);
   const plural = (n: number, one: string) => `${n} ${one}${n === 1 ? '' : 's'}`;
-  const groups = [
-    { key: 'over', title: 'Overdue bills', dot: '#e11d48', rows: over },
-    { key: 'up', title: 'Upcoming bills', dot: '#f59e0b', rows: upcoming },
-  ].filter((g) => g.rows.length);
-  const tiles = [
-    { label: 'Overdue', value: inrFull(sum(over)), sub: plural(over.length, 'bill'), bar: '#e11d48', tint: '#fff1f2', ink: '#be123c' },
-    { label: 'Upcoming', value: inrFull(sum(upcoming)), sub: plural(upcoming.length, 'bill'), bar: '#f59e0b', tint: '#fffbeb', ink: '#b45309' },
-    { label: 'Oldest bill', value: bills.length ? `${bills[0].age} days` : '—', sub: bills.length ? `billed ${formatDate(bills[0].date)}` : '', bar: '#4f6ef7', tint: '#eef1ff', ink: '#2f3fb5' },
-  ];
+  const overShare = total > 0 ? (sum(over) / total) * 100 : 0;
+  // Every track shares one scale, so the credit-period tick lines up down the list.
+  const scale = Math.max(creditDays * 1.35, ...bills.map((b) => b.age)) || 1;
+  const pct = (days: number) => `${Math.min(100, (days / scale) * 100)}%`;
+  const INK = '#0f1426';
+  const MUTED = '#6a7288';
+  const RED = '#e5484d';
+  const AMBER = '#f5a524';
+
   return (
-    <div ref={cardRef} className="w-[720px] bg-[#eef2f8] p-6 text-[#141a2b]" style={{ fontFamily: 'var(--font-jakarta)' }}>
-      <div className="overflow-hidden rounded-[28px] border border-[#e3e8f2] bg-[#ffffff]">
-        {/* ── Who asks, who owes, and how much ── */}
-        <div className="relative overflow-hidden px-8 pt-7 pb-8 text-[#ffffff]" style={{ background: 'linear-gradient(135deg, #4f6ef7 0%, #3a4fd6 55%, #3140b8 100%)' }}>
-          <div className="absolute -top-40 -right-28 size-[380px] rounded-full" style={{ background: 'radial-gradient(circle, rgba(255,255,255,0.22), rgba(255,255,255,0) 65%)' }} />
-          <div className="relative flex items-center gap-3.5">
-            {company?.logo && (
-              <span className="flex size-12 shrink-0 items-center justify-center rounded-2xl bg-[#ffffff] p-1.5">
-                <img src={company.logo} alt="" className="max-h-full max-w-full object-contain" />
+    <div ref={cardRef} className="w-[720px] bg-[#f3f4f8] p-5" style={{ fontFamily: 'var(--font-jakarta)', color: INK }}>
+      <div className="overflow-hidden rounded-[26px] bg-[#ffffff]" style={{ boxShadow: '0 1px 2px rgba(15,20,38,0.06), 0 12px 32px rgba(15,20,38,0.08)' }}>
+        {/* ── Hero: who asks, who owes, how much ── */}
+        <div className="relative overflow-hidden px-8 pt-7 pb-8 text-[#ffffff]" style={{ background: 'linear-gradient(150deg, #151a33 0%, #1d2350 55%, #2a2f7a 100%)' }}>
+          <div className="absolute -top-32 -right-24 size-[360px] rounded-full" style={{ background: 'radial-gradient(circle, rgba(124,108,255,0.55), rgba(124,108,255,0) 68%)' }} />
+          <div className="absolute -bottom-40 -left-20 size-[320px] rounded-full" style={{ background: 'radial-gradient(circle, rgba(56,189,248,0.28), rgba(56,189,248,0) 70%)' }} />
+
+          <div className="relative flex items-center gap-3">
+            {brand?.logo && (
+              <span className="flex size-11 shrink-0 items-center justify-center rounded-[14px] bg-[#ffffff] p-1.5">
+                <img src={brand.logo} alt="" className="max-h-full max-w-full object-contain" />
               </span>
             )}
-            <div className="min-w-0 flex-1">
-              <div className="text-[19px] leading-tight font-extrabold">{company?.name}</div>
-              <div className="mt-0.5 text-[11.5px] font-bold tracking-[0.14em] text-[rgba(255,255,255,0.78)] uppercase">Payment request</div>
+            <div className="min-w-0 flex-1 text-[17px] leading-tight font-extrabold">{brand?.name}</div>
+            <div className="text-right">
+              <div className="text-[10.5px] font-bold tracking-[0.18em] text-[rgba(255,255,255,0.6)] uppercase">Payment request</div>
+              <div className="mt-0.5 text-[13px] font-bold">{formatDate(asOf)}</div>
             </div>
-            <span className="shrink-0 rounded-full border border-[rgba(255,255,255,0.35)] bg-[rgba(255,255,255,0.14)] px-3.5 py-1.5 text-[12px] font-bold">
-              As on {formatDate(asOf)}
-            </span>
           </div>
 
-          <div className="relative mt-6 text-[11.5px] font-bold tracking-[0.12em] text-[rgba(255,255,255,0.75)] uppercase">Billed to</div>
-          <div className="relative mt-1 text-[27px] leading-tight font-extrabold">{partyName}</div>
-          <div className="relative mt-1 text-[13px] text-[rgba(255,255,255,0.8)]">
-            {side === 'B' ? 'Bank' : 'Cash'} bills · {creditDays}-day credit period
-          </div>
+          <div className="relative mt-8 text-[11px] font-bold tracking-[0.16em] text-[rgba(255,255,255,0.6)] uppercase">Amount due</div>
+          <div className="relative mt-1.5 text-[52px] leading-none font-extrabold">{inrFull(Math.round(total))}</div>
+          <div className="relative mt-4 text-[22px] leading-tight font-extrabold">{partyName}</div>
 
-          <div className="relative mt-5 flex items-end justify-between gap-4 rounded-[20px] border border-[rgba(255,255,255,0.28)] bg-[rgba(255,255,255,0.13)] px-6 py-5">
-            <div>
-              <div className="text-[11.5px] font-bold tracking-[0.12em] text-[rgba(255,255,255,0.8)] uppercase">Amount due</div>
-              <div className="mt-1.5 text-[42px] leading-none font-extrabold tracking-[-0.02em] tabular-nums">{inrFull(Math.round(total))}</div>
-            </div>
-            <div className="text-right text-[13.5px] leading-relaxed font-semibold text-[rgba(255,255,255,0.88)]">
-              <div>{plural(bills.length, 'bill')}</div>
-              {avgAge != null && <div>average {Math.round(avgAge)} days old</div>}
-            </div>
+          <div className="relative mt-4 flex flex-wrap gap-2">
+            {[
+              `${side === 'B' ? 'Bank' : 'Cash'} bills`,
+              `${creditDays}-day credit`,
+              plural(bills.length, 'bill'),
+              ...(avgAge != null ? [`avg ${Math.round(avgAge)} days old`] : []),
+            ].map((c) => (
+              <span key={c} className="rounded-full border border-[rgba(255,255,255,0.22)] bg-[rgba(255,255,255,0.08)] px-3 py-1 text-[12px] font-semibold text-[rgba(255,255,255,0.9)]">
+                {c}
+              </span>
+            ))}
           </div>
         </div>
 
-        {/* ── The split at a glance ── */}
-        <div className="grid grid-cols-3 gap-3 px-8 pt-6">
-          {tiles.map((t) => (
-            <div key={t.label} className="relative overflow-hidden rounded-[16px] border border-[#e8ecf4] px-4 pt-4 pb-3.5" style={{ background: t.tint }}>
-              <div className="absolute inset-x-0 top-0 h-[4px]" style={{ background: t.bar }} />
-              <div className="text-[11px] font-bold tracking-[0.1em] uppercase" style={{ color: t.ink }}>{t.label}</div>
-              <div className="mt-1 text-[19px] leading-tight font-extrabold tabular-nums">{t.value}</div>
-              <div className="mt-0.5 text-[12px] font-semibold text-[#6b7590]">{t.sub}</div>
-            </div>
-          ))}
-        </div>
-
-        {/* ── The bills, overdue first ── */}
-        <div className="px-8 pt-6">
-          {groups.map((g) => (
-            <div key={g.key} className="mb-5">
-              <div className="mb-2.5 flex items-center gap-2 px-1">
-                <span className="size-2.5 rounded-full" style={{ background: g.dot }} />
-                <span className="text-[12px] font-extrabold tracking-[0.1em] text-[#5b6479] uppercase">{g.title}</span>
-                <span className="ml-auto text-[12.5px] font-bold text-[#6b7590] tabular-nums">
-                  {plural(g.rows.length, 'bill')} · {inrFull(sum(g.rows))}
-                </span>
+        {/* ── How the amount splits ── */}
+        <div className="px-8 pt-7">
+          <div className="flex h-[12px] overflow-hidden rounded-full bg-[#eceef4]">
+            {over.length > 0 && <div style={{ width: `${overShare}%`, background: RED }} />}
+            {upcoming.length > 0 && <div style={{ width: `${100 - overShare}%`, background: AMBER }} />}
+          </div>
+          <div className="mt-4 grid grid-cols-3 gap-4">
+            {[
+              { label: 'Overdue', value: inrFull(sum(over)), sub: plural(over.length, 'bill'), dot: RED },
+              { label: 'Falling due', value: inrFull(sum(upcoming)), sub: plural(upcoming.length, 'bill'), dot: AMBER },
+              { label: 'Oldest bill', value: bills.length ? `${bills[0].age} days` : '—', sub: bills.length ? formatDate(bills[0].date) : '', dot: '#5b5bd6' },
+            ].map((t) => (
+              <div key={t.label}>
+                <div className="flex items-center gap-1.5 text-[11px] font-bold tracking-[0.12em] uppercase" style={{ color: MUTED }}>
+                  <span className="size-2 rounded-full" style={{ background: t.dot }} />
+                  {t.label}
+                </div>
+                <div className="mt-1 text-[20px] leading-tight font-extrabold">{t.value}</div>
+                <div className="text-[12px] font-semibold" style={{ color: MUTED }}>{t.sub}</div>
               </div>
-              <div className="flex flex-col gap-1.5">
-                {g.rows.map((b) => {
-                  const late = b.age > creditDays;
-                  return (
-                    // One line a bill: a long book stays short enough that a
-                    // chat app's resize leaves the figures readable.
-                    <div key={b.code} className="flex items-center gap-3 rounded-[12px] border border-[#e8ecf4] bg-[#fbfcfe] px-3.5 py-2.5">
-                      <span className="h-7 w-[4px] shrink-0 rounded-full" style={{ background: g.dot }} />
-                      <span className="w-[136px] shrink-0 font-mono text-[14px] font-bold break-all text-[#141a2b]">{b.code}</span>
-                      <span className="min-w-0 flex-1 text-[12.5px] whitespace-nowrap text-[#6b7590]">
-                        {formatDate(b.date)} · {b.age} days
-                      </span>
-                      <span
-                        className="shrink-0 rounded-full px-2.5 py-0.5 text-[11.5px] font-bold"
-                        style={late ? { background: '#fff1f2', color: '#be123c' } : { background: '#fffbeb', color: '#b45309' }}
-                      >
-                        {late ? `${b.age - creditDays} days overdue` : b.age === creditDays ? 'due today' : `due ${formatDate(dueOn(b))}`}
-                      </span>
-                      <span className="w-[104px] shrink-0 text-right text-[15px] font-extrabold tabular-nums">{inrFull(Math.round(b.balance))}</span>
-                    </div>
-                  );
-                })}
-              </div>
-            </div>
-          ))}
+            ))}
+          </div>
         </div>
 
-        {/* ── The sum, and the ask ── */}
-        <div className="mx-8 flex items-center justify-between gap-4 rounded-[18px] bg-[#141b33] px-6 py-4 text-[#ffffff]">
+        {/* ── Every bill, oldest first, on a common age track ── */}
+        <div className="px-8 pt-7">
+          <div className="flex items-center gap-3 border-b border-[#eceef4] pb-2 text-[10.5px] font-bold tracking-[0.14em] uppercase" style={{ color: MUTED }}>
+            <span className="w-[128px] shrink-0">Bill</span>
+            <span className="flex-1">Age vs {creditDays}-day credit</span>
+            <span className="w-[118px] shrink-0 text-right">Status</span>
+            <span className="w-[96px] shrink-0 text-right">Amount</span>
+          </div>
+          {bills.map((b, i) => {
+            const late = b.age > creditDays;
+            const tone = late ? RED : AMBER;
+            return (
+              <div key={b.code} className="flex items-center gap-3 py-2.5" style={{ borderBottom: i === bills.length - 1 ? 'none' : '1px solid #f1f2f6' }}>
+                <div className="w-[128px] shrink-0">
+                  <div className="text-[13.5px] leading-tight font-extrabold">{b.code}</div>
+                  <div className="text-[11.5px] font-semibold" style={{ color: MUTED }}>{formatDate(b.date)}</div>
+                </div>
+                <div className="relative h-[8px] flex-1 rounded-full bg-[#eef0f5]">
+                  <div className="absolute inset-y-0 left-0 rounded-full" style={{ width: pct(b.age), background: tone, opacity: late ? 1 : 0.85 }} />
+                  {/* the credit-period line */}
+                  <div className="absolute -top-[5px] h-[18px] w-[2px] rounded-full bg-[#0f1426]" style={{ left: pct(creditDays) }} />
+                  <div className="absolute top-[12px] text-[10.5px] font-bold whitespace-nowrap" style={{ left: pct(b.age), transform: 'translateX(-50%)', color: tone }}>
+                    {b.age}d
+                  </div>
+                </div>
+                <div className="w-[118px] shrink-0 text-right">
+                  <span className="inline-block rounded-full px-2.5 py-[3px] text-[11.5px] font-bold" style={late ? { background: '#fdecec', color: '#c62f35' } : { background: '#fff4e0', color: '#b26b00' }}>
+                    {late ? `${b.age - creditDays}d overdue` : b.age === creditDays ? 'due today' : `due ${formatDate(dueOn(b)).slice(0, 5)}`}
+                  </span>
+                </div>
+                <div className="w-[96px] shrink-0 text-right text-[15px] font-extrabold">{inrFull(Math.round(b.balance))}</div>
+              </div>
+            );
+          })}
+        </div>
+
+        {/* ── The sum ── */}
+        <div className="mx-8 mt-6 flex items-center justify-between gap-4 rounded-[18px] px-6 py-4 text-[#ffffff]" style={{ background: 'linear-gradient(120deg, #151a33 0%, #2a2f7a 100%)' }}>
           <div>
-            <div className="text-[11.5px] font-bold tracking-[0.12em] text-[rgba(255,255,255,0.7)] uppercase">Total due</div>
-            <div className="mt-0.5 text-[13px] font-semibold text-[rgba(255,255,255,0.8)]">{plural(bills.length, 'bill')}</div>
+            <div className="text-[11px] font-bold tracking-[0.16em] text-[rgba(255,255,255,0.65)] uppercase">Total payable</div>
+            <div className="mt-0.5 text-[12.5px] font-semibold text-[rgba(255,255,255,0.8)]">
+              {plural(bills.length, 'bill')} · as on {formatDate(asOf)}
+            </div>
           </div>
-          <div className="text-[30px] font-extrabold tracking-[-0.02em] tabular-nums">{inrFull(Math.round(total))}</div>
+          <div className="text-[32px] font-extrabold">{inrFull(Math.round(total))}</div>
         </div>
 
         <div className="px-8 pt-6 pb-7">
-          <p className="text-[14.5px] leading-relaxed text-[#3a4256]">Kindly arrange the payment at the earliest. Thank you for your business.</p>
-          <div className="mt-4 flex items-end justify-between gap-4 border-t border-[#e8ecf4] pt-4">
-            <div className="text-[13px] text-[#6b7590]">
-              Regards,
-              {company?.name && <div className="mt-0.5 text-[15px] font-extrabold text-[#141a2b]">{company.name}</div>}
+          <p className="text-[14px] leading-relaxed" style={{ color: '#3b4258' }}>
+            Kindly arrange the payment at the earliest. Thank you for your business.
+          </p>
+          <div className="mt-4 flex items-end justify-between gap-4">
+            <div className="text-[12.5px]" style={{ color: MUTED }}>
+              {brand?.name && (
+                <>
+                  Regards,
+                  <div className="text-[15px] font-extrabold" style={{ color: INK }}>{brand.name}</div>
+                </>
+              )}
             </div>
-            <div className="text-[11.5px] font-semibold text-[#98a2b8]">Sent {formatDate(new Date())}</div>
+            <div className="text-[11px] font-semibold" style={{ color: '#9aa1b5' }}>Sent {formatDate(new Date())}</div>
           </div>
         </div>
       </div>
