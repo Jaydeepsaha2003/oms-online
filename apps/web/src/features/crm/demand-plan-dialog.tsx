@@ -163,7 +163,7 @@ export function DemandPlanDialog({ open, onOpenChange, customerId, partyName, de
         // thousands of nodes, and cloning it made the picture ~6x slower to draw.
         ignoreElements: (el) => !el.contains(node) && !node.contains(el) && !el.closest('head'),
       });
-      const blob = await new Promise<Blob | null>((r) => canvas.toBlob(r, 'image/jpeg', 0.92));
+      const blob = await new Promise<Blob | null>((r) => canvas.toBlob(r, 'image/jpeg', 0.9));
       if (!blob) throw new Error('Canvas capture failed');
       const name = `Payment-request_${partyName.replace(/[\\/:*?"<>|\s]+/g, '-')}_${asOf}.jpg`;
       await deliver(new File([blob], name, { type: 'image/jpeg' }));
@@ -359,8 +359,9 @@ export function DemandPlanDialog({ open, onOpenChange, customerId, partyName, de
 }
 
 /**
- * The demand as a picture for the party — what Share attaches. Fixed light
- * colours, so it looks the same whatever theme the sender works in.
+ * The demand as a picture for the party — what Share attaches. Fixed colours
+ * throughout (hex and rgba, never the theme's tokens or the dark-mode remapped
+ * utilities), so it looks the same whatever theme the sender works in.
  */
 function DemandCard({ cardRef, company, partyName, side, asOf, bills, total, avgAge, creditDays }: {
   cardRef: React.Ref<HTMLDivElement>;
@@ -373,64 +374,132 @@ function DemandCard({ cardRef, company, partyName, side, asOf, bills, total, avg
   avgAge: number | null;
   creditDays: number;
 }) {
-  const late = bills.some((b) => b.age > creditDays);
+  const sum = (rows: { balance: number }[]) => Math.round(rows.reduce((n, b) => n + b.balance, 0));
+  const dueOn = (b: { date: string }) => {
+    const d = new Date(b.date);
+    d.setDate(d.getDate() + creditDays);
+    return d;
+  };
+  const over = bills.filter((b) => b.age > creditDays);
+  const upcoming = bills.filter((b) => b.age <= creditDays);
+  const plural = (n: number, one: string) => `${n} ${one}${n === 1 ? '' : 's'}`;
+  const groups = [
+    { key: 'over', title: 'Overdue bills', dot: '#e11d48', rows: over },
+    { key: 'up', title: 'Upcoming bills', dot: '#f59e0b', rows: upcoming },
+  ].filter((g) => g.rows.length);
+  const tiles = [
+    { label: 'Overdue', value: inrFull(sum(over)), sub: plural(over.length, 'bill'), bar: '#e11d48', tint: '#fff1f2', ink: '#be123c' },
+    { label: 'Upcoming', value: inrFull(sum(upcoming)), sub: plural(upcoming.length, 'bill'), bar: '#f59e0b', tint: '#fffbeb', ink: '#b45309' },
+    { label: 'Oldest bill', value: bills.length ? `${bills[0].age} days` : '—', sub: bills.length ? `billed ${formatDate(bills[0].date)}` : '', bar: '#4f6ef7', tint: '#eef1ff', ink: '#2f3fb5' },
+  ];
   return (
-    <div ref={cardRef} className="w-[640px] bg-[#ffffff] text-[#141a2b]" style={{ fontFamily: 'var(--font-jakarta)' }}>
-      <div className="flex items-center gap-3 px-7 py-5 text-white" style={{ background: 'linear-gradient(135deg, #4f6ef7 0%, #3a4fd6 55%, #3140b8 100%)' }}>
-        {company?.logo && <img src={company.logo} alt="" className="size-11 rounded-xl bg-[#ffffff] object-contain p-1" />}
-        <span className="min-w-0 flex-1 text-[20px] leading-tight font-extrabold">{company?.name}</span>
-        <span className="shrink-0 rounded-full bg-[#ffffff] px-3 py-1 text-[11.5px] font-extrabold tracking-[0.06em] text-[#2f3fb5] uppercase">Payment request</span>
-      </div>
+    <div ref={cardRef} className="w-[720px] bg-[#eef2f8] p-6 text-[#141a2b]" style={{ fontFamily: 'var(--font-jakarta)' }}>
+      <div className="overflow-hidden rounded-[28px] border border-[#e3e8f2] bg-[#ffffff]">
+        {/* ── Who asks, who owes, and how much ── */}
+        <div className="relative overflow-hidden px-8 pt-7 pb-8 text-[#ffffff]" style={{ background: 'linear-gradient(135deg, #4f6ef7 0%, #3a4fd6 55%, #3140b8 100%)' }}>
+          <div className="absolute -top-40 -right-28 size-[380px] rounded-full" style={{ background: 'radial-gradient(circle, rgba(255,255,255,0.22), rgba(255,255,255,0) 65%)' }} />
+          <div className="relative flex items-center gap-3.5">
+            {company?.logo && (
+              <span className="flex size-12 shrink-0 items-center justify-center rounded-2xl bg-[#ffffff] p-1.5">
+                <img src={company.logo} alt="" className="max-h-full max-w-full object-contain" />
+              </span>
+            )}
+            <div className="min-w-0 flex-1">
+              <div className="text-[19px] leading-tight font-extrabold">{company?.name}</div>
+              <div className="mt-0.5 text-[11.5px] font-bold tracking-[0.14em] text-[rgba(255,255,255,0.78)] uppercase">Payment request</div>
+            </div>
+            <span className="shrink-0 rounded-full border border-[rgba(255,255,255,0.35)] bg-[rgba(255,255,255,0.14)] px-3.5 py-1.5 text-[12px] font-bold">
+              As on {formatDate(asOf)}
+            </span>
+          </div>
 
-      <div className="px-7 pt-5">
-        <div className="text-[11.5px] font-bold tracking-[0.08em] text-[#7a849c] uppercase">To</div>
-        <div className="mt-0.5 text-[22px] leading-tight font-extrabold">{partyName}</div>
-        <div className="mt-1 text-[13px] text-[#5b6479]">
-          As on {formatDate(asOf)} · {side === 'B' ? 'Bank' : 'Cash'} bills
+          <div className="relative mt-6 text-[11.5px] font-bold tracking-[0.12em] text-[rgba(255,255,255,0.75)] uppercase">Billed to</div>
+          <div className="relative mt-1 text-[27px] leading-tight font-extrabold">{partyName}</div>
+          <div className="relative mt-1 text-[13px] text-[rgba(255,255,255,0.8)]">
+            {side === 'B' ? 'Bank' : 'Cash'} bills · {creditDays}-day credit period
+          </div>
+
+          <div className="relative mt-5 flex items-end justify-between gap-4 rounded-[20px] border border-[rgba(255,255,255,0.28)] bg-[rgba(255,255,255,0.13)] px-6 py-5">
+            <div>
+              <div className="text-[11.5px] font-bold tracking-[0.12em] text-[rgba(255,255,255,0.8)] uppercase">Amount due</div>
+              <div className="mt-1.5 text-[42px] leading-none font-extrabold tracking-[-0.02em] tabular-nums">{inrFull(Math.round(total))}</div>
+            </div>
+            <div className="text-right text-[13.5px] leading-relaxed font-semibold text-[rgba(255,255,255,0.88)]">
+              <div>{plural(bills.length, 'bill')}</div>
+              {avgAge != null && <div>average {Math.round(avgAge)} days old</div>}
+            </div>
+          </div>
         </div>
-        <div className="mt-4 flex items-end justify-between gap-4 rounded-2xl bg-[#eef1ff] px-5 py-4">
+
+        {/* ── The split at a glance ── */}
+        <div className="grid grid-cols-3 gap-3 px-8 pt-6">
+          {tiles.map((t) => (
+            <div key={t.label} className="relative overflow-hidden rounded-[16px] border border-[#e8ecf4] px-4 pt-4 pb-3.5" style={{ background: t.tint }}>
+              <div className="absolute inset-x-0 top-0 h-[4px]" style={{ background: t.bar }} />
+              <div className="text-[11px] font-bold tracking-[0.1em] uppercase" style={{ color: t.ink }}>{t.label}</div>
+              <div className="mt-1 text-[19px] leading-tight font-extrabold tabular-nums">{t.value}</div>
+              <div className="mt-0.5 text-[12px] font-semibold text-[#6b7590]">{t.sub}</div>
+            </div>
+          ))}
+        </div>
+
+        {/* ── The bills, overdue first ── */}
+        <div className="px-8 pt-6">
+          {groups.map((g) => (
+            <div key={g.key} className="mb-5">
+              <div className="mb-2.5 flex items-center gap-2 px-1">
+                <span className="size-2.5 rounded-full" style={{ background: g.dot }} />
+                <span className="text-[12px] font-extrabold tracking-[0.1em] text-[#5b6479] uppercase">{g.title}</span>
+                <span className="ml-auto text-[12.5px] font-bold text-[#6b7590] tabular-nums">
+                  {plural(g.rows.length, 'bill')} · {inrFull(sum(g.rows))}
+                </span>
+              </div>
+              <div className="flex flex-col gap-1.5">
+                {g.rows.map((b) => {
+                  const late = b.age > creditDays;
+                  return (
+                    // One line a bill: a long book stays short enough that a
+                    // chat app's resize leaves the figures readable.
+                    <div key={b.code} className="flex items-center gap-3 rounded-[12px] border border-[#e8ecf4] bg-[#fbfcfe] px-3.5 py-2.5">
+                      <span className="h-7 w-[4px] shrink-0 rounded-full" style={{ background: g.dot }} />
+                      <span className="w-[136px] shrink-0 font-mono text-[14px] font-bold break-all text-[#141a2b]">{b.code}</span>
+                      <span className="min-w-0 flex-1 text-[12.5px] whitespace-nowrap text-[#6b7590]">
+                        {formatDate(b.date)} · {b.age} days
+                      </span>
+                      <span
+                        className="shrink-0 rounded-full px-2.5 py-0.5 text-[11.5px] font-bold"
+                        style={late ? { background: '#fff1f2', color: '#be123c' } : { background: '#fffbeb', color: '#b45309' }}
+                      >
+                        {late ? `${b.age - creditDays} days overdue` : b.age === creditDays ? 'due today' : `due ${formatDate(dueOn(b))}`}
+                      </span>
+                      <span className="w-[104px] shrink-0 text-right text-[15px] font-extrabold tabular-nums">{inrFull(Math.round(b.balance))}</span>
+                    </div>
+                  );
+                })}
+              </div>
+            </div>
+          ))}
+        </div>
+
+        {/* ── The sum, and the ask ── */}
+        <div className="mx-8 flex items-center justify-between gap-4 rounded-[18px] bg-[#141b33] px-6 py-4 text-[#ffffff]">
           <div>
-            <div className="text-[11.5px] font-bold tracking-[0.08em] text-[#3140b8] uppercase">Amount due</div>
-            <div className="mt-1 text-[34px] leading-none font-extrabold text-[#2f3fb5] tabular-nums">{inrFull(Math.round(total))}</div>
+            <div className="text-[11.5px] font-bold tracking-[0.12em] text-[rgba(255,255,255,0.7)] uppercase">Total due</div>
+            <div className="mt-0.5 text-[13px] font-semibold text-[rgba(255,255,255,0.8)]">{plural(bills.length, 'bill')}</div>
           </div>
-          <div className="text-right text-[13px] leading-snug font-semibold text-[#3a4256]">
-            {bills.length} bill{bills.length === 1 ? '' : 's'}
-            {avgAge != null && <div>average {Math.round(avgAge)} days old</div>}
+          <div className="text-[30px] font-extrabold tracking-[-0.02em] tabular-nums">{inrFull(Math.round(total))}</div>
+        </div>
+
+        <div className="px-8 pt-6 pb-7">
+          <p className="text-[14.5px] leading-relaxed text-[#3a4256]">Kindly arrange the payment at the earliest. Thank you for your business.</p>
+          <div className="mt-4 flex items-end justify-between gap-4 border-t border-[#e8ecf4] pt-4">
+            <div className="text-[13px] text-[#6b7590]">
+              Regards,
+              {company?.name && <div className="mt-0.5 text-[15px] font-extrabold text-[#141a2b]">{company.name}</div>}
+            </div>
+            <div className="text-[11.5px] font-semibold text-[#98a2b8]">Sent {formatDate(new Date())}</div>
           </div>
         </div>
-      </div>
-
-      <div className="px-7 pt-4">
-        <table className="w-full text-[13.5px]">
-          <thead>
-            <tr className="bg-[#141b33] text-left text-[11.5px] tracking-[0.06em] text-white uppercase">
-              <th className="px-3 py-2">Bill no.</th>
-              <th className="px-3 py-2">Bill date</th>
-              <th className="px-3 py-2 text-right">Days</th>
-              <th className="px-3 py-2 text-right">Amount</th>
-            </tr>
-          </thead>
-          <tbody>
-            {bills.map((b, i) => (
-              <tr key={b.code} className={i % 2 ? 'bg-[#f6f8fc]' : ''}>
-                <td className="px-3 py-2 font-bold">{b.code}</td>
-                <td className="px-3 py-2">{formatDate(b.date)}</td>
-                <td className={cn('px-3 py-2 text-right tabular-nums', b.age > creditDays && 'font-bold text-[#be123c]')}>{b.age}</td>
-                <td className="px-3 py-2 text-right font-semibold tabular-nums">{inrFull(Math.round(b.balance))}</td>
-              </tr>
-            ))}
-            <tr className="border-t-2 border-[#141b33] text-[14.5px] font-extrabold">
-              <td className="px-3 py-2.5" colSpan={3}>Total</td>
-              <td className="px-3 py-2.5 text-right tabular-nums">{inrFull(Math.round(total))}</td>
-            </tr>
-          </tbody>
-        </table>
-        {late && <p className="mt-2 text-[12px] text-[#7a849c]">Days in red are past the {creditDays}-day credit period.</p>}
-      </div>
-
-      <div className="mt-5 border-t border-[#e8ecf4] px-7 py-4 text-[13.5px] text-[#3a4256]">
-        Kindly arrange the payment at the earliest. Thank you.
-        {company?.name && <div className="mt-1 font-extrabold text-[#141a2b]">{company.name}</div>}
       </div>
     </div>
   );
