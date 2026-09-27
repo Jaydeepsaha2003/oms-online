@@ -6,6 +6,7 @@
  * keeps surfacing it until it's resolved — you can *snooze* it, never *dismiss* it.
  */
 import type { Paginated, PaginationQuery } from './common';
+import type { DispatchHoldInfo } from './dispatch';
 import type { PromiseState } from './report';
 
 /**
@@ -326,6 +327,8 @@ export interface PartyBalanceSummary {
   agent: string | null;
   /** The customer's mobile number, for the desk's Call button. */
   mobile: string | null;
+  /** The party's dispatch hold, when it is on one (see the Party On Hold page). */
+  hold: DispatchHoldInfo | null;
   /**
    * What the party actually owes, after their own advance is applied — the
    * Party Ledger's closing balance. Every money field here is net; `gross` is

@@ -174,6 +174,7 @@ export function useSetCustomerHold() {
       qc.invalidateQueries({ queryKey: KEY });
       qc.invalidateQueries({ queryKey: ['dispatch'] });
       qc.invalidateQueries({ queryKey: ['orders', 'lookups'] });
+      qc.invalidateQueries({ queryKey: ['crm'] });
     },
   });
 }
@@ -193,6 +194,7 @@ export function useBulkSetCustomerHold() {
       qc.invalidateQueries({ queryKey: KEY });
       qc.invalidateQueries({ queryKey: ['dispatch'] });
       qc.invalidateQueries({ queryKey: ['orders', 'lookups'] });
+      qc.invalidateQueries({ queryKey: ['crm'] });
     },
   });
 }

@@ -9,7 +9,9 @@ import {
   Clock3,
   HandCoins,
   Loader2,
+  PauseCircle,
   Phone,
+  PlayCircle,
   Receipt,
   Search,
   ShieldCheck,
@@ -29,6 +31,7 @@ import { RowCheckbox } from '@/components/common/row-checkbox';
 import { Chip, initials, urgencyMeta } from './crm-shared';
 import { useFollowupList, usePartyBalance, usePartyBalances } from './use-crm';
 import { DemandPlanDialog } from './demand-plan-dialog';
+import { DispatchHoldDialog } from '@/features/customers/dispatch-hold-dialog';
 import { usePermissions } from '@/hooks/use-permissions';
 
 /** What a "Collect" action hands back to the page to pre-fill the form. */
@@ -401,7 +404,10 @@ export function OwingPartiesWorklist({ onCollect, view = 'ALL', onViewChange }: 
                       <button type="button" className="flex min-w-0 cursor-pointer items-center gap-[11px] text-left" aria-label={`Open ${p.partyName}`}>
                         <span className={cn('flex size-8 shrink-0 items-center justify-center rounded-full text-[11.5px] font-extrabold', DESK_AV[pr])}>{initials(p.partyName)}</span>
                         <span className="flex min-w-0 flex-col">
-                          <span className="pd-name">{p.partyName}</span>
+                          <span className="flex min-w-0 items-center gap-1.5">
+                            <span className="pd-name">{p.partyName}</span>
+                            {p.hold && <HeldChip />}
+                          </span>
                           <span className="pd-sub pd-muted">{p.agent || 'No agent'} · {p.lastReceiptAt ? `paid ${formatDate(p.lastReceiptAt)}` : 'never paid'}</span>
                         </span>
                       </button>
@@ -463,7 +469,10 @@ export function OwingPartiesWorklist({ onCollect, view = 'ALL', onViewChange }: 
                     <div className="flex items-start gap-2 pl-1.5 max-sm:pl-0">
                       <span className="bg-primary/10 text-primary rp-avatar flex size-8 shrink-0 items-center justify-center rounded-full text-xs font-bold max-sm:size-[34px]" style={{ background: SKIN_TONE[PRIORITY_SKIN[pr]].bg, color: SKIN_TONE[PRIORITY_SKIN[pr]].fg }}>{initials(p.partyName)}</span>
                       <button type="button" onClick={() => setSheet(p.partyName)} className="min-w-0 flex-1 cursor-pointer text-left" title={`Collect from ${p.partyName}`}>
-                        <div className="truncate font-medium">{p.partyName}</div>
+                        <div className="flex min-w-0 items-center gap-1.5">
+                          <span className="truncate font-medium">{p.partyName}</span>
+                          {p.hold && <HeldChip />}
+                        </div>
                         <div className="text-muted-foreground truncate text-xs">{p.agent || 'No agent'} · {p.invoiceCount} inv</div>
                       </button>
                       <div className="text-right">
@@ -612,6 +621,7 @@ function PartyDetailAside({ p, view, onCollect, asideRef }: {
             </div>
           ))}
         </div>
+        <HoldStrip p={p} />
       </div>
 
       <div className="flex min-h-[150px] flex-col px-4 pb-3">
@@ -699,6 +709,61 @@ function PartyDetailAside({ p, view, onCollect, asideRef }: {
   );
 }
 
+/** "On hold" beside a held party's name in the worklist. */
+const HeldChip = () => (
+  <span className="inline-flex shrink-0 items-center gap-1 rounded-full bg-amber-100 px-1.5 py-0.5 text-[10.5px] font-bold text-amber-900 ring-1 ring-amber-300 ring-inset dark:bg-amber-400/15 dark:text-amber-200 dark:ring-amber-400/30">
+    <PauseCircle className="size-3" /> On hold
+  </span>
+);
+
+/**
+ * The party's dispatch hold, where the collector is already looking at what
+ * they owe: held shows the reason with Release, free offers Hold dispatches.
+ * Changing it asks customer:update, as the Customers page does; without it a
+ * hold still shows, read-only.
+ */
+function HoldStrip({ p }: { p: PartyBalanceSummary }) {
+  const { can } = usePermissions();
+  const [open, setOpen] = useState(false);
+  const canHold = p.customerId != null && can('customer:update');
+  if (!p.hold && !canHold) return null;
+  const placed = p.hold ? [p.hold.by && `by ${p.hold.by}`, p.hold.at && `on ${formatDate(p.hold.at)}`].filter(Boolean).join(' ') : '';
+  return (
+    <>
+      {p.hold ? (
+        <div className="mt-3 flex items-center gap-2.5 rounded-[12px] bg-amber-50 px-3 py-2 ring-1 ring-amber-200 ring-inset dark:bg-amber-400/10 dark:ring-amber-400/25">
+          <PauseCircle className="size-4 shrink-0 text-amber-600" />
+          <div className="min-w-0 flex-1">
+            <p className="text-[12.5px] font-extrabold text-amber-900 dark:text-amber-200">Dispatches on hold</p>
+            <p className="text-[12px] leading-snug text-amber-900/80 dark:text-amber-200/75">
+              {p.hold.reason?.trim() || 'No reason given'}
+              {placed && ` · Held ${placed}`}
+            </p>
+          </div>
+          {canHold && (
+            <button type="button" onClick={() => setOpen(true)} className="inline-flex h-8 shrink-0 cursor-pointer items-center gap-1.5 rounded-[10px] bg-emerald-600 px-3 text-[12.5px] font-extrabold text-white transition-colors hover:bg-emerald-700">
+              <PlayCircle className="size-4" /> Release
+            </button>
+          )}
+        </div>
+      ) : (
+        <div className="mt-2.5 flex justify-end">
+          <button type="button" onClick={() => setOpen(true)} className="inline-flex h-8 cursor-pointer items-center gap-1.5 rounded-[10px] border border-amber-300 bg-amber-50 px-3 text-[12.5px] font-extrabold text-amber-800 transition-colors hover:bg-amber-100 dark:border-amber-400/30 dark:bg-amber-400/10 dark:text-amber-200">
+            <PauseCircle className="size-4" /> Hold dispatches
+          </button>
+        </div>
+      )}
+      {open && (
+        <DispatchHoldDialog
+          parties={[{ id: p.customerId!, partyName: p.partyName, dispatchHold: !!p.hold, dispatchHoldReason: p.hold?.reason ?? null, dispatchHoldBy: p.hold?.by ?? null, dispatchHoldAt: p.hold?.at ?? null }]}
+          hold={!p.hold}
+          onClose={() => setOpen(false)}
+        />
+      )}
+    </>
+  );
+}
+
 /** How many open invoices the sheet lists before "Show all". */
 const SHEET_INVOICES = 5;
 
@@ -773,6 +838,7 @@ function CollectSheet({ party, listView, onCollect, onClose }: {
           </div>
 
           <div className="cs-body">
+            <HoldStrip p={p} />
             <section className="cs-card">
               <div className="flex items-center justify-between gap-2 px-3.5 pt-3 pb-2">
                 <span className="cs-caption">Open invoices</span>
