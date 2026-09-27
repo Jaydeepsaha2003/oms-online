@@ -12,6 +12,10 @@ import { inrCompact, inrFull } from '@/features/dashboard/format';
 import { usePaymentContext } from '@/features/account/use-account';
 import { useCustomer } from '@/features/customers/use-customers';
 
+/** Money as the demand reads it out: a space after the sign, "₹ 7,74,803". */
+const rupees = (n: number) => inrFull(Math.round(n)).replace('₹', '₹ ');
+const rupeesShort = (n: number) => inrCompact(n).replace('₹', '₹ ');
+
 const ymd = (d: Date) => `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
 /** Quick picks for the look-ahead. */
 const AHEAD_PRESETS = [7, 10, 15, 30];
@@ -100,7 +104,7 @@ export function DemandPlanDialog({ open, onOpenChange, customerId, partyName, de
   const sum = (rows: { balance: number }[]) => rows.reduce((n, b) => n + b.balance, 0);
   const groups = [
     { key: 'over', title: 'Overdue now', hint: `Past the ${creditDays}-day credit period.`, dot: 'bg-rose-500', rows: overdue },
-    { key: 'soon', title: `Falling due in ${ahead} days`, hint: 'Asked for in the same call, rather than chased again next week.', dot: 'bg-amber-500', rows: soon },
+    { key: 'soon', title: `Upcoming due in ${ahead} days`, hint: 'Asked for in the same call, rather than chased again next week.', dot: 'bg-amber-500', rows: soon },
     { key: 'later', title: 'Not due yet', hint: 'Left out of the demand unless ticked.', dot: 'bg-slate-400', rows: bills.filter((b) => b.age <= creditDays && !soon.includes(b)) },
   ].filter((g) => g.rows.length);
   /** Where a bill stands against the credit period. */
@@ -109,18 +113,16 @@ export function DemandPlanDialog({ open, onOpenChange, customerId, partyName, de
       ? { text: `${b.age - creditDays} days over`, tone: 'text-rose-700 dark:text-rose-400' }
       : b.age === creditDays
         ? { text: 'due today', tone: 'text-amber-700 dark:text-amber-400' }
-        : creditDays - b.age <= ahead
-          ? { text: `due in ${creditDays - b.age} days · ${formatDate(dueOn(b))}`, tone: 'text-amber-700 dark:text-amber-400' }
-          : { text: `due ${formatDate(dueOn(b))}`, tone: 'cs-muted' };
+        : { text: `due in ${creditDays - b.age} days`, tone: creditDays - b.age <= ahead ? 'text-amber-700 dark:text-amber-400' : 'cs-muted' };
   const copy = () => navigator.clipboard.writeText(text).then(() => toast.success('Copied.'), () => toast.error('Could not copy.'));
   const text =
     `${partyName} — payment request (${side === 'B' ? 'bank' : 'cash'}) as on ${formatDate(asOf)}\n` +
-    chosen.map((b) => `${b.code}  ${formatDate(b.date)}  ₹${Math.round(b.balance).toLocaleString('en-IN')}`).join('\n') +
-    `\nTotal ₹${Math.round(total).toLocaleString('en-IN')}`;
+    chosen.map((b) => `${b.code}  ${formatDate(b.date)}  ₹ ${Math.round(b.balance).toLocaleString('en-IN')}`).join('\n') +
+    `\nTotal ₹ ${Math.round(total).toLocaleString('en-IN')}`;
   /** The message that travels with the picture. */
   const blurb =
     `Payment request — ${partyName}\n` +
-    `₹${Math.round(total).toLocaleString('en-IN')} due on ${chosen.length} bill${chosen.length === 1 ? '' : 's'} as on ${formatDate(asOf)}. Kindly arrange the payment.` +
+    `₹ ${Math.round(total).toLocaleString('en-IN')} due on ${chosen.length} bill${chosen.length === 1 ? '' : 's'} as on ${formatDate(asOf)}. Kindly arrange the payment.` +
     (company?.name && side === 'B' ? `\n— ${company.name}` : '');
   const planKey = `${side}|${asOf}|${creditDays}|${chosen.map((b) => b.code).join(',')}`;
 
@@ -215,15 +217,15 @@ export function DemandPlanDialog({ open, onOpenChange, customerId, partyName, de
               {(['B', 'C'] as const).map((s) => (
                 <button key={s} type="button" className="cs-seg-btn" aria-pressed={side === s} onClick={() => setSide(s)}>
                   <span className="cs-seg-label">{s === 'B' ? 'Bank bills' : 'Cash bills'}</span>
-                  <span className="cs-seg-value">{data ? inrCompact(sideTotal(s)) : '—'}</span>
+                  <span className="cs-seg-value">{data ? rupeesShort(sideTotal(s)) : '—'}</span>
                 </button>
               ))}
             </div>
             <div className="mt-3 grid grid-cols-3 gap-2">
               {[
-                { label: 'Overdue', value: inrCompact(sum(overdue)), sub: `${overdue.length} bill${overdue.length === 1 ? '' : 's'}` },
-                { label: `Due in ${ahead}d`, value: inrCompact(sum(soon)), sub: `${soon.length} bill${soon.length === 1 ? '' : 's'}` },
-                { label: 'Oldest bill', value: bills.length ? `${bills[0].age}d` : '—', sub: bills.length ? `billed ${formatDate(bills[0].date)}` : 'nothing open' },
+                { label: 'Overdue', value: rupeesShort(sum(overdue)), sub: `${overdue.length} bill${overdue.length === 1 ? '' : 's'}` },
+                { label: 'Upcoming due', value: rupeesShort(sum(soon)), sub: `${soon.length} bill${soon.length === 1 ? '' : 's'} in ${ahead}d` },
+                { label: 'Oldest Inv.', value: bills.length ? `${bills[0].age}d` : '—', sub: bills.length ? `Inv. ${formatDate(bills[0].date)}` : 'nothing open' },
               ].map((t) => (
                 <div key={t.label} className="cs-stat min-w-0">
                   <div className="cs-stat-label truncate">{t.label}</div>
@@ -291,7 +293,7 @@ export function DemandPlanDialog({ open, onOpenChange, customerId, partyName, de
                       <span className={cn('size-2 shrink-0 rounded-full', g.dot)} />
                       <span className="cs-caption truncate">{g.title}</span>
                       <span className="cs-muted shrink-0 text-xs font-semibold tabular-nums">
-                        {g.rows.length} · {inrFull(Math.round(sum(g.rows)))}
+                        {g.rows.length} · {rupees(Math.round(sum(g.rows)))}
                       </span>
                       <button type="button" className="ml-auto shrink-0 cursor-pointer text-[12.5px] font-extrabold text-[#3b4fd8] dark:text-indigo-300" onClick={() => setAll(g.rows, !allOn)}>
                         {allOn ? 'Clear' : 'Select all'}
@@ -310,11 +312,11 @@ export function DemandPlanDialog({ open, onOpenChange, customerId, partyName, de
                             <span className="flex min-w-0 flex-1 flex-col">
                               <span className="truncate font-mono text-[13px] font-bold">{b.code}</span>
                               <span className="cs-muted truncate text-xs">
-                                Billed {formatDate(b.date)} · {b.age} days old
+                                Inv. {formatDate(b.date)} · Due {formatDate(dueOn(b))} · {b.age} days old
                               </span>
                             </span>
                             <span className="flex shrink-0 flex-col items-end">
-                              <span className="text-[14.5px] font-extrabold tabular-nums">{inrFull(Math.round(b.balance))}</span>
+                              <span className="text-[14.5px] font-extrabold tabular-nums">{rupees(Math.round(b.balance))}</span>
                               <span className={cn('text-[11.5px] font-bold', st.tone)}>{st.text}</span>
                             </span>
                           </button>
@@ -331,7 +333,7 @@ export function DemandPlanDialog({ open, onOpenChange, customerId, partyName, de
           <div className="cs-foot flex-wrap items-center">
             <div className="mr-auto flex min-w-0 flex-col">
               <span className="cs-caption">Demand</span>
-              <span className="text-[22px] leading-tight font-extrabold tabular-nums">{inrFull(Math.round(total))}</span>
+              <span className="text-[22px] leading-tight font-extrabold tabular-nums">{rupees(Math.round(total))}</span>
               <span className="cs-muted text-xs font-semibold">
                 {chosen.length} bill{chosen.length === 1 ? '' : 's'}
                 {avgAge != null && ` · average ${avgAge.toFixed(1)} days old`}
@@ -356,7 +358,7 @@ export function DemandPlanDialog({ open, onOpenChange, customerId, partyName, de
                   type="button"
                   className="cs-log px-5"
                   disabled={!chosen.length}
-                  onClick={() => (onUse(Math.round(total), `${inrFull(Math.round(total))} demand plan (${chosen.length} bills)`), onOpenChange(false))}
+                  onClick={() => (onUse(Math.round(total), `${rupees(Math.round(total))} demand plan (${chosen.length} bills)`), onOpenChange(false))}
                 >
                   Use this amount
                 </button>
@@ -439,7 +441,7 @@ function DemandCard({ cardRef, company, partyName, side, asOf, bills, total, avg
           </div>
 
           <div className="relative mt-8 text-[11px] font-bold tracking-[0.16em] text-[rgba(255,255,255,0.6)] uppercase">Amount due</div>
-          <div className="relative mt-1.5 text-[52px] leading-none font-extrabold">{inrFull(Math.round(total))}</div>
+          <div className="relative mt-1.5 text-[52px] leading-none font-extrabold">{rupees(Math.round(total))}</div>
           <div className="relative mt-4 text-[22px] leading-tight font-extrabold">{partyName}</div>
 
           <div className="relative mt-4 flex flex-wrap gap-2">
@@ -464,9 +466,9 @@ function DemandCard({ cardRef, company, partyName, side, asOf, bills, total, avg
           </div>
           <div className="mt-4 grid grid-cols-3 gap-4">
             {[
-              { label: 'Overdue', value: inrFull(sum(over)), sub: plural(over.length, 'bill'), dot: RED },
-              { label: 'Falling due', value: inrFull(sum(upcoming)), sub: plural(upcoming.length, 'bill'), dot: AMBER },
-              { label: 'Oldest bill', value: bills.length ? `${bills[0].age} days` : '—', sub: bills.length ? formatDate(bills[0].date) : '', dot: '#5b5bd6' },
+              { label: 'Overdue', value: rupees(sum(over)), sub: plural(over.length, 'bill'), dot: RED },
+              { label: 'Upcoming due', value: rupees(sum(upcoming)), sub: plural(upcoming.length, 'bill'), dot: AMBER },
+              { label: 'Oldest Inv.', value: bills.length ? `${bills[0].age} days` : '—', sub: bills.length ? formatDate(bills[0].date) : '', dot: '#5b5bd6' },
             ].map((t) => (
               <div key={t.label}>
                 <div className="flex items-center gap-1.5 text-[11px] font-bold tracking-[0.12em] uppercase" style={{ color: MUTED }}>
@@ -483,7 +485,7 @@ function DemandCard({ cardRef, company, partyName, side, asOf, bills, total, avg
         {/* ── Every bill, oldest first, on a common age track ── */}
         <div className="px-8 pt-7">
           <div className="flex items-center gap-3 border-b border-[#eceef4] pb-2 text-[10.5px] font-bold tracking-[0.14em] uppercase" style={{ color: MUTED }}>
-            <span className="w-[128px] shrink-0">Bill</span>
+            <span className="w-[140px] shrink-0">Inv.</span>
             <span className="flex-1">Age vs {creditDays}-day credit</span>
             <span className="w-[118px] shrink-0 text-right">Status</span>
             <span className="w-[96px] shrink-0 text-right">Amount</span>
@@ -493,24 +495,29 @@ function DemandCard({ cardRef, company, partyName, side, asOf, bills, total, avg
             const tone = late ? RED : AMBER;
             return (
               <div key={b.code} className="flex items-center gap-3 py-2.5" style={{ borderBottom: i === bills.length - 1 ? 'none' : '1px solid #f1f2f6' }}>
-                <div className="w-[128px] shrink-0">
+                <div className="w-[140px] shrink-0">
                   <div className="text-[13.5px] leading-tight font-extrabold">{b.code}</div>
-                  <div className="text-[11.5px] font-semibold" style={{ color: MUTED }}>{formatDate(b.date)}</div>
+                  <div className="text-[11.5px] font-semibold" style={{ color: MUTED }}>Inv. {formatDate(b.date)}</div>
+                  <div className="text-[11.5px] font-bold" style={{ color: late ? '#c62f35' : '#b26b00' }}>Due {formatDate(dueOn(b))}</div>
                 </div>
                 <div className="relative h-[8px] flex-1 rounded-full bg-[#eef0f5]">
                   <div className="absolute inset-y-0 left-0 rounded-full" style={{ width: pct(b.age), background: tone, opacity: late ? 1 : 0.85 }} />
                   {/* the credit-period line */}
                   <div className="absolute -top-[5px] h-[18px] w-[2px] rounded-full bg-[#0f1426]" style={{ left: pct(creditDays) }} />
+                  {/* …and its term, above the line */}
+                  <div className="absolute -top-[20px] text-[10.5px] font-extrabold whitespace-nowrap" style={{ left: pct(creditDays), transform: 'translateX(-50%)', color: INK }}>
+                    {creditDays}d
+                  </div>
                   <div className="absolute top-[12px] text-[10.5px] font-bold whitespace-nowrap" style={{ left: pct(b.age), transform: 'translateX(-50%)', color: tone }}>
                     {b.age}d
                   </div>
                 </div>
                 <div className="w-[118px] shrink-0 text-right">
                   <span className="inline-block rounded-full px-2.5 py-[3px] text-[11.5px] font-bold" style={late ? { background: '#fdecec', color: '#c62f35' } : { background: '#fff4e0', color: '#b26b00' }}>
-                    {late ? `${b.age - creditDays}d overdue` : b.age === creditDays ? 'due today' : `due ${formatDate(dueOn(b)).slice(0, 5)}`}
+                    {late ? `${b.age - creditDays}d overdue` : b.age === creditDays ? 'due today' : `due in ${creditDays - b.age}d`}
                   </span>
                 </div>
-                <div className="w-[96px] shrink-0 text-right text-[15px] font-extrabold">{inrFull(Math.round(b.balance))}</div>
+                <div className="w-[96px] shrink-0 text-right text-[15px] font-extrabold">{rupees(Math.round(b.balance))}</div>
               </div>
             );
           })}
@@ -524,12 +531,12 @@ function DemandCard({ cardRef, company, partyName, side, asOf, bills, total, avg
               {plural(bills.length, 'bill')} · as on {formatDate(asOf)}
             </div>
           </div>
-          <div className="text-[32px] font-extrabold">{inrFull(Math.round(total))}</div>
+          <div className="text-[32px] font-extrabold">{rupees(Math.round(total))}</div>
         </div>
 
         <div className="px-8 pt-6 pb-7">
           <p className="text-[14px] leading-relaxed" style={{ color: '#3b4258' }}>
-            Kindly arrange the payment at the earliest. Thank you for your business.
+            Kindly arrange the payment at the earliest.
           </p>
           <div className="mt-4 flex items-end justify-between gap-4">
             <div className="text-[12.5px]" style={{ color: MUTED }}>
