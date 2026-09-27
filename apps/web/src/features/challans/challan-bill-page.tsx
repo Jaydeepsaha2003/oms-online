@@ -393,25 +393,19 @@ export function ChallanBillPage() {
   };
 
   /**
-   * Share the previewed receipt.
+   * Share the previewed receipt: the OS share sheet with the PDF attached and
+   * nothing else. WhatsApp, Mail, AirDrop and the rest are all targets in it,
+   * which is why the button is not named after any one of them.
    *
-   * On a phone this is the OS share sheet, with the PDF already attached —
-   * WhatsApp, Mail, AirDrop and the rest are all targets in it, which is why the
-   * button is not named after any one of them.
-   *
-   * Where the browser cannot share files (most desktops) the fallback does the
-   * two halves separately rather than pretending: the PDF is saved and WhatsApp
-   * opens with the message written, leaving only the attach to do. No link
-   * scheme can carry the file itself — `wa.me` takes text and nothing else.
+   * Where the browser cannot share files the PDF is saved instead, to attach by
+   * hand wherever it is going.
    */
   const shareReceipt = async () => {
     if (!previewFile) return;
-    const text = `Sales Receipt ${challan?.code ?? ''} — ${challan?.customerName ?? ''}`.replace(/\s+—\s*$/, '').trim();
     // No await before this: the share sheet needs the tap's transient activation.
-    if (await sharePdfFile(previewFile.blob, previewFile.filename, text)) return;
+    if (await sharePdfFile(previewFile.blob, previewFile.filename)) return;
     await savePdfBlob(previewFile.blob, previewFile.filename);
-    window.open(`https://wa.me/?text=${encodeURIComponent(text)}`, '_blank', 'noopener');
-    toast.info('No share sheet in this browser — the PDF is saved and WhatsApp is open; attach it there.');
+    toast.info('This browser cannot share files — the PDF is saved to Downloads instead.');
   };
 
   const pcsLines = useMemo(() => (challan ? pcsLineCount(challan) : 0), [challan]);

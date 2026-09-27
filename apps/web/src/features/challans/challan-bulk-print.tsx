@@ -1,9 +1,9 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { createRoot, type Root } from 'react-dom/client';
 import { flushSync } from 'react-dom';
-import { CheckCircle2, Download, Loader2, Mail, MessageCircle, Printer, Share2, TriangleAlert } from 'lucide-react';
+import { CheckCircle2, Download, Loader2, Printer, Share2, TriangleAlert } from 'lucide-react';
 import { toast } from 'sonner';
-import type { ChallanDto, CustomerDto } from '@oms/shared';
+import type { ChallanDto } from '@oms/shared';
 import { http } from '@/lib/api';
 import { cn } from '@/lib/utils';
 import { formatDate } from '@/lib/date-format';
@@ -108,13 +108,10 @@ export function ChallanBulkPrint({
   /** Captures waiting to be printed. Non-empty only between the last capture
    *  and `afterprint`; on screen the container stays hidden throughout. */
   const [printImgs, setPrintImgs] = useState<string[]>([]);
-  /** Finished PDFs waiting for a Share / WhatsApp / Email tap. */
+  /** Finished PDFs waiting for the Share tap. */
   const [shareFiles, setShareFiles] = useState<PdfFile[]>([]);
-  const [shareSaved, setShareSaved] = useState(false);
   /** iPhone Print: every challan in one PDF, waiting for the tap that opens it. */
   const [onePdf, setOnePdf] = useState<PdfFile | null>(null);
-  /** The party's contact, when every selected challan is for the same party. */
-  const [contact, setContact] = useState<{ mobile: string | null; email: string | null } | null>(null);
 
   // Drop the captures once the dialog closes — each is a full-page JPEG, and a
   // ten-challan batch left mounted is several MB held for nothing.
@@ -140,13 +137,6 @@ export function ChallanBulkPrint({
         if (!live) return;
         setJobs(loaded.map((challan) => ({ challan, kgsForPcs: false, status: 'pending' })));
         setPhase('asking');
-        const parties = [...new Set(loaded.map((c) => c.customerId))];
-        if (parties.length === 1 && parties[0] != null) {
-          http
-            .get<CustomerDto>(`/customers/${parties[0]}`)
-            .then((c) => live && setContact({ mobile: c.mobile, email: c.email }))
-            .catch(() => {}); // no contact: WhatsApp/Email just open without a recipient
-        }
       } catch {
         if (live) setLoadError('Could not load the selected challans. Close this and try again.');
       }
@@ -252,54 +242,25 @@ export function ChallanBulkPrint({
     return { blob: pdf.output('blob'), filename };
   };
 
-  /** One line naming what is being sent, e.g. "Challans SSS/1, SSS/2 — SUMTI MARKETING". */
-  const shareText = () => {
-    const done = (jobs ?? []).filter((j) => j.status === 'done');
-    const party = [...new Set(done.map((j) => j.challan.customerName))];
-    return `Challan${done.length === 1 ? '' : 's'} ${done.map((j) => j.challan.code).join(', ')}${party.length === 1 ? ` — ${party[0]}` : ''}`;
-  };
-
-  /** OS share sheet with every PDF attached (WhatsApp, Mail… are targets in it). */
-  const canShareFiles = (() => {
-    const nav = navigator as Navigator & { canShare?: (d: ShareData) => boolean };
-    const probe = new File([''], 'probe.pdf', { type: 'application/pdf' });
-    return !!nav.canShare && !!nav.share && nav.canShare({ files: [probe] });
-  })();
-  const shareSheet = async () => {
-    try {
-      await navigator.share({
-        files: shareFiles.map((f) => new File([f.blob], f.filename, { type: 'application/pdf' })),
-        title: shareText(),
-        text: shareText(),
-      });
-    } catch (e) {
-      if (!(e instanceof DOMException && e.name === 'AbortError')) toast.error('Could not open the share sheet — use WhatsApp or Email instead.');
-    }
-  };
-
   /**
-   * WhatsApp / Email from a link can carry text only — no link can attach a file.
-   * So the PDFs are saved first (once) and the chat / mail opens with the message
-   * written; attaching the saved files is the one step left.
+   * The OS share sheet with every PDF attached — WhatsApp, Mail and the rest are
+   * targets in it. The files alone, no title or text: WhatsApp posts those as a
+   * message beside the PDFs, and the owner wants the documents to go on their own.
+   * A browser that cannot share files gets them saved to Downloads instead.
    */
-  const saveForAttach = () => {
-    if (shareSaved) return;
-    shareFiles.forEach((f) => saveBlobSilently(f.blob, f.filename));
-    setShareSaved(true);
-  };
-  const openWhatsApp = () => {
-    saveForAttach();
-    const digits = (contact?.mobile ?? '').replace(/\D/g, '');
-    const to = digits.length === 10 ? `91${digits}` : digits;
-    window.open(`https://wa.me/${to}?text=${encodeURIComponent(shareText())}`, '_blank', 'noopener');
-    toast.info('PDFs saved to Downloads — attach them in the WhatsApp chat.');
-  };
-  const openEmail = () => {
-    saveForAttach();
-    const subject = encodeURIComponent(shareText());
-    const body = encodeURIComponent(`Please find attached: ${shareText()}.`);
-    window.location.href = `mailto:${contact?.email ?? ''}?subject=${subject}&body=${body}`;
-    toast.info('PDFs saved to Downloads — attach them to the email.');
+  const shareSheet = async () => {
+    const files = shareFiles.map((f) => new File([f.blob], f.filename, { type: 'application/pdf' }));
+    const nav = navigator as Navigator & { canShare?: (d: ShareData) => boolean };
+    if (!nav.canShare?.({ files })) {
+      shareFiles.forEach((f) => saveBlobSilently(f.blob, f.filename));
+      toast.info('This browser cannot share files — the PDFs are saved to Downloads instead.');
+      return;
+    }
+    try {
+      await navigator.share({ files });
+    } catch (e) {
+      if (!(e instanceof DOMException && e.name === 'AbortError')) toast.error('Could not open the share sheet.');
+    }
   };
 
   /**
@@ -342,7 +303,6 @@ export function ChallanBulkPrint({
     setDelivery(mode);
     setPhase('printing');
     setShareFiles([]);
-    setShareSaved(false);
     // Print needs every capture in hand before it can open one preview; save
     // writes each out as it goes and keeps nothing.
     const shots: Shot[] = [];
@@ -435,7 +395,7 @@ export function ChallanBulkPrint({
               all {jobs.length} on separate pages.{' '}
               <strong className="text-foreground font-semibold">Save PDFs</strong> writes each as its
               own file to your downloads, in this order — no prompts.{' '}
-              <strong className="text-foreground font-semibold">Share</strong> sends them by WhatsApp or email.
+              <strong className="text-foreground font-semibold">Share</strong> hands the PDFs to any app on your device.
             </p>
 
             {/* The cup question, once per challan that has PCS-sold lines. */}
@@ -544,22 +504,11 @@ export function ChallanBulkPrint({
             {phase === 'done' && delivery === 'share' && shareFiles.length > 0 && (
               <div className="space-y-2 rounded-md border p-3">
                 <p className="text-[13px] font-semibold">Send {shareFiles.length} PDF{shareFiles.length === 1 ? '' : 's'}</p>
-                <div className="grid gap-2 sm:grid-cols-3">
-                  {canShareFiles && (
-                    <Button variant="outline" onClick={() => void shareSheet()}>
-                      <Share2 /> Share
-                    </Button>
-                  )}
-                  <Button variant="outline" onClick={openWhatsApp} className="text-emerald-700 dark:text-emerald-300">
-                    <MessageCircle /> WhatsApp
-                  </Button>
-                  <Button variant="outline" onClick={openEmail}>
-                    <Mail /> Email
-                  </Button>
-                </div>
+                <Button variant="outline" className="w-full" onClick={() => void shareSheet()}>
+                  <Share2 /> Share
+                </Button>
                 <p className="text-muted-foreground text-[11px]">
-                  {canShareFiles ? 'Share attaches the PDFs for you. ' : ''}WhatsApp and Email save the PDFs to Downloads and open
-                  {contact?.mobile || contact?.email ? ' addressed to the party' : ''} with the message written — attach the saved files there.
+                  Opens your device's share sheet with the PDFs attached, and nothing else — pick WhatsApp, Mail or any app there.
                 </p>
               </div>
             )}

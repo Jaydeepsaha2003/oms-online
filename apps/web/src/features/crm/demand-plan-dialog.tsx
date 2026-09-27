@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from 'react';
-import { Loader2 } from 'lucide-react';
+import { Loader2, Share2 } from 'lucide-react';
 import { toast } from 'sonner';
 import { billAgeDays, demandStats, planDemand } from '@oms/shared';
 import { cn } from '@/lib/utils';
@@ -154,11 +154,13 @@ export function DemandPlanDialog({ open, onOpenChange, customerId, partyName, de
             >
               Copy
             </Button>
-            <Button variant="outline" size="sm" disabled={!chosen.length} asChild>
-              <a href={`https://wa.me/?text=${encodeURIComponent(text)}`} target="_blank" rel="noreferrer">
-                WhatsApp
-              </a>
-            </Button>
+            {/* The request is text, so Share carries the text — WhatsApp and the
+                rest are targets in the sheet. Copy covers a browser without one. */}
+            {'share' in navigator && (
+              <Button variant="outline" size="sm" disabled={!chosen.length} onClick={() => void navigator.share({ text }).catch(() => {})}>
+                <Share2 /> Share
+              </Button>
+            )}
             {onUse && (
               <Button size="sm" disabled={!chosen.length} onClick={() => (onUse(Math.round(total), `${inrFull(Math.round(total))} demand plan (${chosen.length} bills)`), onOpenChange(false))}>
                 Use this amount

@@ -28,12 +28,15 @@ export function isMobile(): boolean {
  *  sharing files. Returns true if the share sheet was shown (or the user handled
  *  it), false if file-sharing isn't available so the caller should fall back to a
  *  download/tab. A user-cancelled share still counts as handled (returns true) —
- *  we must NOT then also open a tab. */
-async function tryShareFile(file: File, title: string): Promise<boolean> {
+ *  we must NOT then also open a tab.
+ *
+ *  The file alone: no title or text. Apps such as WhatsApp post those as a
+ *  message beside the PDF, and the owner wants the document to go on its own. */
+async function tryShareFile(file: File): Promise<boolean> {
   const nav = typeof navigator !== 'undefined' ? (navigator as Navigator & { canShare?: (d: ShareData) => boolean }) : undefined;
   if (!nav?.canShare || !nav.share || !nav.canShare({ files: [file] })) return false;
   try {
-    await nav.share({ files: [file], title });
+    await nav.share({ files: [file] });
     return true;
   } catch (err) {
     // User dismissed the sheet → handled, don't fall back to a tab.
@@ -56,8 +59,8 @@ async function tryShareFile(file: File, title: string): Promise<boolean> {
  * Must be called synchronously inside the click, before any await: the share
  * sheet needs the tap's transient activation.
  */
-export function sharePdfFile(blob: Blob, filename: string, title?: string): Promise<boolean> {
-  return tryShareFile(new File([blob], filename, { type: 'application/pdf' }), title || filename);
+export function sharePdfFile(blob: Blob, filename: string): Promise<boolean> {
+  return tryShareFile(new File([blob], filename, { type: 'application/pdf' }));
 }
 
 /** Call this SYNCHRONOUSLY inside a click handler (before any await) to reserve a
@@ -171,7 +174,7 @@ export async function savePdfBlob(blob: Blob, filename: string, iosTab?: Window 
 
   // Mobile: the share sheet carries the file's real name. Only reachable while
   // the caller's tap is still "live" — see the transient-activation note above.
-  if (isMobile() && (await tryShareFile(file, filename))) {
+  if (isMobile() && (await tryShareFile(file))) {
     iosTab?.close(); // the reserved tab is no longer needed
     return;
   }
@@ -236,7 +239,7 @@ export async function openPdf(url: string, filename?: string): Promise<void> {
     const blob = res.data as Blob;
     if (isMobile()) {
       const name = filename || filenameFromHeaders(res.headers) || 'document.pdf';
-      if (await tryShareFile(new File([blob], name, { type: 'application/pdf' }), name)) {
+      if (await tryShareFile(new File([blob], name, { type: 'application/pdf' }))) {
         tab?.close();
         return;
       }
