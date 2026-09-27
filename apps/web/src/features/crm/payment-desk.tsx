@@ -1,4 +1,5 @@
 import { useMemo, useRef, useState } from 'react';
+import * as DialogPrimitive from '@radix-ui/react-dialog';
 import {
   AlertTriangle,
   Banknote,
@@ -251,16 +252,17 @@ const LEDGER_VIEWS: { v: LedgerView; label: string; on: string; off: string }[] 
 /**
  * The heart of the desk: a searchable, priority-ranked list of who owes what.
  *
- * On a phone, Collect opens a pre-filled payment follow-up straight away. On a
- * wide enough desktop there is room to see the party first, so a row (or its
- * Collect) opens it in the panel beside the list — invoices to pick, the amount
- * to ask for, and what was said last — and "Log promise" there opens the same
- * form. Without that room, a row opens the form directly, as on the phone.
+ * Collect opens the party before the form: invoices to pick, the amount to ask
+ * for, and what was said last, and "Log promise" there opens the pre-filled
+ * payment follow-up. On a wide enough desktop the party opens in the panel
+ * beside the list; without that room (a phone, a narrow window) it opens in the
+ * Collect sheet over it.
  */
 export function OwingPartiesWorklist({ onCollect, view = 'ALL', onViewChange }: { onCollect: (p: CollectPrefill) => void; view?: LedgerView; onViewChange?: (v: LedgerView) => void }) {
   const [search, setSearch] = useState('');
   const [priority, setPriority] = useState<Priority | ''>('');
   const [picked, setPicked] = useState('');
+  const [sheet, setSheet] = useState<PartyBalanceSummary | null>(null);
   const asideRef = useRef<HTMLElement>(null);
   const { data: fetched = [], isLoading, isFetching } = usePartyBalances(search);
   const raw = useMemo(() => balancesInView(fetched, view), [fetched, view]);
@@ -278,16 +280,12 @@ export function OwingPartiesWorklist({ onCollect, view = 'ALL', onViewChange }: 
     return [...filtered].sort((a, b) => rank[priorityOf(a)] - rank[priorityOf(b)] || b.overdue - a.overdue);
   }, [raw, priority]);
 
-  // Prefill with what they actually owe. Asking for the gross invoice figure
-  // when their own advance is already sitting with us is the wrong ask.
-  const collectFrom = (p: PartyBalanceSummary) => onCollect(prefillFor(p, p.overdue > 0 ? p.overdue : money(p.outstanding)));
-
   // The worst party is open until another is picked. When the window is too
   // narrow for the panel (a container query hides it), there is nothing to
-  // open it in, so the row goes straight to the form, as on a phone.
+  // open it in, so the row opens the sheet instead, as on a phone.
   const selected = balances.find((p) => p.partyName === picked) ?? balances[0];
   const openParty = (p: PartyBalanceSummary) => {
-    if (!asideRef.current?.offsetParent) return collectFrom(p);
+    if (!asideRef.current?.offsetParent) return setSheet(p);
     setPicked(p.partyName);
   };
 
@@ -460,7 +458,7 @@ export function OwingPartiesWorklist({ onCollect, view = 'ALL', onViewChange }: 
                     <span className={cn('rp-rail absolute inset-y-0 left-0 w-1 max-sm:w-[5px]', RAIL_TONE[pr])} aria-hidden style={{ background: SKIN_TONE[PRIORITY_SKIN[pr]].grad }} />
                     <div className="flex items-start gap-2 pl-1.5 max-sm:pl-0">
                       <span className="bg-primary/10 text-primary rp-avatar flex size-8 shrink-0 items-center justify-center rounded-full text-xs font-bold max-sm:size-[34px]" style={{ background: SKIN_TONE[PRIORITY_SKIN[pr]].bg, color: SKIN_TONE[PRIORITY_SKIN[pr]].fg }}>{initials(p.partyName)}</span>
-                      <button type="button" onClick={() => collectFrom(p)} className="min-w-0 flex-1 cursor-pointer text-left" title={`Collect from ${p.partyName}`}>
+                      <button type="button" onClick={() => setSheet(p)} className="min-w-0 flex-1 cursor-pointer text-left" title={`Collect from ${p.partyName}`}>
                         <div className="truncate font-medium">{p.partyName}</div>
                         <div className="text-muted-foreground truncate text-xs">{p.agent || 'No agent'} · {p.invoiceCount} inv</div>
                       </button>
@@ -480,8 +478,14 @@ export function OwingPartiesWorklist({ onCollect, view = 'ALL', onViewChange }: 
                         {statusChip(p)}
                         {p.lastReceiptAt && <span className="text-muted-foreground text-[11px]">paid {formatDate(p.lastReceiptAt)}</span>}
                       </div>
-                      <Button size="sm" className="rp-act rp-act-primary h-8 shrink-0 gap-1.5 rounded-full px-3 text-xs font-semibold shadow-sm transition-transform active:scale-95 max-sm:rounded-xl" onClick={() => collectFrom(p)}>
-                        <Phone className="size-3.5" /> Collect
+                      {/* The mockup's pair: Call the party, or open them to collect. */}
+                      {p.mobile && (
+                        <Button asChild size="sm" variant="outline" className="rp-act rp-act-icon size-8 shrink-0 rounded-full p-0 max-sm:rounded-[13px]">
+                          <a href={`tel:${p.mobile}`} aria-label={`Call ${p.partyName}`} title={`Call ${p.mobile}`}><Phone className="size-4" /></a>
+                        </Button>
+                      )}
+                      <Button size="sm" className="rp-act rp-act-primary h-8 shrink-0 gap-1.5 rounded-full px-3 text-xs font-semibold shadow-sm transition-transform active:scale-95 max-sm:rounded-xl max-sm:px-4" onClick={() => setSheet(p)}>
+                        <HandCoins className="size-3.5" /> Collect
                       </Button>
                     </div>
                   </div>
@@ -495,6 +499,7 @@ export function OwingPartiesWorklist({ onCollect, view = 'ALL', onViewChange }: 
       {!isLoading && selected && (
         <PartyDetailAside key={selected.partyName} p={selected} view={view} onCollect={onCollect} asideRef={asideRef} />
       )}
+      {sheet && <CollectSheet key={sheet.partyName} p={sheet} view={view} onCollect={onCollect} onClose={() => setSheet(null)} />}
     </div>
   );
 }
@@ -510,22 +515,17 @@ const DOT: Record<string, string> = {
  * One party, opened: the four figures that decide the call, their open
  * invoices to pick from, the amount to ask for, and the last few things that
  * happened. "Log promise" opens the ordinary payment follow-up form with all
- * of that filled in — this panel records nothing itself.
+ * of that filled in — neither the panel nor the sheet records anything itself.
  *
  * Every figure follows the Bank / Cash view the list is in, invoices included,
- * so the amount it proposes is the amount the list says they owe.
+ * so the amount it proposes is the amount the list says they owe. The desktop
+ * panel and the phone's sheet both read this, so they cannot disagree.
  */
-function PartyDetailAside({ p, view, onCollect, asideRef }: {
-  p: PartyBalanceSummary;
-  view: LedgerView;
-  onCollect: (c: CollectPrefill) => void;
-  asideRef: React.Ref<HTMLElement>;
-}) {
+function usePartyCollect(p: PartyBalanceSummary, view: LedgerView) {
   const { data } = usePartyBalance(p.customerId, p.partyName);
   const { data: history } = useFollowupList({ kind: 'PAYMENT', party: p.partyName, pageSize: 20 });
   const [picked, setPicked] = useState<Set<string>>(new Set());
   const [amount, setAmount] = useState<number | null>(null);
-  const pr = priorityOf(p);
 
   const side = (inv: PartyOpenInvoice) => (view === 'BANK' ? inv.bank : view === 'CASH' ? inv.cash : inv.balance);
   const invoices = (data?.invoices ?? []).filter((inv) => side(inv) > 0);
@@ -561,6 +561,18 @@ function PartyDetailAside({ p, view, onCollect, asideRef }: {
       return { key: f.id, text: f.title, meta: `${m.label} · ${formatDate(f.updatedAt)}${f.agentName ? ` · ${f.agentName}` : ''}`, dot: DOT[m.tone] };
     });
   if (p.lastReceiptAt) activity.push({ key: 0, text: 'Last payment received.', meta: formatDate(p.lastReceiptAt), dot: DOT.emerald });
+
+  return { data, invoices, side, picked, pickedCodes, pickedSum, amount, setAmount, ask, toggle, quick, stats, activity, prefill: () => prefillFor(p, ask, pickedCodes) };
+}
+
+function PartyDetailAside({ p, view, onCollect, asideRef }: {
+  p: PartyBalanceSummary;
+  view: LedgerView;
+  onCollect: (c: CollectPrefill) => void;
+  asideRef: React.Ref<HTMLElement>;
+}) {
+  const { data, invoices, side, picked, pickedCodes, pickedSum, amount, setAmount, ask, toggle, quick, stats, activity, prefill } = usePartyCollect(p, view);
+  const pr = priorityOf(p);
 
   return (
     <aside ref={asideRef} className="pd-aside pd-rise hidden flex-col md:flex" aria-label={`${p.partyName} — details`}>
@@ -643,7 +655,7 @@ function PartyDetailAside({ p, view, onCollect, asideRef }: {
             />
             <span className="pd-muted text-[11.5px]">promised</span>
           </label>
-          <button type="button" className="pd-btn pd-btn-primary pd-btn-lg" disabled={ask <= 0} onClick={() => onCollect(prefillFor(p, ask, pickedCodes))}>
+          <button type="button" className="pd-btn pd-btn-primary pd-btn-lg" disabled={ask <= 0} onClick={() => onCollect(prefill())}>
             Log promise
           </button>
         </div>
@@ -668,6 +680,153 @@ function PartyDetailAside({ p, view, onCollect, asideRef }: {
         )}
       </div>
     </aside>
+  );
+}
+
+/**
+ * The phone's Collect: the same party, opened full screen (the mobile mockup's
+ * "Collect payment"). The party and its figures on the blue, the invoices to
+ * tick and the amount below, and Log promise pinned where a thumb reaches it,
+ * showing the sum it will ask for. Radix gives it the focus trap, Escape, the
+ * scroll lock and the Android back gesture a hand-rolled overlay would not.
+ */
+/** How many open invoices the sheet lists before "Show all". */
+const SHEET_INVOICES = 5;
+
+function CollectSheet({ p, view, onCollect, onClose }: {
+  p: PartyBalanceSummary;
+  view: LedgerView;
+  onCollect: (c: CollectPrefill) => void;
+  onClose: () => void;
+}) {
+  const { data, invoices, side, picked, pickedCodes, pickedSum, amount, setAmount, ask, toggle, quick, stats, activity, prefill } = usePartyCollect(p, view);
+  const pr = priorityOf(p);
+  const log = () => { onClose(); onCollect(prefill()); };
+  // A long book would push the amount and Log promise a long scroll down, so
+  // the oldest few show until asked; a ticked invoice always stays in view.
+  const [allInvoices, setAllInvoices] = useState(false);
+  const shown = allInvoices ? invoices : invoices.filter((inv, i) => i < SHEET_INVOICES || picked.has(inv.code));
+
+  return (
+    <DialogPrimitive.Root open onOpenChange={(o) => !o && onClose()}>
+      <DialogPrimitive.Portal>
+        <DialogPrimitive.Overlay className="cs-overlay" />
+        <DialogPrimitive.Content className="cs-sheet" aria-describedby={undefined}>
+          <div className="cs-hero">
+            <div className="flex items-center gap-2.5">
+              <span className="cs-kicker">Collect payment</span>
+              <DialogPrimitive.Close className="cs-x" aria-label="Close"><X className="size-[18px]" /></DialogPrimitive.Close>
+            </div>
+            <div className="mt-2.5 flex items-center gap-3">
+              <span className={cn('flex size-12 shrink-0 items-center justify-center rounded-full text-[15px] font-extrabold ring-[3px] ring-white/35', DESK_AV[pr])}>{initials(p.partyName)}</span>
+              <div className="flex min-w-0 flex-1 flex-col">
+                <DialogPrimitive.Title className="truncate text-lg leading-tight font-extrabold">{p.partyName}</DialogPrimitive.Title>
+                <span className="truncate text-[12.5px] text-white/80">
+                  {p.agent || 'No agent'} · {p.lastReceiptAt ? `last paid ${formatDate(p.lastReceiptAt)}` : 'never paid'}
+                </span>
+              </div>
+              {statusChip(p, 'shrink-0 px-2.5 py-1 text-[11.5px] font-extrabold')}
+            </div>
+            <div className="mt-3.5 grid grid-cols-2 gap-2">
+              {stats.map((s) => (
+                <div key={s.label} className="cs-stat">
+                  <div className="cs-stat-label">{s.label}</div>
+                  <div className="cs-stat-value">{s.value}</div>
+                </div>
+              ))}
+            </div>
+          </div>
+
+          <div className="cs-body">
+            <section className="cs-card">
+              <div className="flex items-center justify-between gap-2 px-3.5 pt-3 pb-2">
+                <span className="cs-caption">Open invoices</span>
+                <span className="cs-muted text-xs font-semibold tabular-nums">
+                  {pickedCodes.length ? `${pickedCodes.length} selected · ${inrFull(pickedSum)}` : data ? `${invoices.length} open` : ''}
+                </span>
+              </div>
+              <div className="flex flex-col gap-1.5 px-2.5 pb-2.5">
+                {!data ? (
+                  <div className="cs-muted flex items-center gap-2 px-1.5 py-3 text-[13px]"><Loader2 className="size-4 animate-spin" /> Loading invoices…</div>
+                ) : invoices.length === 0 ? (
+                  <div className="cs-muted px-1.5 py-3 text-[13px]">No open invoices on this side of the book.</div>
+                ) : (
+                  shown.map((inv) => (
+                    <button key={inv.code} type="button" className="cs-inv" aria-pressed={picked.has(inv.code)} onClick={() => toggle(inv.code)}>
+                      <span className="cs-box" aria-hidden>{picked.has(inv.code) && <Check className="size-3.5" strokeWidth={3.5} />}</span>
+                      <span className="flex min-w-0 flex-1 flex-col">
+                        <span className="truncate font-mono text-[13px]">{inv.code}</span>
+                        <span className="cs-muted text-xs">Billed {formatDate(inv.invDate)}</span>
+                      </span>
+                      <span className="flex flex-col items-end">
+                        <span className="text-[14.5px] font-extrabold tabular-nums">{inrFull(side(inv))}</span>
+                        <span className={cn('text-[11.5px] font-bold', inv.overdueDays > 0 ? 'text-rose-700 dark:text-rose-400' : 'text-sky-700 dark:text-sky-400')}>
+                          {inv.overdueDays > 0 ? `${inv.overdueDays}d overdue` : 'not due'}
+                        </span>
+                      </span>
+                    </button>
+                  ))
+                )}
+                {shown.length < invoices.length && (
+                  <button type="button" className="cs-quick cs-quick-slate" onClick={() => setAllInvoices(true)}>
+                    Show all {invoices.length} invoices
+                  </button>
+                )}
+              </div>
+            </section>
+
+            <section className="cs-card flex flex-col gap-2.5 px-3.5 pt-3 pb-3.5">
+              <span className="cs-caption">Amount promised</span>
+              <div className="flex flex-wrap gap-2">
+                {p.overdue > 0 && (
+                  <button type="button" className="cs-quick cs-quick-rose" aria-pressed={amount === p.overdue} onClick={() => quick(p.overdue)}>
+                    Overdue {inrCompact(p.overdue)}
+                  </button>
+                )}
+                <button type="button" className="cs-quick cs-quick-slate" aria-pressed={amount === money(p.outstanding)} onClick={() => quick(money(p.outstanding))}>
+                  Full {inrCompact(money(p.outstanding))}
+                </button>
+              </div>
+              <label className="cs-amount">
+                <span className="cs-muted text-lg font-bold">₹</span>
+                <input
+                  inputMode="numeric"
+                  aria-label="Amount promised"
+                  value={ask.toLocaleString('en-IN')}
+                  onChange={(e) => setAmount(Number(e.target.value.replace(/\D/g, '')) || 0)}
+                />
+              </label>
+            </section>
+
+            <section className="cs-card px-3.5 pt-3 pb-3.5">
+              <div className="cs-caption mb-2.5">Recent activity</div>
+              {activity.length === 0 ? (
+                <p className="cs-muted text-[13.5px]">Nothing logged for this party yet.</p>
+              ) : (
+                <div className="flex flex-col gap-2.5">
+                  {activity.map((e) => (
+                    <div key={e.key} className="flex gap-2.5">
+                      <span className={cn('mt-1.5 size-2 shrink-0 rounded-full', e.dot)} />
+                      <div className="flex min-w-0 flex-col">
+                        <span className="text-[13.5px] leading-[1.45] text-pretty">{e.text}</span>
+                        <span className="cs-muted text-xs">{e.meta}</span>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              )}
+            </section>
+          </div>
+
+          <div className="cs-foot">
+            <DialogPrimitive.Close className="cs-cancel">Cancel</DialogPrimitive.Close>
+            <button type="button" className="cs-log truncate" disabled={ask <= 0} onClick={log}>
+              Log promise · ₹{ask.toLocaleString('en-IN')}
+            </button>
+          </div>
+        </DialogPrimitive.Content>
+      </DialogPrimitive.Portal>
+    </DialogPrimitive.Root>
   );
 }
 

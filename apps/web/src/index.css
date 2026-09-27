@@ -2164,6 +2164,97 @@ select:not(:disabled):not([multiple]):focus-visible {
   .pd-rise, .pd-hero-track > span { animation: none !important; transition: none !important; }
 }
 
+/* ── CRM desk: the Collect sheet ─────────────────────────────────────────────
+ * The mobile mockup's "Collect payment" screen (CRM Payments Mobile): the
+ * party on the blue with the four figures that decide the call, their open
+ * invoices to tick, the amount to ask for and what happened last, with Log
+ * promise pinned to the bottom. It opens wherever the desk has no room for the
+ * party panel beside the list — a phone, or a narrow window — so, unlike the
+ * two skins, it is not width-scoped. Values are the mockup's own.
+ */
+.cs-overlay { position: fixed; inset: 0; z-index: 50; background: rgba(15, 23, 42, 0.5); backdrop-filter: blur(6px); animation: csFade 0.25s ease both; }
+.cs-sheet {
+  position: fixed; inset: 0; z-index: 50; display: flex; flex-direction: column; overflow: hidden;
+  background: linear-gradient(180deg, #f6f8fd 0%, #eef2f8 100%); color: #141a2b; font-family: var(--font-jakarta);
+  animation: csIn 0.34s cubic-bezier(0.22, 1, 0.36, 1) both;
+}
+/* A window that is merely narrow gets a tall card, not a stretched screen. */
+@media (width >= 40rem) {
+  .cs-sheet { inset: 16px 0; width: min(480px, calc(100vw - 32px)); margin: 0 auto; border-radius: 24px; box-shadow: 0 30px 80px -20px rgba(15, 23, 42, 0.5); }
+}
+.cs-hero {
+  position: relative; flex-shrink: 0; overflow: hidden; color: #fff; padding: calc(12px + env(safe-area-inset-top)) 14px 16px;
+  background: linear-gradient(135deg, #4f6ef7 0%, #3a4fd6 55%, #3140b8 100%); box-shadow: 0 14px 30px -18px rgba(49, 64, 184, 0.8);
+}
+.cs-hero::before { content: ''; position: absolute; inset: 0; background: linear-gradient(180deg, rgba(255, 255, 255, 0.16), rgba(255, 255, 255, 0) 55%); pointer-events: none; }
+.cs-hero::after { content: ''; position: absolute; width: 260px; height: 260px; right: -90px; top: -150px; border-radius: 50%; background: radial-gradient(circle, rgba(255, 255, 255, 0.2), transparent 65%); pointer-events: none; }
+.cs-hero > * { position: relative; }
+.cs-kicker { margin-right: auto; font-size: 11px; font-weight: 800; letter-spacing: 0.12em; text-transform: uppercase; color: rgba(255, 255, 255, 0.8); }
+.cs-x {
+  width: 40px; height: 40px; flex-shrink: 0; display: flex; align-items: center; justify-content: center; border-radius: 50%; cursor: pointer;
+  background: rgba(255, 255, 255, 0.16); border: 1px solid rgba(255, 255, 255, 0.3); box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.3); color: #fff;
+}
+.cs-x:active { transform: scale(0.92); }
+.cs-stat { padding: 8px 11px; border-radius: 13px; background: rgba(255, 255, 255, 0.12); border: 1px solid rgba(255, 255, 255, 0.22); box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.18); }
+.cs-stat-label { font-size: 10px; font-weight: 800; letter-spacing: 0.09em; text-transform: uppercase; color: rgba(255, 255, 255, 0.75); }
+.cs-stat-value { margin-top: 2px; font-size: 18px; font-weight: 800; font-variant-numeric: tabular-nums; }
+.cs-body { flex: 1; min-height: 0; overflow-y: auto; overscroll-behavior: contain; -webkit-overflow-scrolling: touch; padding: 14px 14px 18px; display: flex; flex-direction: column; gap: 14px; }
+.cs-card { border-radius: 18px; background: rgba(255, 255, 255, 0.9); border: 1px solid #fff; box-shadow: 0 1px 2px rgba(20, 30, 60, 0.05), 0 10px 24px -16px rgba(20, 30, 60, 0.25); }
+.cs-caption { font-size: 12px; font-weight: 800; letter-spacing: 0.08em; text-transform: uppercase; color: #7a849c; }
+.cs-muted { color: #7a849c; }
+.cs-inv {
+  display: flex; align-items: center; gap: 12px; width: 100%; min-height: 56px; padding: 8px 12px; border-radius: 13px; cursor: pointer; text-align: left;
+  border: 1px solid #eaeef6; background: #fff; -webkit-tap-highlight-color: transparent; transition: background 0.15s ease, border-color 0.15s ease;
+}
+.cs-inv:active { transform: scale(0.99); }
+.cs-inv[aria-pressed='true'] { border-color: #b7c4ff; background: #eef1ff; }
+.cs-box { width: 22px; height: 22px; flex-shrink: 0; display: flex; align-items: center; justify-content: center; border-radius: 7px; border: 1.5px solid #c3cad9; background: #fff; color: #fff; }
+.cs-inv[aria-pressed='true'] .cs-box { border-color: #3b4fd8; background: #3b4fd8; }
+.cs-quick { height: 40px; padding: 0 14px; border-radius: 12px; cursor: pointer; font-size: 13px; font-weight: 700; font-variant-numeric: tabular-nums; border: 1px solid; background: #fff; }
+.cs-quick-rose { border-color: #fecdd3; color: #be123c; }
+.cs-quick-rose[aria-pressed='true'] { background: #fff1f2; }
+.cs-quick-slate { border-color: #dfe4ee; color: #3a4256; }
+.cs-quick-slate[aria-pressed='true'] { background: #f1f4f9; }
+.cs-amount {
+  display: flex; align-items: center; gap: 8px; height: 52px; padding: 0 14px; border-radius: 14px;
+  background: #f5f7fc; border: 1px solid #dfe4ef; box-shadow: inset 0 1px 2px rgba(20, 30, 60, 0.05); transition: border-color 0.15s ease, box-shadow 0.15s ease;
+}
+.cs-amount:focus-within { border-color: #7b93ff; box-shadow: 0 0 0 3px rgba(79, 110, 247, 0.18); }
+.cs-amount input { flex: 1; min-width: 0; border: 0; background: transparent; outline: none; color: inherit; font-size: 22px; font-weight: 800; font-variant-numeric: tabular-nums; }
+.cs-foot {
+  flex-shrink: 0; display: flex; gap: 8px; padding: 10px 14px calc(12px + env(safe-area-inset-bottom));
+  background: rgba(255, 255, 255, 0.92); backdrop-filter: blur(14px); border-top: 1px solid rgba(20, 30, 60, 0.08); box-shadow: 0 -10px 24px -16px rgba(20, 30, 60, 0.3);
+}
+.cs-cancel { height: 50px; padding: 0 18px; border-radius: 14px; cursor: pointer; font-size: 14px; font-weight: 800; border: 1px solid #dfe4ee; background: #fff; color: #27304a; }
+.cs-log {
+  flex: 1; min-width: 0; height: 50px; border: 0; border-radius: 14px; cursor: pointer; font-size: 15px; font-weight: 800; color: #fff; font-variant-numeric: tabular-nums;
+  background: linear-gradient(180deg, #5b7cff, #3b4fd8); box-shadow: 0 12px 24px -10px rgba(59, 79, 216, 0.85), inset 0 1px 0 rgba(255, 255, 255, 0.3);
+}
+.cs-log:active { transform: scale(0.98); }
+.cs-log:disabled { cursor: not-allowed; opacity: 0.5; box-shadow: none; }
+.cs-x:focus-visible, .cs-inv:focus-visible, .cs-quick:focus-visible, .cs-cancel:focus-visible, .cs-log:focus-visible { outline: 2px solid #7b93ff; outline-offset: 2px; }
+@keyframes csFade { from { opacity: 0; } }
+@keyframes csIn { from { opacity: 0; transform: translateY(24px) scale(0.98); } }
+
+.dark .cs-sheet { background: linear-gradient(180deg, #0f1629 0%, #0b1020 100%); color: #e8eefc; }
+.dark .cs-card { background: rgba(22, 30, 52, 0.85); border-color: rgba(255, 255, 255, 0.07); }
+.dark .cs-caption, .dark .cs-muted { color: #93a6c9; }
+.dark .cs-inv { background: rgba(255, 255, 255, 0.03); border-color: rgba(255, 255, 255, 0.08); }
+.dark .cs-inv[aria-pressed='true'] { background: rgba(79, 110, 247, 0.16); border-color: rgba(123, 147, 255, 0.45); }
+.dark .cs-box { background: transparent; border-color: rgba(255, 255, 255, 0.25); }
+.dark .cs-quick { background: rgba(255, 255, 255, 0.04); }
+.dark .cs-quick-rose { border-color: rgba(251, 113, 133, 0.35); color: #fda4af; }
+.dark .cs-quick-rose[aria-pressed='true'] { background: rgba(244, 63, 94, 0.16); }
+.dark .cs-quick-slate { border-color: rgba(255, 255, 255, 0.14); color: #cbd5e1; }
+.dark .cs-quick-slate[aria-pressed='true'] { background: rgba(255, 255, 255, 0.1); }
+.dark .cs-amount { background: rgba(255, 255, 255, 0.05); border-color: rgba(255, 255, 255, 0.12); }
+.dark .cs-foot { background: rgba(15, 22, 41, 0.92); border-color: rgba(255, 255, 255, 0.08); }
+.dark .cs-cancel { background: rgba(255, 255, 255, 0.06); border-color: rgba(255, 255, 255, 0.12); color: #e8eefc; }
+
+@media (prefers-reduced-motion: reduce) {
+  .cs-overlay, .cs-sheet { animation: none; }
+}
+
 /* ── Reports: desktop skin ───────────────────────────────────────────────────
  * The desktop report mockups (Report - *.dc.html): the CRM desk's plate and
  * blue hero (the `.pd-*` rules above, reused as they are), plus the pieces
