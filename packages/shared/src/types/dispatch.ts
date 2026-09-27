@@ -78,6 +78,13 @@ export interface DispatchHoldInfo {
   at: string | null;
 }
 
+/** A customer record's hold fields as the screens receive them; null when free. */
+export function holdInfoOf(
+  c: { dispatchHold: boolean; dispatchHoldReason: string | null; dispatchHoldBy: string | null; dispatchHoldAt: Date | string | null } | null | undefined,
+): DispatchHoldInfo | null {
+  return c?.dispatchHold ? { reason: c.dispatchHoldReason, by: c.dispatchHoldBy, at: c.dispatchHoldAt ? new Date(c.dispatchHoldAt).toISOString() : null } : null;
+}
+
 /**
  * A party on dispatch hold, with the pending order lines it is holding back —
  * the Party On Hold page. Those lines are left out of Dispatch Order until the

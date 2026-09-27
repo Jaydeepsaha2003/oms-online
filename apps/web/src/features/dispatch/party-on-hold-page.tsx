@@ -7,7 +7,7 @@ import { usePermissions } from '@/hooks/use-permissions';
 import { NativeSelect } from '@/components/common/combo';
 import { inrCompact } from '@/features/dashboard/format';
 import { useCustomers } from '@/features/customers/use-customers';
-import { DispatchHoldDialog, type HoldParty } from '@/features/customers/dispatch-hold-dialog';
+import { DispatchHoldDialog, holdPartyOf, type HoldParty } from '@/features/customers/dispatch-hold-dialog';
 import { useHeldParties } from './use-dispatch';
 
 /** A line's still-to-dispatch quantity, e.g. "4 Bags · 120 Pcs". */
@@ -27,15 +27,6 @@ const remText = (l: PendingLineDto) =>
 /** Its pending value, worked out as the dispatch card does (0 without rates). */
 const remValue = (l: PendingLineDto) =>
   l.rate == null ? 0 : l.rate * ((l.calField ?? '').toUpperCase() === 'PCS' ? l.remPcs : l.remKgs);
-
-const asHoldParty = (p: HeldPartyDto): HoldParty => ({
-  id: p.id,
-  partyName: p.name,
-  dispatchHold: true,
-  dispatchHoldReason: p.hold.reason,
-  dispatchHoldBy: p.hold.by,
-  dispatchHoldAt: p.hold.at,
-});
 
 const plural = (n: number, one: string, many = `${one}s`) => (n === 1 ? one : many);
 
@@ -120,7 +111,7 @@ export function PartyOnHoldPage() {
           {shown.length ? (
             <section className="grid grid-cols-[repeat(auto-fit,minmax(min(100%,320px),1fr))] gap-3">
               {shown.map((p, i) => (
-                <HeldCard key={p.id} p={p} index={i} onRelease={canHold ? () => setDialog({ party: asHoldParty(p), hold: false }) : undefined} />
+                <HeldCard key={p.id} p={p} index={i} onRelease={canHold ? () => setDialog({ party: holdPartyOf(p.id, p.name, p.hold), hold: false }) : undefined} />
               ))}
             </section>
           ) : (

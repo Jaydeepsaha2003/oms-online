@@ -1,6 +1,7 @@
 import { Injectable } from '@nestjs/common';
 import {
   DEFAULT_PARTY_LISTS,
+  holdInfoOf,
   matchPartyList,
   type PartyClassRow,
   type PartyListDef,
@@ -74,7 +75,7 @@ export class PartyListsService {
     const fyStart = this.startOfFinYear(now);
     const [challans, custRows, receipts, advances, orders, payFollowups] = await Promise.all([
       this.prisma.challan.findMany({ where: { challanStatus: 'CONFIRMED' }, select: { code: true, total: true, invDate: true, dueDate: true, customerId: true, customerName: true, transaction: true } }),
-      this.prisma.customer.findMany({ select: { id: true, partyName: true, agentName: true, region: true, state: true, active: true, creditPeriod: true } }),
+      this.prisma.customer.findMany({ select: { id: true, partyName: true, agentName: true, region: true, state: true, active: true, creditPeriod: true, dispatchHold: true, dispatchHoldReason: true, dispatchHoldBy: true, dispatchHoldAt: true } }),
       this.prisma.acctPaymentReceipt.findMany({ select: { custId: true, invNo: true, recAmt: true, recDate: true } }),
       this.prisma.acctPartyAdvance.findMany({ select: { custId: true, bankAmt: true, cashAmt: true } }),
       this.prisma.order.findMany({ where: { status: 'CONFIRMED' }, select: { customerId: true, customerName: true, orderDate: true } }),
@@ -192,7 +193,7 @@ export class PartyListsService {
         state: cust?.state ?? null,
         active: cust?.active ?? true,
       };
-      rows.push({ customerId: a.customerId, party: a.party, metrics, matched: [] });
+      rows.push({ customerId: a.customerId, party: a.party, hold: holdInfoOf(cust), metrics, matched: [] });
     }
     return rows;
   }

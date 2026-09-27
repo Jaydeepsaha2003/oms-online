@@ -1,7 +1,7 @@
 import { useState } from 'react';
 import { Loader2, PauseCircle, PlayCircle } from 'lucide-react';
 import { toast } from 'sonner';
-import type { CustomerDto } from '@oms/shared';
+import type { CustomerDto, DispatchHoldInfo } from '@oms/shared';
 import { getApiErrorMessage } from '@/lib/api';
 import { formatDate } from '@/lib/date-format';
 import { Button } from '@/components/ui/button';
@@ -22,6 +22,23 @@ const NAMES_SHOWN = 6;
 
 /** What the dialog needs of a party — a full CustomerDto satisfies it. */
 export type HoldParty = Pick<CustomerDto, 'id' | 'partyName' | 'dispatchHold' | 'dispatchHoldReason' | 'dispatchHoldBy' | 'dispatchHoldAt'>;
+
+/** A party as the dialog wants it, from a screen's own row and its hold. */
+export const holdPartyOf = (id: number, partyName: string, hold: DispatchHoldInfo | null): HoldParty => ({
+  id,
+  partyName,
+  dispatchHold: !!hold,
+  dispatchHoldReason: hold?.reason ?? null,
+  dispatchHoldBy: hold?.by ?? null,
+  dispatchHoldAt: hold?.at ?? null,
+});
+
+/** "On hold" beside a held party's name in a list. */
+export const OnHoldChip = () => (
+  <span className="inline-flex shrink-0 items-center gap-1 rounded-full bg-amber-100 px-1.5 py-0.5 text-[10.5px] font-bold text-amber-900 ring-1 ring-amber-300 ring-inset dark:bg-amber-400/15 dark:text-amber-200 dark:ring-amber-400/30">
+    <PauseCircle className="size-3" /> On hold
+  </span>
+);
 
 const nameOf = (c: HoldParty) => c.partyName ?? `#${c.id}`;
 

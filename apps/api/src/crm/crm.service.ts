@@ -18,7 +18,7 @@ import {
   type FollowupStatus,
   type FollowupSummary,
   type Paginated,
-  type DispatchHoldInfo,
+  holdInfoOf,
   type PartyBalanceDetail,
   type PartyBalanceSummary,
   type PromiseState,
@@ -45,12 +45,6 @@ const INCLUDE = {
   cheque: { select: { chequeNo: true } },
 } as const;
 type Row = Prisma.FollowupGetPayload<{ include: typeof INCLUDE }>;
-
-/** A customer's dispatch hold as the Payments desk shows it; null when free. */
-const holdOf = (
-  c: { dispatchHold: boolean; dispatchHoldReason: string | null; dispatchHoldBy: string | null; dispatchHoldAt: Date | null } | null | undefined,
-): DispatchHoldInfo | null =>
-  c?.dispatchHold ? { reason: c.dispatchHoldReason, by: c.dispatchHoldBy, at: c.dispatchHoldAt ? c.dispatchHoldAt.toISOString() : null } : null;
 
 @Injectable()
 export class CrmService {
@@ -601,7 +595,7 @@ export class CrmService {
       const cust = customerId != null ? await this.prisma.customer.findUnique({ where: { id: customerId }, select: { agentName: true, mobile: true, dispatchHold: true, dispatchHoldReason: true, dispatchHoldBy: true, dispatchHoldAt: true } }) : null;
       const crm = await this.crmOverlayFor(customerId ?? null, p);
       return {
-        customerId: customerId ?? null, partyName: p, agent: cust?.agentName ?? null, mobile: cust?.mobile ?? null, hold: holdOf(cust),
+        customerId: customerId ?? null, partyName: p, agent: cust?.agentName ?? null, mobile: cust?.mobile ?? null, hold: holdInfoOf(cust),
         outstanding: 0, gross: 0, overdue: 0, dueSoon: 0, oldestDays: 0, invoiceCount: 0, lastReceiptAt: null, advanceHeld: 0,
         ...crm, invoices: [], bank: { ...ZERO_SIDE }, cash: { ...ZERO_SIDE },
       };
@@ -717,7 +711,7 @@ export class CrmService {
           customerId: c.customerId ?? null, partyName: key,
           agent: (c.customerId != null ? custMap.get(c.customerId)?.agentName : null) ?? null,
           mobile: (c.customerId != null ? custMap.get(c.customerId)?.mobile : null) ?? null,
-          hold: holdOf(c.customerId != null ? custMap.get(c.customerId) : null),
+          hold: holdInfoOf(c.customerId != null ? custMap.get(c.customerId) : null),
           outstanding: 0, gross: 0, overdue: 0, dueSoon: 0, oldestDays: 0, invoiceCount: 0, lastReceiptAt: null, advanceHeld: 0,
           openFollowups: 0, nextPromiseAt: null, nextPromiseAmount: null, promiseState: 'none', hasFollowup: false, invoices: [],
           bank: { ...ZERO_SIDE }, cash: { ...ZERO_SIDE },

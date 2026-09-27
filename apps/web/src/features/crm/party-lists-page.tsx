@@ -1,5 +1,5 @@
 import { useMemo, useState, type CSSProperties } from 'react';
-import { CheckCircle2, Loader2, Pencil, Plus, Search, Shield, ShieldAlert, ShieldCheck, Trash2, X, type LucideIcon } from 'lucide-react';
+import { CheckCircle2, Loader2, PauseCircle, Pencil, PlayCircle, Plus, Search, Shield, ShieldAlert, ShieldCheck, Trash2, X, type LucideIcon } from 'lucide-react';
 import { toast } from 'sonner';
 import {
   matchPartyCondition,
@@ -26,6 +26,7 @@ import { Switch } from '@/components/ui/switch';
 import { Dialog, DialogContent, DialogDescription, DialogTitle } from '@/components/ui/dialog';
 import { usePartyListsEvaluate, useSavePartyListsConfig } from './use-party-lists';
 import { initials } from './crm-shared';
+import { DispatchHoldDialog, holdPartyOf, OnHoldChip, type HoldParty } from '@/features/customers/dispatch-hold-dialog';
 
 /*
  * CRM · Party Lists, in the Party Lists mockup's design (index.css `.pls-*`,
@@ -96,6 +97,9 @@ const STANDING: Record<Standing, { av: string; rail: string; dot: string; label:
 export function PartyListsPage() {
   const { can } = usePermissions();
   const canEdit = can('crm:update');
+  // Holds are a customer setting — the same permission the Customers page asks.
+  const canHold = can('customer:update');
+  const [holdFor, setHoldFor] = useState<{ parties: HoldParty[]; hold: boolean } | null>(null);
   const { data: evalData, isLoading } = usePartyListsEvaluate();
   const lists = evalData?.lists ?? [];
   const parties = evalData?.parties ?? [];
@@ -134,6 +138,9 @@ export function PartyListsPage() {
     if (s) rows = rows.filter((p) => p.party.toLowerCase().includes(s) || (p.metrics.agent ?? '').toLowerCase().includes(s));
     return rows;
   }, [parties, tab, search]);
+
+  /** The shown parties a "Hold all" would hold — those not held already. */
+  const heldable = filtered.filter((p) => p.customerId != null && !p.hold);
 
   const openNew = () => {
     setEditing(null);
@@ -272,18 +279,29 @@ export function PartyListsPage() {
                 ))}
                 <TabBtn on={tab === 'unclassified'} onClick={() => setTab('unclassified')} label="Unlisted" count={counts.unclassified} dot="#cbd5e1" />
               </div>
+              {/* A black list is usually the parties not to ship to: hold them in one go. */}
+              {canHold && listById.has(tab) && heldable.length > 0 && (
+                <button type="button" className="pls-tab" onClick={() => setHoldFor({ parties: heldable.map((p) => holdPartyOf(p.customerId!, p.party, null)), hold: true })}>
+                  <PauseCircle className="size-4 text-amber-600" /> Hold all {heldable.length}
+                </button>
+              )}
               <label className="pls-search ml-auto w-full sm:w-[300px]">
                 <span className="sr-only">Search party or agent</span>
                 <Search className="pl-muted pointer-events-none absolute top-1/2 left-3 size-4 -translate-y-1/2" />
                 <input placeholder="Search party or agent…" value={search} onChange={(e) => setSearch(e.target.value)} />
               </label>
             </div>
-            <PartyTable rows={filtered} listById={listById} />
+            <PartyTable
+              rows={filtered}
+              listById={listById}
+              onHold={canHold ? (p) => setHoldFor({ parties: [holdPartyOf(p.customerId!, p.party, p.hold)], hold: !p.hold }) : undefined}
+            />
           </section>
         </>
       )}
 
       {builderOpen && <ListBuilder lists={lists} parties={parties} editing={editing} onClose={() => setBuilderOpen(false)} />}
+      {holdFor && <DispatchHoldDialog parties={holdFor.parties} hold={holdFor.hold} onClose={() => setHoldFor(null)} />}
     </div>
   );
 }
@@ -402,7 +420,28 @@ function ListChips({ p, listById }: { p: PartyClassRow; listById: Map<string, Pa
 
 type SortKey = 'party' | PartyMetricKey;
 
-function PartyTable({ rows, listById }: { rows: PartyClassRow[]; listById: Map<string, PartyListDef> }) {
+/** Hold or Release, for a party with a customer record, when the user may change holds. */
+function HoldButton({ p, onHold }: { p: PartyClassRow; onHold?: (p: PartyClassRow) => void }) {
+  if (!onHold || p.customerId == null) return null;
+  return (
+    <button
+      type="button"
+      onClick={() => onHold(p)}
+      className={cn(
+        'inline-flex h-8 shrink-0 cursor-pointer items-center gap-1.5 rounded-[10px] px-2.5 text-[12px] font-extrabold transition-colors',
+        p.hold
+          ? 'bg-emerald-600 text-white hover:bg-emerald-700'
+          : 'border border-amber-300 bg-amber-50 text-amber-800 hover:bg-amber-100 dark:border-amber-400/30 dark:bg-amber-400/10 dark:text-amber-200',
+      )}
+      title={p.hold ? `Release the dispatch hold on ${p.party}` : `Hold dispatches for ${p.party}`}
+    >
+      {p.hold ? <PlayCircle className="size-4" /> : <PauseCircle className="size-4" />}
+      {p.hold ? 'Release' : 'Hold'}
+    </button>
+  );
+}
+
+function PartyTable({ rows, listById, onHold }: { rows: PartyClassRow[]; listById: Map<string, PartyListDef>; onHold?: (p: PartyClassRow) => void }) {
   // Biggest exposure first, as the mockup opens; any column re-sorts it.
   const [sort, setSort] = useState<{ key: SortKey; dir: 1 | -1 }>({ key: 'outstanding', dir: -1 });
   const sorted = useMemo(() => {
@@ -439,6 +478,11 @@ function PartyTable({ rows, listById }: { rows: PartyClassRow[]; listById: Map<s
                 Lists
               </th>
               {TABLE_METRICS.map((k) => head(k, META_BY_KEY.get(k)?.label ?? k, true))}
+              {onHold && (
+                <th scope="col" className="pl-th top-0 text-right">
+                  Dispatch
+                </th>
+              )}
             </tr>
           </thead>
           <tbody>
@@ -453,7 +497,10 @@ function PartyTable({ rows, listById }: { rows: PartyClassRow[]; listById: Map<s
                         <span className="pls-av-dot" style={{ background: st.dot }} />
                       </span>
                       <span className="flex min-w-0 flex-col">
-                        <span className="max-w-[260px] truncate text-[14px] font-extrabold">{p.party}</span>
+                        <span className="flex min-w-0 items-center gap-1.5">
+                          <span className="max-w-[260px] truncate text-[14px] font-extrabold">{p.party}</span>
+                          {p.hold && <OnHoldChip />}
+                        </span>
                         <span className="pl-muted truncate text-[11.5px] font-semibold">
                           {p.metrics.agent || 'No agent'} • {p.metrics.region || '—'}
                         </span>
@@ -468,6 +515,11 @@ function PartyTable({ rows, listById }: { rows: PartyClassRow[]; listById: Map<s
                       <MetricCell k={k} p={p} maxOut={maxOut} maxRev={maxRev} />
                     </td>
                   ))}
+                  {onHold && (
+                    <td className="pl-td text-right">
+                      <HoldButton p={p} onHold={onHold} />
+                    </td>
+                  )}
                 </tr>
               );
             })}
@@ -487,14 +539,21 @@ function PartyTable({ rows, listById }: { rows: PartyClassRow[]; listById: Map<s
                   {initials(p.party)}
                   <span className="pls-av-dot" style={{ background: st.dot }} />
                 </span>
-                <span className="flex min-w-0 flex-col">
+                <span className="flex min-w-0 flex-1 flex-col">
                   <span className="truncate text-[15px] leading-tight font-extrabold">{p.party}</span>
                   <span className="pl-muted truncate text-[12px] font-semibold">
                     {p.metrics.agent || 'No agent'}
                     {p.metrics.region ? ` · ${p.metrics.region}` : ''}
                   </span>
                 </span>
+                <HoldButton p={p} onHold={onHold} />
               </div>
+              {p.hold && (
+                <div className="mt-2 flex flex-wrap items-center gap-1.5 text-[12px] font-semibold text-amber-900 dark:text-amber-200">
+                  <OnHoldChip />
+                  {p.hold.reason?.trim() && <span className="min-w-0 truncate">{p.hold.reason}</span>}
+                </div>
+              )}
               {p.matched.length > 0 && (
                 <div className="mt-2">
                   <ListChips p={p} listById={listById} />

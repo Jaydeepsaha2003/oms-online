@@ -6,6 +6,7 @@
  * combined with match-ALL or match-ANY. Definitions are stored as JSON in
  * AppConfig; membership is evaluated on demand from current data.
  */
+import type { DispatchHoldInfo } from './dispatch';
 
 /** Every metric a condition can test, with display metadata for the builder. */
 export type PartyMetricKey =
@@ -187,6 +188,8 @@ export function matchPartyList(list: Pick<PartyListDef, 'match' | 'conditions'>,
 export interface PartyClassRow {
   customerId: number | null;
   party: string;
+  /** The party's dispatch hold, when it is on one. */
+  hold: DispatchHoldInfo | null;
   metrics: PartyMetrics;
   /** ids of the lists this party matches. */
   matched: string[];

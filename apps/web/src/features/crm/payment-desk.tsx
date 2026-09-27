@@ -31,7 +31,7 @@ import { RowCheckbox } from '@/components/common/row-checkbox';
 import { Chip, initials, urgencyMeta } from './crm-shared';
 import { useFollowupList, usePartyBalance, usePartyBalances } from './use-crm';
 import { DemandPlanDialog } from './demand-plan-dialog';
-import { DispatchHoldDialog } from '@/features/customers/dispatch-hold-dialog';
+import { DispatchHoldDialog, holdPartyOf, OnHoldChip } from '@/features/customers/dispatch-hold-dialog';
 import { usePermissions } from '@/hooks/use-permissions';
 
 /** What a "Collect" action hands back to the page to pre-fill the form. */
@@ -406,7 +406,7 @@ export function OwingPartiesWorklist({ onCollect, view = 'ALL', onViewChange }: 
                         <span className="flex min-w-0 flex-col">
                           <span className="flex min-w-0 items-center gap-1.5">
                             <span className="pd-name">{p.partyName}</span>
-                            {p.hold && <HeldChip />}
+                            {p.hold && <OnHoldChip />}
                           </span>
                           <span className="pd-sub pd-muted">{p.agent || 'No agent'} · {p.lastReceiptAt ? `paid ${formatDate(p.lastReceiptAt)}` : 'never paid'}</span>
                         </span>
@@ -471,7 +471,7 @@ export function OwingPartiesWorklist({ onCollect, view = 'ALL', onViewChange }: 
                       <button type="button" onClick={() => setSheet(p.partyName)} className="min-w-0 flex-1 cursor-pointer text-left" title={`Collect from ${p.partyName}`}>
                         <div className="flex min-w-0 items-center gap-1.5">
                           <span className="truncate font-medium">{p.partyName}</span>
-                          {p.hold && <HeldChip />}
+                          {p.hold && <OnHoldChip />}
                         </div>
                         <div className="text-muted-foreground truncate text-xs">{p.agent || 'No agent'} · {p.invoiceCount} inv</div>
                       </button>
@@ -709,13 +709,6 @@ function PartyDetailAside({ p, view, onCollect, asideRef }: {
   );
 }
 
-/** "On hold" beside a held party's name in the worklist. */
-const HeldChip = () => (
-  <span className="inline-flex shrink-0 items-center gap-1 rounded-full bg-amber-100 px-1.5 py-0.5 text-[10.5px] font-bold text-amber-900 ring-1 ring-amber-300 ring-inset dark:bg-amber-400/15 dark:text-amber-200 dark:ring-amber-400/30">
-    <PauseCircle className="size-3" /> On hold
-  </span>
-);
-
 /**
  * The party's dispatch hold, where the collector is already looking at what
  * they owe: held shows the reason with Release, free offers Hold dispatches.
@@ -755,7 +748,7 @@ function HoldStrip({ p }: { p: PartyBalanceSummary }) {
       )}
       {open && (
         <DispatchHoldDialog
-          parties={[{ id: p.customerId!, partyName: p.partyName, dispatchHold: !!p.hold, dispatchHoldReason: p.hold?.reason ?? null, dispatchHoldBy: p.hold?.by ?? null, dispatchHoldAt: p.hold?.at ?? null }]}
+          parties={[holdPartyOf(p.customerId!, p.partyName, p.hold)]}
           hold={!p.hold}
           onClose={() => setOpen(false)}
         />
