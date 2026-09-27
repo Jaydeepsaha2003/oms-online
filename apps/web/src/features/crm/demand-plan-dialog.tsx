@@ -1,9 +1,12 @@
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
+import { createPortal } from 'react-dom';
 import { Loader2, Share2 } from 'lucide-react';
 import { toast } from 'sonner';
-import { billAgeDays, demandStats, dueWithin } from '@oms/shared';
+import { billAgeDays, demandStats, dueWithin, type CompanyProfileDto } from '@oms/shared';
 import { cn } from '@/lib/utils';
 import { formatDate } from '@/lib/date-format';
+import { waitForPaintable } from '@/lib/pdf';
+import { useCompany } from '@/features/settings/use-settings';
 import { inrFull } from '@/features/dashboard/format';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
@@ -42,6 +45,16 @@ export function DemandPlanDialog({ open, onOpenChange, customerId, partyName, de
   const creditDays = term ?? customer?.creditPeriod ?? 60;
 
   const { data, isFetching } = usePaymentContext({ customerId, recDate: asOf, payMode: side === 'B' ? 'BANK' : 'CASH' }, open);
+  const { data: company } = useCompany();
+  const cardRef = useRef<HTMLDivElement>(null);
+  const [busy, setBusy] = useState(false);
+  /** A picture made but not sent — an iPhone lets the share sheet open only
+   *  within a moment of the tap, which drawing the picture can outlast. */
+  const [shot, setShot] = useState<{ key: string; file: File } | null>(null);
+  // Loaded while the plan is read, so the first Share draws at once.
+  useEffect(() => {
+    if (open) void import('html2canvas-pro');
+  }, [open]);
   const bills = useMemo(() => {
     const day = fromYmd(asOf);
     return (data?.invoices ?? [])
@@ -77,6 +90,62 @@ export function DemandPlanDialog({ open, onOpenChange, customerId, partyName, de
     `${partyName} — payment request (${side === 'B' ? 'bank' : 'cash'}) as on ${formatDate(asOf)}\n` +
     chosen.map((b) => `${b.code}  ${formatDate(b.date)}  ₹${Math.round(b.balance).toLocaleString('en-IN')}`).join('\n') +
     `\nTotal ₹${Math.round(total).toLocaleString('en-IN')}`;
+  /** The message that travels with the picture. */
+  const blurb =
+    `Payment request — ${partyName}\n` +
+    `₹${Math.round(total).toLocaleString('en-IN')} due on ${chosen.length} bill${chosen.length === 1 ? '' : 's'} as on ${formatDate(asOf)}. Kindly arrange the payment.` +
+    (company?.name ? `\n— ${company.name}` : '');
+  const planKey = `${side}|${asOf}|${creditDays}|${chosen.map((b) => b.code).join(',')}`;
+
+  /** The share sheet with the picture and the message; where a browser cannot
+   *  share files, the picture is saved and the message copied instead. */
+  const deliver = async (file: File) => {
+    const nav = navigator as Navigator & { canShare?: (d: ShareData) => boolean };
+    if (!nav.canShare?.({ files: [file] })) {
+      const a = document.createElement('a');
+      a.href = URL.createObjectURL(file);
+      a.download = file.name;
+      a.click();
+      setTimeout(() => URL.revokeObjectURL(a.href), 60_000);
+      await navigator.clipboard?.writeText(blurb).catch(() => {});
+      toast.success('Image saved — the message is copied to paste beside it.');
+      return;
+    }
+    try {
+      await nav.share({ files: [file], text: blurb });
+      setShot(null);
+    } catch (e) {
+      if (e instanceof DOMException && e.name === 'AbortError') return;
+      setShot({ key: planKey, file });
+      toast.info('Image ready — tap Share again to send it.');
+    }
+  };
+
+  const share = async () => {
+    if (shot?.key === planKey) return deliver(shot.file);
+    const node = cardRef.current;
+    if (!node) return;
+    setBusy(true);
+    try {
+      const { default: html2canvas } = await import('html2canvas-pro');
+      await waitForPaintable(node);
+      const canvas = await html2canvas(node, {
+        scale: 2,
+        backgroundColor: '#ffffff',
+        // Copy only the card (and the styles): the ledger behind the dialog is
+        // thousands of nodes, and cloning it made the picture ~6x slower to draw.
+        ignoreElements: (el) => !el.contains(node) && !node.contains(el) && !el.closest('head'),
+      });
+      const blob = await new Promise<Blob | null>((r) => canvas.toBlob(r, 'image/jpeg', 0.92));
+      if (!blob) throw new Error('Canvas capture failed');
+      const name = `Payment-request_${partyName.replace(/[\\/:*?"<>|\s]+/g, '-')}_${asOf}.jpg`;
+      await deliver(new File([blob], name, { type: 'image/jpeg' }));
+    } catch {
+      toast.error('Could not make the image.');
+    } finally {
+      setBusy(false);
+    }
+  };
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
@@ -185,13 +254,11 @@ export function DemandPlanDialog({ open, onOpenChange, customerId, partyName, de
             >
               Copy
             </Button>
-            {/* The request is text, so Share carries the text — WhatsApp and the
-                rest are targets in the sheet. Copy covers a browser without one. */}
-            {'share' in navigator && (
-              <Button variant="outline" size="sm" disabled={!chosen.length} onClick={() => void navigator.share({ text }).catch(() => {})}>
-                <Share2 /> Share
-              </Button>
-            )}
+            {/* A picture of the demand plus a short message — WhatsApp and the
+                rest are targets in the sheet. */}
+            <Button variant="outline" size="sm" disabled={!chosen.length || busy} onClick={() => void share()}>
+              {busy ? <Loader2 className="animate-spin" /> : <Share2 />} Share
+            </Button>
             {onUse && (
               <Button size="sm" disabled={!chosen.length} onClick={() => (onUse(Math.round(total), `${inrFull(Math.round(total))} demand plan (${chosen.length} bills)`), onOpenChange(false))}>
                 Use this amount
@@ -199,7 +266,93 @@ export function DemandPlanDialog({ open, onOpenChange, customerId, partyName, de
             )}
           </div>
         </div>
+        {chosen.length > 0 &&
+          createPortal(
+            // Off screen but laid out — a `display:none` node would capture as nothing.
+            <div aria-hidden style={{ position: 'fixed', left: -10000, top: 0 }}>
+              <DemandCard cardRef={cardRef} company={company} partyName={partyName} side={side} asOf={asOf} bills={chosen} total={total} avgAge={avgAge} creditDays={creditDays} />
+            </div>,
+            document.body,
+          )}
       </DialogContent>
     </Dialog>
+  );
+}
+
+/**
+ * The demand as a picture for the party — what Share attaches. Fixed light
+ * colours, so it looks the same whatever theme the sender works in.
+ */
+function DemandCard({ cardRef, company, partyName, side, asOf, bills, total, avgAge, creditDays }: {
+  cardRef: React.Ref<HTMLDivElement>;
+  company: CompanyProfileDto | undefined;
+  partyName: string;
+  side: 'B' | 'C';
+  asOf: string;
+  bills: { code: string; date: string; balance: number; age: number }[];
+  total: number;
+  avgAge: number | null;
+  creditDays: number;
+}) {
+  const late = bills.some((b) => b.age > creditDays);
+  return (
+    <div ref={cardRef} className="w-[640px] bg-[#ffffff] text-[#141a2b]" style={{ fontFamily: 'var(--font-jakarta)' }}>
+      <div className="flex items-center gap-3 px-7 py-5 text-white" style={{ background: 'linear-gradient(135deg, #4f6ef7 0%, #3a4fd6 55%, #3140b8 100%)' }}>
+        {company?.logo && <img src={company.logo} alt="" className="size-11 rounded-xl bg-[#ffffff] object-contain p-1" />}
+        <span className="min-w-0 flex-1 text-[20px] leading-tight font-extrabold">{company?.name}</span>
+        <span className="shrink-0 rounded-full bg-[#ffffff] px-3 py-1 text-[11.5px] font-extrabold tracking-[0.06em] text-[#2f3fb5] uppercase">Payment request</span>
+      </div>
+
+      <div className="px-7 pt-5">
+        <div className="text-[11.5px] font-bold tracking-[0.08em] text-[#7a849c] uppercase">To</div>
+        <div className="mt-0.5 text-[22px] leading-tight font-extrabold">{partyName}</div>
+        <div className="mt-1 text-[13px] text-[#5b6479]">
+          As on {formatDate(asOf)} · {side === 'B' ? 'Bank' : 'Cash'} bills
+        </div>
+        <div className="mt-4 flex items-end justify-between gap-4 rounded-2xl bg-[#eef1ff] px-5 py-4">
+          <div>
+            <div className="text-[11.5px] font-bold tracking-[0.08em] text-[#3140b8] uppercase">Amount due</div>
+            <div className="mt-1 text-[34px] leading-none font-extrabold text-[#2f3fb5] tabular-nums">{inrFull(Math.round(total))}</div>
+          </div>
+          <div className="text-right text-[13px] leading-snug font-semibold text-[#3a4256]">
+            {bills.length} bill{bills.length === 1 ? '' : 's'}
+            {avgAge != null && <div>average {Math.round(avgAge)} days old</div>}
+          </div>
+        </div>
+      </div>
+
+      <div className="px-7 pt-4">
+        <table className="w-full text-[13.5px]">
+          <thead>
+            <tr className="bg-[#141b33] text-left text-[11.5px] tracking-[0.06em] text-white uppercase">
+              <th className="px-3 py-2">Bill no.</th>
+              <th className="px-3 py-2">Bill date</th>
+              <th className="px-3 py-2 text-right">Days</th>
+              <th className="px-3 py-2 text-right">Amount</th>
+            </tr>
+          </thead>
+          <tbody>
+            {bills.map((b, i) => (
+              <tr key={b.code} className={i % 2 ? 'bg-[#f6f8fc]' : ''}>
+                <td className="px-3 py-2 font-bold">{b.code}</td>
+                <td className="px-3 py-2">{formatDate(b.date)}</td>
+                <td className={cn('px-3 py-2 text-right tabular-nums', b.age > creditDays && 'font-bold text-[#be123c]')}>{b.age}</td>
+                <td className="px-3 py-2 text-right font-semibold tabular-nums">{inrFull(Math.round(b.balance))}</td>
+              </tr>
+            ))}
+            <tr className="border-t-2 border-[#141b33] text-[14.5px] font-extrabold">
+              <td className="px-3 py-2.5" colSpan={3}>Total</td>
+              <td className="px-3 py-2.5 text-right tabular-nums">{inrFull(Math.round(total))}</td>
+            </tr>
+          </tbody>
+        </table>
+        {late && <p className="mt-2 text-[12px] text-[#7a849c]">Days in red are past the {creditDays}-day credit period.</p>}
+      </div>
+
+      <div className="mt-5 border-t border-[#e8ecf4] px-7 py-4 text-[13.5px] text-[#3a4256]">
+        Kindly arrange the payment at the earliest. Thank you.
+        {company?.name && <div className="mt-1 font-extrabold text-[#141a2b]">{company.name}</div>}
+      </div>
+    </div>
   );
 }
