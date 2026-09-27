@@ -268,7 +268,6 @@ function useLedgerFilters() {
   const filters = {
     party: get('party', ''),
     agent: get('agent', ''),
-    group: get('group', ''),
     from: get('from', ymd(fyStart(new Date()))),
     to: get('to', ymd(new Date())),
     mode: get('mode', 'BOTH') as 'BOTH' | 'B' | 'C',
@@ -286,7 +285,6 @@ function useLedgerFilters() {
     const write = (key: string, value: string) => (value ? next.set(key, value) : next.delete(key));
     if (changes.party !== undefined) write('party', changes.party);
     if (changes.agent !== undefined) write('agent', changes.agent);
-    if (changes.group !== undefined) write('group', changes.group);
     if (changes.from !== undefined) write('from', changes.from);
     if (changes.to !== undefined) write('to', changes.to);
     if (changes.mode !== undefined) write('mode', changes.mode === 'BOTH' ? '' : changes.mode);
@@ -308,7 +306,7 @@ export function PartyLedgerPage() {
   // Off by default (`balance=1` in the URL turns it on): the running Balance per
   // transaction is a detail, not something every glance at the ledger needs —
   // Closing Balance (the actual bottom line) always shows regardless.
-  const { party, agent, group, from, to, mode, voucherType, dueType, preset, showBalance, patch, clear } =
+  const { party, agent, from, to, mode, voucherType, dueType, preset, showBalance, patch, clear } =
     useLedgerFilters();
   const [receiptFor, setReceiptFor] = useState<PartyLedgerRow | null>(null);
   /** Which period chip has its picker open — the desktop bar's or the phone's. */
@@ -333,20 +331,18 @@ export function PartyLedgerPage() {
   );
   const partyOptions = useMemo(() => (lookups?.customers ?? []).map((c) => c.name), [lookups]);
   const agentOptions = useMemo(() => ['All', ...(lookups?.agents ?? [])], [lookups]);
-  const groupByName = useMemo(() => new Map((lookups?.groups ?? []).map((g) => [g.name, g.id])), [lookups]);
 
   const query = useMemo<PartyLedgerQuery>(
     () => ({
       customerId: party ? custByName.get(party) : undefined,
-      groupId: !party && group ? groupByName.get(group) : undefined,
-      agentName: !party && !group && agent && agent !== 'All' ? agent : undefined,
+      agentName: !party && agent && agent !== 'All' ? agent : undefined,
       from,
       to,
       mode,
       voucherType: voucherType || undefined,
       dueType: dueType || undefined,
     }),
-    [party, agent, group, from, to, mode, voucherType, dueType, custByName, groupByName],
+    [party, agent, from, to, mode, voucherType, dueType, custByName],
   );
 
   const { data, isFetching } = usePartyLedger(query);
@@ -651,10 +647,10 @@ export function PartyLedgerPage() {
 
   const modeLabel = mode === 'BOTH' ? 'Bank & Cash' : mode === 'B' ? 'Bank' : 'Cash';
   /** Filters that live in the phone's sheet, counted on its button. */
-  const sheetFilters = [agent && agent !== 'All', group, voucherType, dueType].filter(Boolean).length;
+  const sheetFilters = [agent && agent !== 'All', voucherType, dueType].filter(Boolean).length;
   /** What a partial list is limited to, for the Current Total line. */
   const onlyLabel = [voucherType, dueType && dueLabelOf(dueType)].filter(Boolean).join(' · ');
-  /** An agent, group or all-parties ledger: each row says whose entry it is. */
+  /** An agent's or an all-parties ledger: each row says whose entry it is. */
   const multiParty = !!data && data.scope !== 'CUSTOMER';
   const pendingTotal = kpis ? kpis.overDue.amount + kpis.pastDue.amount + kpis.normal.amount : 0;
   const canPlan = query.customerId != null && can('payment:view');
@@ -662,11 +658,9 @@ export function PartyLedgerPage() {
     closingNet == null && footer ? 'clear the filters' : windowEndsInPast ? `as at ${formatDate(to)}` : undefined;
 
   /* ── Controls, shared by the desktop bar and the phone's filter card ── */
-  const onParty = (v: string) => patch({ party: v, ...(v ? { agent: '', group: '' } : {}) });
-  const onAgent = (v: string) => patch({ agent: v, ...(v ? { party: '', group: '' } : {}) });
-  const onGroup = (v: string) => patch({ group: v, ...(v ? { party: '', agent: '' } : {}) });
+  const onParty = (v: string) => patch({ party: v, ...(v ? { agent: '' } : {}) });
+  const onAgent = (v: string) => patch({ agent: v, ...(v ? { party: '' } : {}) });
   const agentList = agentOptions.filter((a) => a !== 'All');
-  const groupList = (lookups?.groups ?? []).map((g) => g.name);
 
   const periodButton = (where: 'd' | 'm') => (
     <Popover open={dateOpen === where} onOpenChange={(o) => setDateOpen(o ? where : null)}>
@@ -777,7 +771,6 @@ export function PartyLedgerPage() {
             the statement is named after. */}
         <PlSelect id="pl-customer" label="Customer" value={party} onChange={onParty} options={partyOptions} className="max-w-[320px] flex-[2_1_220px]" />
         <PlSelect label="Agent" value={agent === 'All' ? '' : agent} onChange={onAgent} options={agentList} className="max-w-[180px] flex-[1_1_150px]" />
-        <PlSelect label="Group" value={group} onChange={onGroup} options={groupList} className="max-w-[200px] flex-[1_1_150px]" />
         {periodButton('d')}
         <PlSelect label="Voucher type" value={voucherType} onChange={(v) => patch({ voucherType: v })} options={data?.voucherTypes ?? []} className="max-w-[190px] flex-[1_1_150px]" />
         <PlSelect label="Due type" value={dueType} onChange={(v) => patch({ dueType: v as LedgerDueFilter | '' })} options={DUE_OPTIONS} className="max-w-[170px] flex-[1_1_140px]" />
@@ -1250,7 +1243,6 @@ export function PartyLedgerPage() {
           {(
             [
               ['Agent', 'All agents', agent === 'All' ? '' : agent, onAgent, agentList],
-              ['Group', 'All groups', group, onGroup, groupList],
               ['Voucher type', 'All voucher types', voucherType, (v: string) => patch({ voucherType: v }), data?.voucherTypes ?? []],
               ['Due type', 'All bills', dueType, (v: string) => patch({ dueType: v as LedgerDueFilter | '' }), DUE_OPTIONS],
             ] as [string, string, string, (v: string) => void, (string | ComboboxOption)[]][]
