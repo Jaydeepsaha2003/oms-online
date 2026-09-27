@@ -65,6 +65,12 @@ export class BulkDeletePaymentsDto {
   @Type(() => Number)
   @IsInt({ each: true })
   ids!: number[];
+
+  /** Optional comment on why, kept in the audit log. */
+  @IsOptional()
+  @IsString()
+  @MaxLength(500)
+  reason?: string;
 }
 
 export class EditPaymentDto {

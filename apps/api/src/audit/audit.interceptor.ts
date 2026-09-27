@@ -83,7 +83,7 @@ export class AuditInterceptor implements NestInterceptor {
           // not turn a request that already succeeded into a failure.
           let extra: { description?: string; metadata?: Record<string, unknown> } | null | undefined;
           try {
-            extra = meta?.describe?.(body);
+            extra = meta?.describe?.(body, req);
           } catch (err) {
             this.logger.warn(`Audit describe() failed: ${(err as Error).message}`);
           }

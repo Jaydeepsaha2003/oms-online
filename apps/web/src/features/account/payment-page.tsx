@@ -32,7 +32,7 @@ import { useConfirm } from '@/components/common/confirm';
 import { RowCheckbox } from '@/components/common/row-checkbox';
 import { useCustomers } from '@/features/customers/use-customers';
 import { useAgents } from '@/features/agents/use-agents';
-import { useActiveBankAccounts, useChequeOptions, useDeletePayment, useDeletePayments, useEditPayment, usePaymentContext, usePaymentLedger, useSavePayment } from './use-account';
+import { useActiveBankAccounts, useChequeOptions, useDeletedReceipts, useDeletePayment, useDeletePayments, useEditPayment, usePaymentContext, usePaymentLedger, useSavePayment } from './use-account';
 
 const inr = (v: number | null | undefined) => (v ?? 0).toLocaleString('en-IN', { maximumFractionDigits: 2 });
 const money = (v: number | null | undefined) => `₹ ${inr(v)}`;
@@ -1324,6 +1324,7 @@ function LedgerModal({ ownerKind, owner, customerId, agentName, onClose }: { own
   const showActions = canEdit || canDelete;
   const [page, setPage] = useState(1);
   const [editing, setEditing] = useState<LedgerEntryDto | null>(null);
+  const [showDeleted, setShowDeleted] = useState(false);
   // Browsable date range — opens on the current financial year (the old fixed
   // window), but the user can point it anywhere: last FY, one month, one day.
   const [dateFrom, setDateFrom] = useState(fyStart());
@@ -1385,11 +1386,16 @@ function LedgerModal({ ownerKind, owner, customerId, agentName, onClose }: { own
   const handleDeleteMany = async () => {
     if (!pickedRows.length) return;
     const names = pickedRows.map((r) => r.voucherNo);
+    let reason = '';
     const ok = await confirm({
       title: `Delete ${names.length} receipt${names.length === 1 ? '' : 's'}?`,
-      description:
-        `${names.join(', ')} — ${inr(pickedTotal)} in total will be removed. ` +
-        'Every invoice and advance they settled goes back to pending, and any later receipt for these parties is re-applied automatically. This cannot be undone.',
+      description: (
+        <>
+          {`${names.join(', ')} — ${inr(pickedTotal)} in total will be removed. ` +
+            'Every invoice and advance they settled goes back to pending, and any later receipt for these parties is re-applied automatically. This cannot be undone.'}
+          <ReasonBox onChange={(v) => (reason = v)} />
+        </>
+      ),
       confirmText: `Delete ${names.length} receipt${names.length === 1 ? '' : 's'}`,
       destructive: true,
     });
@@ -1399,7 +1405,7 @@ function LedgerModal({ ownerKind, owner, customerId, agentName, onClose }: { own
       // confirming can leave an id in the set that is no longer deletable, and
       // sending it would fail the WHOLE batch over a row the confirmation never
       // listed. What was named is what gets sent.
-      const res = await delMany.mutateAsync(pickedRows.map((r) => r.id));
+      const res = await delMany.mutateAsync({ ids: pickedRows.map((r) => r.id), reason: reason.trim() || undefined });
       setPicked(new Set());
       toast.success(
         res.replayedCount > 0
@@ -1415,16 +1421,21 @@ function LedgerModal({ ownerKind, owner, customerId, agentName, onClose }: { own
 
   const handleDelete = async (r: LedgerEntryDto) => {
     const amount = inr(r.bankCredit || r.cashCredit);
+    let reason = '';
     const ok = await confirm({
       title: `Delete ${r.voucherNo}?`,
-      description:
-        `${r.customerName} — ${amount} received on ${prettyDate(r.transDate)} will be removed. ` +
-        'Every invoice and advance it settled goes back to pending, and any later receipt for this party is re-applied automatically. This cannot be undone.',
+      description: (
+        <>
+          {`${r.customerName} — ${amount} received on ${prettyDate(r.transDate)} will be removed. ` +
+            'Every invoice and advance it settled goes back to pending, and any later receipt for this party is re-applied automatically. This cannot be undone.'}
+          <ReasonBox onChange={(v) => (reason = v)} />
+        </>
+      ),
       confirmText: 'Delete receipt',
       destructive: true,
     });
     if (!ok) return;
-    del.mutate(r.id, {
+    del.mutate({ id: r.id, reason: reason.trim() || undefined }, {
       onSuccess: (res) =>
         toast.success(
           res.replayedCount > 0
@@ -1448,8 +1459,14 @@ function LedgerModal({ ownerKind, owner, customerId, agentName, onClose }: { own
           <DialogTitle className="flex items-center gap-2 text-lg">
             <BookOpenCheck className="text-primary size-5" /> View Receipts — {ownerKind}: {owner}
           </DialogTitle>
-          <DialogDescription>Every voucher in the chosen date range — opens on this financial year.</DialogDescription>
+          <DialogDescription className="flex flex-wrap items-center gap-2">
+            Every voucher in the chosen date range — opens on this financial year.
+            <Button variant="outline" size="sm" className="ml-auto h-7" onClick={() => setShowDeleted(true)}>
+              Deleted receipts
+            </Button>
+          </DialogDescription>
         </DialogHeader>
+        {showDeleted && <DeletedReceiptsDialog owner={owner} onClose={() => setShowDeleted(false)} />}
         {/* Date range — page resets on change so the first page of the NEW range
             shows, not page 4 of a range that may only have one. */}
         <div className="flex flex-wrap items-end gap-2">
@@ -1738,3 +1755,76 @@ function LedgerModal({ ownerKind, owner, customerId, agentName, onClose }: { own
 }
 
 export default PaymentPage;
+
+/** Optional "why" for a delete, shown inside the confirmation; kept in the audit log. */
+function ReasonBox({ onChange }: { onChange: (value: string) => void }) {
+  return (
+    <textarea
+      rows={2}
+      maxLength={500}
+      placeholder="Reason for deleting (optional)"
+      onChange={(e) => onChange(e.target.value)}
+      className="border-input bg-background text-foreground mt-3 block w-full rounded-md border px-2 py-1.5 text-sm"
+    />
+  );
+}
+
+/** Receipts deleted so far — when, by whom, why, and what they were. */
+function DeletedReceiptsDialog({ owner, onClose }: { owner: string; onClose: () => void }) {
+  const [all, setAll] = useState(false);
+  const { data = [], isLoading } = useDeletedReceipts(true);
+  const rows = all ? data : data.filter((d) => d.customerName === owner);
+  return (
+    <Dialog open onOpenChange={(o) => !o && onClose()}>
+      <DialogContent className="flex max-h-[85dvh] w-[min(900px,96vw)] max-w-[96vw] flex-col sm:!max-w-[900px]">
+        <DialogHeader>
+          <DialogTitle>Deleted receipts — {all ? 'all parties' : owner}</DialogTitle>
+          <DialogDescription className="flex items-center gap-2">
+            Newest first.
+            <label className="ml-auto flex items-center gap-1.5 text-xs">
+              <input type="checkbox" checked={all} onChange={(e) => setAll(e.target.checked)} /> Show all parties
+            </label>
+          </DialogDescription>
+        </DialogHeader>
+        <div className="min-h-0 flex-1 overflow-auto rounded-md border">
+          <table className="w-full text-sm">
+            <thead className="bg-muted sticky top-0 text-left text-xs uppercase">
+              <tr>
+                <th className="p-2">Deleted on</th>
+                <th className="p-2">By</th>
+                <th className="p-2">Receipt</th>
+                {all && <th className="p-2">Party</th>}
+                <th className="p-2">Date</th>
+                <th className="p-2 text-right">Amount</th>
+                <th className="p-2">Reason</th>
+              </tr>
+            </thead>
+            <tbody>
+              {rows.map((d) => (
+                <tr key={`${d.deletedAt}-${d.voucherNo}`} className="border-t align-top">
+                  <td className="p-2 whitespace-nowrap">{new Date(d.deletedAt).toLocaleString('en-GB', { dateStyle: 'short', timeStyle: 'short' })}</td>
+                  <td className="p-2">{d.deletedBy ?? '—'}</td>
+                  <td className="p-2 font-semibold">{d.voucherNo}</td>
+                  {all && <td className="p-2">{d.customerName ?? '—'}</td>}
+                  <td className="p-2 whitespace-nowrap">{d.date ? formatDate(d.date) : '—'}</td>
+                  <td className="p-2 text-right tabular-nums">
+                    {d.amount != null ? inr(d.amount) : '—'}
+                    {d.mode && <span className="text-muted-foreground block text-xs">{d.mode}{d.bankName ? ` · ${d.bankName}` : ''}</span>}
+                  </td>
+                  <td className="p-2">{d.reason ?? <span className="text-muted-foreground">—</span>}</td>
+                </tr>
+              ))}
+              {!rows.length && (
+                <tr>
+                  <td colSpan={7} className="text-muted-foreground p-6 text-center">
+                    {isLoading ? 'Loading…' : 'No deleted receipts.'}
+                  </td>
+                </tr>
+              )}
+            </tbody>
+          </table>
+        </div>
+      </DialogContent>
+    </Dialog>
+  );
+}

@@ -62,27 +62,9 @@ export function demandStats(bills: { balance: number; age: number }[]): { total:
   return { total, avgAge: total > 0 ? bills.reduce((t, b) => t + b.balance * b.age, 0) / total : null };
 }
 
-/**
- * Demand plan: which open bills to ask for so their amount-weighted average
- * age comes closest to `targetDays` (the credit period plus the owner's
- * allowance). Oldest first, whole bills only; an overdue bill pulls the average
- * up, a younger one down, so the plan stops where the average is nearest the
- * target. Nothing is asked while even the oldest bill is younger than it.
- */
-export function planDemand<T extends { code: string; balance: number; age: number }>(bills: T[], targetDays: number): string[] {
-  const open = bills.filter((b) => b.balance > 0).sort((a, b) => b.age - a.age || a.code.localeCompare(b.code));
-  if (!open.length || open[0].age < targetDays) return [];
-  let total = 0;
-  let weighted = 0;
-  let best = 0;
-  let bestGap = Infinity;
-  open.forEach((b, i) => {
-    total += b.balance;
-    weighted += b.balance * b.age;
-    const gap = Math.abs(weighted / total - targetDays);
-    if (gap < bestGap) [best, bestGap] = [i + 1, gap];
-  });
-  return open.slice(0, best).map((b) => b.code);
+/** Demand plan: the open bills overdue now, or reaching the credit period within `days`. */
+export function dueWithin<T extends { balance: number; age: number }>(bills: T[], creditDays: number, days: number): T[] {
+  return bills.filter((b) => b.balance > 0 && b.age >= creditDays - days);
 }
 
 /** One CONFIRMED challan with money still to receive (InvPendingSummary row). */
@@ -294,6 +276,28 @@ export interface DeletePaymentResult {
   voucherNo: string;
   /** How many later vouchers were reversed and replayed as a consequence. */
   replayedCount: number;
+  /** What was deleted, kept in the audit log — the voucher itself is gone. */
+  receipts: DeletedReceiptSnapshot[];
+}
+
+/** A deleted receipt as it stood just before it was removed. */
+export interface DeletedReceiptSnapshot {
+  voucherNo: string;
+  customerName: string;
+  /** Receipt date (ISO). */
+  date: string;
+  amount: number;
+  mode: string;
+  bankName: string | null;
+}
+
+/** One deleted receipt in the "Deleted receipts" history. */
+export interface DeletedReceiptEntry extends Partial<DeletedReceiptSnapshot> {
+  voucherNo: string;
+  deletedAt: string;
+  deletedBy: string | null;
+  /** The optional comment given when deleting. */
+  reason: string | null;
 }
 
 /**
@@ -312,6 +316,7 @@ export interface BulkDeletePaymentResult {
   /** How many OTHER vouchers were reversed and replayed as a consequence —
    *  counted once per voucher, however many targets shared its chain. */
   replayedCount: number;
+  receipts: DeletedReceiptSnapshot[];
 }
 
 /* ── Ledger listing (voucher history) ─────────────────────────────────────── */

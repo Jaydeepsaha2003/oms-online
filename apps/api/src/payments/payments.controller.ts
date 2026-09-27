@@ -10,6 +10,11 @@ import { PaymentsService } from './payments.service';
 import { BulkDeletePaymentsDto, EditPaymentDto, LedgerQueryDto, PaymentContextQueryDto, PendingReportDto, SavePaymentDto } from './dto/payment.dto';
 
 const R = RESOURCES.PAYMENT;
+/** The optional comment sent with a delete (body for bulk, query for single). */
+const reasonOf = (src: unknown) => {
+  const r = (src as { reason?: unknown } | undefined)?.reason;
+  return typeof r === 'string' && r.trim() ? r.trim().slice(0, 500) : null;
+};
 
 @ApiTags('Payments')
 @ApiBearerAuth()
@@ -22,6 +27,13 @@ export class PaymentsController {
   @Permissions(perm(R, ACTIONS.VIEW))
   context(@Query() query: PaymentContextQueryDto) {
     return this.payments.context(query);
+  }
+
+  /** Receipts deleted so far — when, by whom, why, and what they were (from the audit log). */
+  @Get('deleted')
+  @Permissions(perm(R, ACTIONS.VIEW))
+  deleted() {
+    return this.payments.deletedReceipts();
   }
 
   /** Every party/agent currently sitting on an outstanding advance (whole book). */
@@ -122,7 +134,7 @@ export class PaymentsController {
      * The description is capped so the log stays scannable; `metadata` carries
      * the complete list either way, so nothing is lost at any size.
      */
-    describe: (body) => {
+    describe: (body, req) => {
       const deleted = (body as BulkDeletePaymentResult | undefined)?.deleted ?? [];
       if (!deleted.length) return null;
       const SHOWN = 12;
@@ -132,7 +144,7 @@ export class PaymentsController {
         description:
           `Deleted ${deleted.length} payment receipt${deleted.length === 1 ? '' : 's'}: ` +
           `${shown}${rest > 0 ? ` +${rest} more` : ''}`,
-        metadata: { deleted, replayedCount: (body as BulkDeletePaymentResult).replayedCount },
+        metadata: { deleted, replayedCount: (body as BulkDeletePaymentResult).replayedCount, receipts: (body as BulkDeletePaymentResult).receipts, reason: reasonOf(req.body) },
       };
     },
   })
@@ -151,12 +163,12 @@ export class PaymentsController {
     // The path carries the ROW id, which stops resolving the moment the row is
     // gone — so the log said a receipt was deleted without saying which. Name
     // the voucher, the one identifier that still means something afterwards.
-    describe: (body) => {
+    describe: (body, req) => {
       const res = body as DeletePaymentResult | undefined;
       if (!res?.voucherNo) return null;
       return {
         description: `Deleted payment receipt ${res.voucherNo}`,
-        metadata: { deleted: [res.voucherNo], replayedCount: res.replayedCount },
+        metadata: { deleted: [res.voucherNo], replayedCount: res.replayedCount, receipts: res.receipts, reason: reasonOf(req.query) },
       };
     },
   })

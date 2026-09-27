@@ -1,7 +1,7 @@
-// Demand plan on CHAITANYA's cash bills of 27/09/2026: the whole bills, oldest
-// first, whose weighted average age is nearest the target (credit days + allowance).
+// Demand plan on CHAITANYA's cash bills of 27/09/2026 (60 credit days): the bills
+// overdue now plus those falling overdue within the next X days.
 const assert = require('node:assert/strict');
-const { planDemand, demandStats, billAgeDays } = require('../packages/shared/dist/cjs/types/payment.js');
+const { dueWithin, demandStats, billAgeDays } = require('../packages/shared/dist/cjs/types/payment.js');
 
 const asOf = new Date(2026, 8, 27);
 const bills = [
@@ -17,16 +17,13 @@ const bills = [
   return { code, balance, age: billAgeDays(new Date(y, m - 1, day), asOf) };
 });
 
-const check = (target, last, total, avg) => {
-  const picked = planDemand(bills, target);
-  assert.equal(picked.at(-1), last, `target ${target}: stops at ${last}`);
-  const s = demandStats(bills.filter((b) => picked.includes(b.code)));
-  assert.equal(Math.round(s.total), total);
-  assert.equal(s.avgAge.toFixed(1), avg);
+const check = (days, last, total) => {
+  const picked = dueWithin(bills, 60, days);
+  assert.equal(picked.at(-1)?.code, last, `${days} days ahead: up to ${last}`);
+  assert.equal(Math.round(demandStats(picked).total), total);
 };
-check(65, 'SSS/505', 497755, '65.5'); // 60 days + the default 5
-check(60, 'SSS/584', 661468, '59.9');
-check(55, 'SSS/686', 737669, '55.6');
-assert.deepEqual(planDemand(bills, 90), [], 'nothing due while the oldest bill is younger than the target');
+check(0, 'SSS/454', 325556); // overdue today only
+check(7, 'SSS/501', 471811); // + 479 (29/09), 488 (02/10), 501 (04/10)
+check(15, 'SSS/523', 572880);
 assert.equal(billAgeDays('2026-07-10T00:00:00', asOf), 79);
-console.log('PASS demand plan picks the bills nearest the target average');
+console.log('PASS demand plan asks for overdue bills plus those due within X days');

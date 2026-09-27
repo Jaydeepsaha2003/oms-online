@@ -24,7 +24,7 @@ export interface AuditOptions {
    * nothing, or throwing, leaves the static description in place — an audit
    * entry must never be the reason a request fails.
    */
-  describe?: (body: unknown) => { description?: string; metadata?: Record<string, unknown> } | null | undefined;
+  describe?: (body: unknown, req: { body?: unknown; query?: unknown }) => { description?: string; metadata?: Record<string, unknown> } | null | undefined;
 }
 
 /**

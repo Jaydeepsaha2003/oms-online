@@ -17,6 +17,7 @@ import type {
   DiscountInvoiceQuery,
   BulkDeletePaymentResult,
   DeletePaymentResult,
+  DeletedReceiptEntry,
   EditPaymentInput,
   EditPaymentResult,
   LedgerList,
@@ -271,7 +272,7 @@ export function useEditPayment() {
 export function useDeletePayment() {
   const qc = useQueryClient();
   return useMutation({
-    mutationFn: (id: number) => http.delete<DeletePaymentResult>(`/payments/${id}`),
+    mutationFn: ({ id, reason }: { id: number; reason?: string }) => http.delete<DeletePaymentResult>(`/payments/${id}`, { params: { reason } }),
     onSuccess: () => qc.invalidateQueries({ queryKey: PAYMENT_KEY }),
   });
 }
@@ -287,8 +288,17 @@ export function useDeletePayment() {
 export function useDeletePayments() {
   const qc = useQueryClient();
   return useMutation({
-    mutationFn: (ids: number[]) => http.post<BulkDeletePaymentResult>('/payments/bulk-delete', { ids }),
+    mutationFn: ({ ids, reason }: { ids: number[]; reason?: string }) => http.post<BulkDeletePaymentResult>('/payments/bulk-delete', { ids, reason }),
     onSuccess: () => qc.invalidateQueries({ queryKey: PAYMENT_KEY }),
+  });
+}
+
+/** Receipts deleted so far — when, by whom, why, and what they were. */
+export function useDeletedReceipts(enabled: boolean) {
+  return useQuery({
+    queryKey: [...PAYMENT_KEY, 'deleted'],
+    queryFn: () => http.get<DeletedReceiptEntry[]>('/payments/deleted'),
+    enabled,
   });
 }
 

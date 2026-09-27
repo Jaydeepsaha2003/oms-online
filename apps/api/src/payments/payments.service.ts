@@ -5,6 +5,10 @@ import {
   type ChequeOptionRow,
   type BulkDeletePaymentResult,
   type DeletePaymentResult,
+  type DeletedReceiptEntry,
+  type DeletedReceiptSnapshot,
+  ACTIONS,
+  RESOURCES,
   type DueType,
   type EditPaymentResult,
   type LedgerEntryDto,
@@ -27,6 +31,15 @@ import { PrismaService } from '../prisma/prisma.service';
 import { EditPaymentDto, LedgerQueryDto, PaymentContextQueryDto, SavePaymentDto } from './dto/payment.dto';
 
 const r2 = (x: number) => Math.round(x * 100) / 100;
+/** A receipt as it stood before deletion, for the audit log. */
+const snapshotOf = (r: { voucherNo: string; customerName: string | null; agentName: string | null; transDate: Date; bankCredit: number; cashCredit: number; transMode: string | null; bankName: string | null }) => ({
+  voucherNo: r.voucherNo,
+  customerName: r.customerName ?? r.agentName ?? '',
+  date: r.transDate.toISOString(),
+  amount: r2(r.bankCredit + r.cashCredit),
+  mode: r.transMode ?? '',
+  bankName: r.bankName,
+});
 const EPS = 0.005;
 /** `settings` key holding the last receipt number ever issued. */
 const RECEIPT_SEQ_KEY = 'payments.lastReceiptNo';
@@ -198,6 +211,31 @@ interface WaterfallParams {
 @Injectable()
 export class PaymentsService {
   constructor(private readonly prisma: PrismaService) {}
+
+  /**
+   * Deleted receipts, newest first, read back from the audit log: the voucher
+   * is gone, so the log's snapshot is the only record of what it was. Entries
+   * from before snapshots were kept show the voucher number alone.
+   */
+  async deletedReceipts(): Promise<DeletedReceiptEntry[]> {
+    const logs = await this.prisma.auditLog.findMany({
+      where: { resource: RESOURCES.PAYMENT, action: ACTIONS.DELETE, statusCode: { lt: 400 } },
+      orderBy: { createdAt: 'desc' },
+      take: 500,
+      include: { user: { select: { name: true } } },
+    });
+    return logs.flatMap((l) => {
+      const m = (l.metadata ? JSON.parse(l.metadata) : {}) as { deleted?: string[]; receipts?: DeletedReceiptSnapshot[]; reason?: string | null };
+      const snaps = new Map((m.receipts ?? []).map((r) => [r.voucherNo, r]));
+      return (m.deleted ?? []).map((voucherNo) => ({
+        ...snaps.get(voucherNo),
+        voucherNo,
+        deletedAt: l.createdAt.toISOString(),
+        deletedBy: l.user?.name ?? l.userEmail,
+        reason: m.reason ?? null,
+      }));
+    });
+  }
 
   /* â”€â”€ Pending context (grid + labels + KPI source) â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€ */
 
@@ -702,7 +740,7 @@ export class PaymentsService {
       await this.claimExact(tx, target.custId, target.agentName, rest.map(entryOf), claims);
       await this.replayInOrder(tx, rest, claims);
       await this.applyOnAccount(tx, target.custId);
-      return { voucherNo: target.voucherNo, replayedCount: rest.length };
+      return { voucherNo: target.voucherNo, replayedCount: rest.length, receipts: [snapshotOf(target)] };
     });
   }
 
@@ -786,7 +824,7 @@ export class PaymentsService {
         await this.applyOnAccount(tx, earliest.custId);
         replayedCount += rest.length;
       }
-      return { deleted, replayedCount };
+      return { deleted, replayedCount, receipts: targets.map(snapshotOf) };
     });
   }
 
