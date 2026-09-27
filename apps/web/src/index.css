@@ -2182,6 +2182,10 @@ select:not(:disabled):not([multiple]):focus-visible {
 @media (width >= 40rem) {
   .cs-sheet { inset: 16px 0; width: min(480px, calc(100vw - 32px)); margin: 0 auto; border-radius: 24px; box-shadow: 0 30px 80px -20px rgba(15, 23, 42, 0.5); }
 }
+/* The Demand plan: wider, and only as tall as its bills, centred. */
+@media (width >= 40rem) {
+  .cs-sheet.cs-wide { width: min(760px, calc(100vw - 32px)); height: fit-content; max-height: calc(100dvh - 32px); margin: auto; }
+}
 .cs-hero {
   position: relative; flex-shrink: 0; overflow: hidden; color: #fff; padding: calc(12px + env(safe-area-inset-top)) 14px 16px;
   background: linear-gradient(135deg, #4f6ef7 0%, #3a4fd6 55%, #3140b8 100%); box-shadow: 0 14px 30px -18px rgba(49, 64, 184, 0.8);
@@ -2227,6 +2231,8 @@ select:not(:disabled):not([multiple]):focus-visible {
 .cs-quick-rose[aria-pressed='true'] { background: #fff1f2; }
 .cs-quick-slate { border-color: #dfe4ee; color: #3a4256; }
 .cs-quick-slate[aria-pressed='true'] { background: #f1f4f9; }
+.cs-quick-blue { border-color: #dfe4ee; color: #3a4256; }
+.cs-quick-blue[aria-pressed='true'] { border-color: #3b4fd8; background: #eef1ff; color: #2f3fb5; }
 .cs-amount {
   display: flex; align-items: center; gap: 8px; height: 52px; padding: 0 14px; border-radius: 14px;
   background: #f5f7fc; border: 1px solid #dfe4ef; box-shadow: inset 0 1px 2px rgba(20, 30, 60, 0.05); transition: border-color 0.15s ease, box-shadow 0.15s ease;
@@ -2259,6 +2265,8 @@ select:not(:disabled):not([multiple]):focus-visible {
 .dark .cs-quick-rose[aria-pressed='true'] { background: rgba(244, 63, 94, 0.16); }
 .dark .cs-quick-slate { border-color: rgba(255, 255, 255, 0.14); color: #cbd5e1; }
 .dark .cs-quick-slate[aria-pressed='true'] { background: rgba(255, 255, 255, 0.1); }
+.dark .cs-quick-blue { border-color: rgba(255, 255, 255, 0.14); color: #cbd5e1; }
+.dark .cs-quick-blue[aria-pressed='true'] { border-color: rgba(123, 147, 255, 0.6); background: rgba(79, 110, 247, 0.18); color: #c7d2fe; }
 .dark .cs-amount { background: rgba(255, 255, 255, 0.05); border-color: rgba(255, 255, 255, 0.12); }
 .dark .cs-foot { background: rgba(15, 22, 41, 0.92); border-color: rgba(255, 255, 255, 0.08); }
 .dark .cs-cancel { background: rgba(255, 255, 255, 0.06); border-color: rgba(255, 255, 255, 0.12); color: #e8eefc; }

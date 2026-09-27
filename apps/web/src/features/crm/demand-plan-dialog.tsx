@@ -1,16 +1,14 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
-import { Loader2, Share2 } from 'lucide-react';
+import * as DialogPrimitive from '@radix-ui/react-dialog';
+import { Check, Copy, Loader2, Share2, X } from 'lucide-react';
 import { toast } from 'sonner';
 import { billAgeDays, demandStats, dueWithin, type CompanyProfileDto } from '@oms/shared';
 import { cn } from '@/lib/utils';
 import { formatDate } from '@/lib/date-format';
 import { waitForPaintable } from '@/lib/pdf';
 import { useCompany } from '@/features/settings/use-settings';
-import { inrFull } from '@/features/dashboard/format';
-import { Button } from '@/components/ui/button';
-import { Input } from '@/components/ui/input';
-import { Dialog, DialogContent, DialogHeader, DialogTitle } from '@/components/ui/dialog';
+import { inrCompact, inrFull } from '@/features/dashboard/format';
 import { usePaymentContext } from '@/features/account/use-account';
 import { useCustomer } from '@/features/customers/use-customers';
 
@@ -75,9 +73,22 @@ export function DemandPlanDialog({ open, onOpenChange, customerId, partyName, de
       return next;
     });
 
+  const setAll = (rows: { code: string }[], on: boolean) =>
+    setPicked((prev) => {
+      const next = new Set(prev);
+      for (const b of rows) {
+        if (on) next.add(b.code);
+        else next.delete(b.code);
+      }
+      return next;
+    });
+
   const chosen = bills.filter((b) => picked.has(b.code));
   const { total, avgAge } = demandStats(chosen);
   const overdue = bills.filter((b) => b.age > creditDays);
+  /** Each side's open total, for the Bank / Cash switch — the bills carry both. */
+  const sideTotal = (s: 'B' | 'C') =>
+    (data?.invoices ?? []).filter((i) => i.customerId === customerId).reduce((n, i) => n + Math.max(0, s === 'B' ? i.bankBal : i.cashBal), 0);
   /** The day a bill reaches the credit period. */
   const dueOn = (b: { date: string }) => {
     const d = new Date(b.date);
@@ -86,6 +97,22 @@ export function DemandPlanDialog({ open, onOpenChange, customerId, partyName, de
   };
   // Not overdue yet, but will be within the look-ahead.
   const soon = dueWithin(bills, creditDays, ahead).filter((b) => b.age <= creditDays);
+  const sum = (rows: { balance: number }[]) => rows.reduce((n, b) => n + b.balance, 0);
+  const groups = [
+    { key: 'over', title: 'Overdue now', hint: `Past the ${creditDays}-day credit period.`, dot: 'bg-rose-500', rows: overdue },
+    { key: 'soon', title: `Falling due in ${ahead} days`, hint: 'Asked for in the same call, rather than chased again next week.', dot: 'bg-amber-500', rows: soon },
+    { key: 'later', title: 'Not due yet', hint: 'Left out of the demand unless ticked.', dot: 'bg-slate-400', rows: bills.filter((b) => b.age <= creditDays && !soon.includes(b)) },
+  ].filter((g) => g.rows.length);
+  /** Where a bill stands against the credit period. */
+  const standing = (b: { date: string; age: number }) =>
+    b.age > creditDays
+      ? { text: `${b.age - creditDays} days over`, tone: 'text-rose-700 dark:text-rose-400' }
+      : b.age === creditDays
+        ? { text: 'due today', tone: 'text-amber-700 dark:text-amber-400' }
+        : creditDays - b.age <= ahead
+          ? { text: `due in ${creditDays - b.age} days · ${formatDate(dueOn(b))}`, tone: 'text-amber-700 dark:text-amber-400' }
+          : { text: `due ${formatDate(dueOn(b))}`, tone: 'cs-muted' };
+  const copy = () => navigator.clipboard.writeText(text).then(() => toast.success('Copied.'), () => toast.error('Could not copy.'));
   const text =
     `${partyName} — payment request (${side === 'B' ? 'bank' : 'cash'}) as on ${formatDate(asOf)}\n` +
     chosen.map((b) => `${b.code}  ${formatDate(b.date)}  ₹${Math.round(b.balance).toLocaleString('en-IN')}`).join('\n') +
@@ -148,134 +175,186 @@ export function DemandPlanDialog({ open, onOpenChange, customerId, partyName, de
   };
 
   return (
-    <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent className="w-[96vw] max-w-3xl">
-        <DialogHeader>
-          <DialogTitle>Demand plan — {partyName}</DialogTitle>
-        </DialogHeader>
-
-        <div className="flex flex-wrap items-end gap-3 text-sm">
-          <div className="flex overflow-hidden rounded-md border">
-            {(['B', 'C'] as const).map((s) => (
-              <button key={s} type="button" onClick={() => setSide(s)} className={cn('px-3 py-1.5 font-semibold', side === s ? 'bg-primary text-primary-foreground' : 'bg-card')}>
-                {s === 'B' ? 'Bank' : 'Cash'}
-              </button>
-            ))}
-          </div>
-          <label className="space-y-1">
-            <span className="text-muted-foreground block text-xs">As on</span>
-            <Input type="date" value={asOf} onChange={(e) => e.target.value && setAsOf(e.target.value)} className="h-9 w-40" />
-          </label>
-          <label className="space-y-1">
-            <span className="text-muted-foreground block text-xs">Credit days</span>
-            <Input type="number" value={creditDays} onChange={(e) => setTerm(Number(e.target.value) || 0)} className="h-9 w-20" />
-          </label>
-          <label className="space-y-1">
-            <span className="text-muted-foreground block text-xs">Upcoming overdue in (days)</span>
-            <Input type="number" min={0} value={ahead} onChange={(e) => setAhead(Math.max(0, Number(e.target.value) || 0))} className="h-9 w-20" />
-          </label>
-          <div className="flex gap-1 pb-0.5">
-            {AHEAD_PRESETS.map((d) => (
-              <Button key={d} type="button" size="sm" variant={ahead === d ? 'default' : 'outline'} className="h-8 px-2.5" onClick={() => setAhead(d)}>
-                {d}d
-              </Button>
-            ))}
-          </div>
-        </div>
-
-        <div className="max-h-[50vh] overflow-auto rounded-md border">
-          <table className="w-full text-sm">
-            <thead className="bg-muted sticky top-0 text-xs uppercase">
-              <tr>
-                <th className="w-8 p-2" />
-                <th className="p-2 text-left">Bill</th>
-                <th className="p-2 text-left">Date</th>
-                <th className="p-2 text-right">Age</th>
-                <th className="p-2 text-right">Reaches {creditDays}d</th>
-                <th className="p-2 text-right">Balance</th>
-              </tr>
-            </thead>
-            <tbody>
-              {bills.map((b) => (
-                <tr key={b.code} onClick={() => toggle(b.code)} className={cn('cursor-pointer border-t', picked.has(b.code) && 'bg-emerald-50 dark:bg-emerald-500/10')}>
-                  <td className="p-2 text-center">
-                    <input type="checkbox" checked={picked.has(b.code)} readOnly aria-label={`Ask for ${b.code}`} />
-                  </td>
-                  <td className="p-2 font-semibold">{b.code}</td>
-                  <td className="p-2">{formatDate(b.date)}</td>
-                  <td className={cn('p-2 text-right tabular-nums', b.age > creditDays && 'font-bold text-rose-700 dark:text-rose-300')}>{b.age}d</td>
-                  <td className={cn('p-2 text-right tabular-nums', b.age <= creditDays && creditDays - b.age <= ahead && 'font-bold text-amber-700 dark:text-amber-300')}>
-                    {b.age > creditDays ? `${b.age - creditDays}d over` : b.age === creditDays ? 'today' : `in ${creditDays - b.age}d · ${formatDate(dueOn(b))}`}
-                  </td>
-                  <td className="p-2 text-right tabular-nums">{inrFull(Math.round(b.balance))}</td>
-                </tr>
+    <DialogPrimitive.Root open={open} onOpenChange={onOpenChange}>
+      <DialogPrimitive.Portal>
+        <DialogPrimitive.Overlay className="cs-overlay" />
+        <DialogPrimitive.Content className="cs-sheet cs-wide" aria-describedby={undefined}>
+          {/* ── The party, the side, and what the plan is made of ── */}
+          <div className="cs-hero">
+            <div className="flex items-center gap-2.5">
+              <span className="cs-kicker">Demand plan</span>
+              <DialogPrimitive.Close className="cs-x" aria-label="Close">
+                <X className="size-[18px]" />
+              </DialogPrimitive.Close>
+            </div>
+            <DialogPrimitive.Title className="mt-1.5 truncate text-lg leading-tight font-extrabold">{partyName}</DialogPrimitive.Title>
+            <span className="block truncate text-[12.5px] text-white/80">
+              As on {formatDate(asOf)} · {creditDays}-day credit period
+            </span>
+            <div className="cs-seg" role="group" aria-label="Plan the">
+              {(['B', 'C'] as const).map((s) => (
+                <button key={s} type="button" className="cs-seg-btn" aria-pressed={side === s} onClick={() => setSide(s)}>
+                  <span className="cs-seg-label">{s === 'B' ? 'Bank bills' : 'Cash bills'}</span>
+                  <span className="cs-seg-value">{data ? inrCompact(sideTotal(s)) : '—'}</span>
+                </button>
               ))}
-              {!bills.length && (
-                <tr>
-                  <td colSpan={6} className="text-muted-foreground p-6 text-center">
-                    {isFetching ? <Loader2 className="mx-auto size-5 animate-spin" /> : `No open ${side === 'B' ? 'bank' : 'cash'} bills.`}
-                  </td>
-                </tr>
-              )}
-            </tbody>
-          </table>
-        </div>
-
-        {soon.length > 0 && (
-          <div className="flex flex-wrap items-center gap-2 rounded-md border border-amber-300 bg-amber-50 px-3 py-2 text-xs text-amber-900 dark:border-amber-400/30 dark:bg-amber-400/10 dark:text-amber-200">
-            <span className="font-semibold">Falling overdue in the next {ahead} days:</span>
-            {soon.map((b) => (
-              <span key={b.code}>
-                {b.code} ({formatDate(b.date)}) on {formatDate(dueOn(b))} · {inrFull(Math.round(b.balance))}
-              </span>
-            ))}
-            <Button size="sm" variant="outline" className="ml-auto h-7" onClick={() => setPicked((prev) => new Set([...prev, ...soon.map((b) => b.code)]))}>
-              Add to demand
-            </Button>
+            </div>
+            <div className="mt-3 grid grid-cols-3 gap-2">
+              {[
+                { label: 'Overdue', value: inrCompact(sum(overdue)), sub: `${overdue.length} bill${overdue.length === 1 ? '' : 's'}` },
+                { label: `Due in ${ahead}d`, value: inrCompact(sum(soon)), sub: `${soon.length} bill${soon.length === 1 ? '' : 's'}` },
+                { label: 'Oldest bill', value: bills.length ? `${bills[0].age}d` : '—', sub: bills.length ? `billed ${formatDate(bills[0].date)}` : 'nothing open' },
+              ].map((t) => (
+                <div key={t.label} className="cs-stat min-w-0">
+                  <div className="cs-stat-label truncate">{t.label}</div>
+                  <div className="cs-stat-value truncate">{t.value}</div>
+                  <div className="truncate text-[11px] text-white/75">{t.sub}</div>
+                </div>
+              ))}
+            </div>
           </div>
-        )}
 
-        <div className="flex flex-wrap items-center gap-x-5 gap-y-2 text-sm">
-          <span>
-            Demand <strong className="text-base tabular-nums">{inrFull(Math.round(total))}</strong> · {chosen.length} bills
-          </span>
-          <span>
-            Average age <strong className="tabular-nums">{avgAge == null ? '—' : `${avgAge.toFixed(1)} days`}</strong>
-          </span>
-          <span className="text-muted-foreground text-xs">
-            Overdue alone: {inrFull(Math.round(demandStats(overdue).total))} · {overdue.length} bills
-          </span>
-          <div className="ml-auto flex gap-2">
-            <Button
-              variant="outline"
-              size="sm"
-              disabled={!chosen.length}
-              onClick={() => navigator.clipboard.writeText(text).then(() => toast.success('Copied.'), () => toast.error('Could not copy.'))}
-            >
-              Copy
-            </Button>
-            {/* A picture of the demand plus a short message — WhatsApp and the
-                rest are targets in the sheet. */}
-            <Button variant="outline" size="sm" disabled={!chosen.length || busy} onClick={() => void share()}>
-              {busy ? <Loader2 className="animate-spin" /> : <Share2 />} Share
-            </Button>
-            {onUse && (
-              <Button size="sm" disabled={!chosen.length} onClick={() => (onUse(Math.round(total), `${inrFull(Math.round(total))} demand plan (${chosen.length} bills)`), onOpenChange(false))}>
-                Use this amount
-              </Button>
+          <div className="cs-body">
+            {/* ── The three knobs of the plan ── */}
+            <section className="cs-card grid grid-cols-2 gap-3 p-3.5 sm:grid-cols-[1fr_1fr_1.7fr]">
+              <label className="flex min-w-0 flex-col gap-1.5">
+                <span className="cs-caption">As on</span>
+                <input type="date" className="pls-input" value={asOf} onChange={(e) => e.target.value && setAsOf(e.target.value)} />
+              </label>
+              <label className="flex min-w-0 flex-col gap-1.5">
+                <span className="cs-caption">Credit period</span>
+                <span className="relative">
+                  <input type="number" min={0} className="pls-input pr-12" value={creditDays} onChange={(e) => setTerm(Math.max(0, Number(e.target.value) || 0))} />
+                  <span className="pls-unit">days</span>
+                </span>
+              </label>
+              <div className="col-span-2 flex min-w-0 flex-col gap-1.5 sm:col-span-1">
+                <span className="cs-caption">Also ask for bills due within</span>
+                <div className="flex gap-1.5">
+                  {AHEAD_PRESETS.map((d) => (
+                    <button key={d} type="button" className="cs-quick cs-quick-blue min-w-0 flex-1 px-0" aria-pressed={ahead === d} onClick={() => setAhead(d)}>
+                      {d}d
+                    </button>
+                  ))}
+                  <span className="relative w-[78px] shrink-0">
+                    <input
+                      type="number"
+                      min={0}
+                      aria-label="Days ahead"
+                      className="pls-input pr-7"
+                      value={ahead}
+                      onChange={(e) => setAhead(Math.max(0, Number(e.target.value) || 0))}
+                    />
+                    <span className="pls-unit">d</span>
+                  </span>
+                </div>
+              </div>
+            </section>
+
+            {/* ── The bills, by where they stand; ticked ones make the demand ── */}
+            {!bills.length ? (
+              <section className="cs-card cs-muted flex items-center justify-center gap-2 px-4 py-10 text-[13.5px] font-semibold">
+                {isFetching ? (
+                  <>
+                    <Loader2 className="size-4 animate-spin" /> Loading bills…
+                  </>
+                ) : (
+                  `No open ${side === 'B' ? 'bank' : 'cash'} bills as on ${formatDate(asOf)}.`
+                )}
+              </section>
+            ) : (
+              groups.map((g) => {
+                const allOn = g.rows.every((b) => picked.has(b.code));
+                return (
+                  <section key={g.key} className="cs-card">
+                    <div className="flex items-center gap-2 px-3.5 pt-3">
+                      <span className={cn('size-2 shrink-0 rounded-full', g.dot)} />
+                      <span className="cs-caption truncate">{g.title}</span>
+                      <span className="cs-muted shrink-0 text-xs font-semibold tabular-nums">
+                        {g.rows.length} · {inrFull(Math.round(sum(g.rows)))}
+                      </span>
+                      <button type="button" className="ml-auto shrink-0 cursor-pointer text-[12.5px] font-extrabold text-[#3b4fd8] dark:text-indigo-300" onClick={() => setAll(g.rows, !allOn)}>
+                        {allOn ? 'Clear' : 'Select all'}
+                      </button>
+                    </div>
+                    <p className="cs-muted px-3.5 pt-0.5 pb-2 text-[11.5px]">{g.hint}</p>
+                    <div className="flex flex-col gap-1.5 px-2.5 pb-2.5">
+                      {g.rows.map((b) => {
+                        const on = picked.has(b.code);
+                        const st = standing(b);
+                        return (
+                          <button key={b.code} type="button" className="cs-inv" aria-pressed={on} onClick={() => toggle(b.code)}>
+                            <span className="cs-box" aria-hidden>
+                              {on && <Check className="size-3.5" strokeWidth={3.5} />}
+                            </span>
+                            <span className="flex min-w-0 flex-1 flex-col">
+                              <span className="truncate font-mono text-[13px] font-bold">{b.code}</span>
+                              <span className="cs-muted truncate text-xs">
+                                Billed {formatDate(b.date)} · {b.age} days old
+                              </span>
+                            </span>
+                            <span className="flex shrink-0 flex-col items-end">
+                              <span className="text-[14.5px] font-extrabold tabular-nums">{inrFull(Math.round(b.balance))}</span>
+                              <span className={cn('text-[11.5px] font-bold', st.tone)}>{st.text}</span>
+                            </span>
+                          </button>
+                        );
+                      })}
+                    </div>
+                  </section>
+                );
+              })
             )}
           </div>
-        </div>
-        {chosen.length > 0 &&
-          createPortal(
-            // Off screen but laid out — a `display:none` node would capture as nothing.
-            <div aria-hidden style={{ position: 'fixed', left: -10000, top: 0 }}>
-              <DemandCard cardRef={cardRef} company={company} partyName={partyName} side={side} asOf={asOf} bills={chosen} total={total} avgAge={avgAge} creditDays={creditDays} />
-            </div>,
-            document.body,
-          )}
-      </DialogContent>
-    </Dialog>
+
+          {/* ── The demand, and what to do with it ── */}
+          <div className="cs-foot flex-wrap items-center">
+            <div className="mr-auto flex min-w-0 flex-col">
+              <span className="cs-caption">Demand</span>
+              <span className="text-[22px] leading-tight font-extrabold tabular-nums">{inrFull(Math.round(total))}</span>
+              <span className="cs-muted text-xs font-semibold">
+                {chosen.length} bill{chosen.length === 1 ? '' : 's'}
+                {avgAge != null && ` · average ${avgAge.toFixed(1)} days old`}
+              </span>
+            </div>
+            <div className="flex gap-2 max-sm:w-full">
+              <button type="button" className="cs-cancel inline-flex items-center justify-center px-3.5 disabled:opacity-50" disabled={!chosen.length} onClick={copy} aria-label="Copy as text" title="Copy as text">
+                <Copy className="size-4" />
+              </button>
+              {/* A picture of the demand plus a short message — WhatsApp and the
+                  rest are targets in the sheet. */}
+              <button
+                type="button"
+                className={cn(onUse ? 'cs-cancel max-sm:flex-1' : 'cs-log px-6', 'inline-flex items-center justify-center gap-2 disabled:opacity-50')}
+                disabled={!chosen.length || busy}
+                onClick={() => void share()}
+              >
+                {busy ? <Loader2 className="size-4 animate-spin" /> : <Share2 className="size-4" />} Share
+              </button>
+              {onUse && (
+                <button
+                  type="button"
+                  className="cs-log px-5"
+                  disabled={!chosen.length}
+                  onClick={() => (onUse(Math.round(total), `${inrFull(Math.round(total))} demand plan (${chosen.length} bills)`), onOpenChange(false))}
+                >
+                  Use this amount
+                </button>
+              )}
+            </div>
+          </div>
+
+          {chosen.length > 0 &&
+            createPortal(
+              // Off screen but laid out — a `display:none` node would capture as nothing.
+              <div aria-hidden style={{ position: 'fixed', left: -10000, top: 0 }}>
+                <DemandCard cardRef={cardRef} company={company} partyName={partyName} side={side} asOf={asOf} bills={chosen} total={total} avgAge={avgAge} creditDays={creditDays} />
+              </div>,
+              document.body,
+            )}
+        </DialogPrimitive.Content>
+      </DialogPrimitive.Portal>
+    </DialogPrimitive.Root>
   );
 }
 
