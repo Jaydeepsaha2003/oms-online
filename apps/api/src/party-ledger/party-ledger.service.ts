@@ -283,8 +283,15 @@ export class PartyLedgerService {
       .map((rr) => this.decorate(rr, pending, lastRec, mode, today))
       // Transaction-mode filter (B = bank cols only, C = cash only).
       .filter((row) => (mode === 'B' ? row.bankDr !== 0 || row.bankCr !== 0 : mode === 'C' ? row.cashDr !== 0 || row.cashCr !== 0 : true));
-    // Voucher-type filter.
-    const rows = inMode.filter((row) => !q.voucherType || row.voucherType.toUpperCase() === q.voucherType.toUpperCase());
+    // Voucher-type filter, then the due-type filter: unpaid invoices by where
+    // their balance stands (the same buckets as the ageing tiles), or the paid ones.
+    const due = q.dueType;
+    const rows = inMode.filter(
+      (row) =>
+        (!q.voucherType || row.voucherType.toUpperCase() === q.voucherType.toUpperCase()) &&
+        (!due ||
+          (due === 'UNPAID' ? row.status === 'P' || row.status === 'D' : due === 'PAID' ? row.status === 'F' : row.dueType === due)),
+    );
 
     // ── 3) Opening as-of `from` ───────────────────────────────────────────────
     // Only meaningful when the grid holds every voucher type. The opening spans
@@ -293,7 +300,8 @@ export class PartyLedgerService {
     // that reads authoritative and isn't. The Bank/Cash mode filter is fine here:
     // the two legs carry their own opening, and dropping cash-only rows removes
     // no bank movement.
-    const balancesApply = !q.voucherType;
+    // A due-type filter leaves a partial list just as a voucher type does.
+    const balancesApply = !q.voucherType && !q.dueType;
     const { bankNet: openingBankNet, cashNet: openingCashNet } = balancesApply
       ? await this.openingAsOf(from, custIds, agentName)
       : { bankNet: 0, cashNet: 0 };
@@ -514,6 +522,8 @@ export class PartyLedgerService {
       const { text, calc } = this.dueFromOpen(dueDate, today, basis, pendingAmt, partPaid);
       base.dueFrom = text;
       base.dueFromCalc = calc;
+      // The bucket the ageing tiles count this bill in, by the same rule.
+      base.dueType = classifyDueType(rr.txnDate, rr.dueDate ?? info?.dueDate ?? null, today);
     };
 
     if (!info) {

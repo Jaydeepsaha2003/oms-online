@@ -1,5 +1,6 @@
 import { Type } from 'class-transformer';
 import { IsIn, IsInt, IsOptional, IsString } from 'class-validator';
+import { LEDGER_DUE_FILTERS, type LedgerDueFilter } from '@oms/shared';
 
 export class PartyLedgerQueryDto {
   @IsOptional() @Type(() => Number) @IsInt() customerId?: number;
@@ -8,6 +9,7 @@ export class PartyLedgerQueryDto {
   @IsString() from!: string;
   @IsString() to!: string;
   @IsOptional() @IsString() voucherType?: string;
+  @IsOptional() @IsIn(LEDGER_DUE_FILTERS.map((f) => f.value)) dueType?: LedgerDueFilter;
   /** BOTH | B | C. */
   @IsOptional() @IsString() mode?: string;
 }

@@ -9,6 +9,7 @@
  * the Closing balance, plus aging KPIs (Over / Past / Normal due, oldest unpaid,
  * and a Payment-behaviour grade).
  */
+import type { DueType } from './payment';
 
 export const LEDGER_TXN_MODES = ['BOTH', 'B', 'C'] as const;
 /** BOTH = bank+cash, B = bank only, C = cash only. */
@@ -109,7 +110,25 @@ export interface PartyLedgerRow {
   cashCr: number;
   /** Due date (ISO) for invoice rows, else null. */
   dueDate: string | null;
+  /** Where an unpaid invoice's balance stands — the shared ageing rule
+   *  (`classifyDueType`) the Over / Past / Normal due tiles add up. Null for a
+   *  settled invoice and for anything that is not an invoice. */
+  dueType?: DueType | null;
 }
+
+/**
+ * The ledger's Due type filter: every unpaid invoice, one ageing bucket of
+ * them, or the settled ones. Like a voucher-type filter it leaves a partial
+ * list, so opening and closing are withheld while it is on.
+ */
+export const LEDGER_DUE_FILTERS = [
+  { value: 'UNPAID', label: 'All unpaid' },
+  { value: 'OVERDUE', label: 'Over due' },
+  { value: 'PAST DUE', label: 'Past due' },
+  { value: 'NORMAL', label: 'Normal due' },
+  { value: 'PAID', label: 'Paid' },
+] as const;
+export type LedgerDueFilter = (typeof LEDGER_DUE_FILTERS)[number]['value'];
 
 /** One side of the footer (a Dr/Cr split of a net balance). */
 export interface LedgerBalanceRow {
@@ -217,6 +236,8 @@ export interface PartyLedgerQuery {
   from: string;
   to: string;
   voucherType?: string;
+  /** See {@link LEDGER_DUE_FILTERS}. */
+  dueType?: LedgerDueFilter;
   /** BOTH | B | C. */
   mode?: string;
 }

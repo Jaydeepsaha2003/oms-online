@@ -1,7 +1,9 @@
-import { useMemo, useState } from 'react';
-import { CheckCircle2, Loader2, Pencil, Plus, Search, Shield, ShieldAlert, ShieldCheck, Trash2, X } from 'lucide-react';
+import { useMemo, useState, type CSSProperties } from 'react';
+import { CheckCircle2, Loader2, Pencil, Plus, Search, Shield, ShieldAlert, ShieldCheck, Trash2, X, type LucideIcon } from 'lucide-react';
 import { toast } from 'sonner';
 import {
+  matchPartyCondition,
+  matchPartyList,
   OPERATORS_FOR_TYPE,
   PARTY_METRIC_META,
   type PartyClassRow,
@@ -10,35 +12,54 @@ import {
   type PartyListKind,
   type PartyListOperator,
   type PartyMetricKey,
+  type PartyMetrics,
   type PartyMetricType,
 } from '@oms/shared';
 import { getApiErrorMessage } from '@/lib/api';
 import { cn } from '@/lib/utils';
-import { MobileHero, MobileWallpaper, SKIN_TONE, toneSurface, type SkinTone } from '@/components/common/mobile-skin';
 import { usePermissions } from '@/hooks/use-permissions';
 import { useSaveShortcut } from '@/hooks/use-save-shortcut';
 import { useConfirm } from '@/components/common/confirm';
 import { inrCompact, inrFull } from '@/features/dashboard/format';
 import { NativeSelect } from '@/components/common/combo';
-import { Input } from '@/components/ui/input';
-import { Label } from '@/components/ui/label';
-import { Button } from '@/components/ui/button';
-import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from '@/components/ui/dialog';
-import { usePartyListsConfig, usePartyListsEvaluate, useSavePartyListsConfig } from './use-party-lists';
+import { Switch } from '@/components/ui/switch';
+import { Dialog, DialogContent, DialogDescription, DialogTitle } from '@/components/ui/dialog';
+import { usePartyListsEvaluate, useSavePartyListsConfig } from './use-party-lists';
 import { initials } from './crm-shared';
+
+/*
+ * CRM · Party Lists, in the Party Lists mockup's design (index.css `.pls-*`,
+ * over the Party Ledger's `.pl-*` pieces): the list totals on a blue header,
+ * one card per list, and every party under list tabs — a sortable grid on
+ * desktop, cards on a phone. Membership is the server's; the editor counts its
+ * live matches with the same shared rule (`matchPartyList`), so the preview is
+ * the membership the list will have once saved.
+ */
 
 const META_BY_KEY = new Map(PARTY_METRIC_META.map((m) => [m.key, m]));
 const typeOf = (k: PartyMetricKey): PartyMetricType => META_BY_KEY.get(k)?.type ?? 'number';
 const OP_LABEL: Record<PartyListOperator, string> = {
   '>=': '≥', '<=': '≤', '>': '>', '<': '<', '==': 'is', '!=': 'is not', contains: 'contains', notContains: "doesn't contain",
 };
+const UNIT: Partial<Record<PartyMetricType, string>> = { money: '₹', percent: '%', days: 'd' };
 
-/** Palette for a list badge/card by kind. */
-function kindStyle(l: Pick<PartyListDef, 'kind' | 'color'>) {
-  if (l.kind === 'GREEN') return { chip: 'bg-emerald-50 text-emerald-700 ring-emerald-600/20', dot: 'bg-emerald-500', bar: 'from-emerald-500 to-green-600', icon: <ShieldCheck className="size-4" /> };
-  if (l.kind === 'BLACK') return { chip: 'bg-slate-800 text-white ring-slate-900/30', dot: 'bg-slate-800', bar: 'from-slate-700 to-slate-900', icon: <ShieldAlert className="size-4" /> };
-  return { chip: 'bg-violet-50 text-violet-700 ring-violet-600/20', dot: 'bg-violet-500', bar: 'from-violet-500 to-purple-600', icon: <Shield className="size-4" /> };
-}
+/** Each kind's colours — the mockup's gradients, dots and chip tones. */
+const KIND: Record<PartyListKind, { label: string; bar: string; head: string; icon: string; dot: string; chip: string; num: string; Icon: LucideIcon }> = {
+  GREEN: {
+    label: 'Green', bar: 'linear-gradient(90deg,#34d399,#059669)', head: 'linear-gradient(135deg,#10b981,#047857)',
+    icon: 'linear-gradient(135deg,#34d399,#059669)', dot: '#10b981', chip: 'pl-tone-emerald', num: 'text-[#047857] dark:text-emerald-400', Icon: ShieldCheck,
+  },
+  BLACK: {
+    label: 'Black', bar: 'linear-gradient(90deg,#475569,#0f172a)', head: 'linear-gradient(135deg,#334155,#0f172a)',
+    icon: 'linear-gradient(135deg,#475569,#0f172a)', dot: '#0f172a', chip: 'pls-tone-black', num: 'text-[#0f172a] dark:text-slate-200', Icon: ShieldAlert,
+  },
+  CUSTOM: {
+    label: 'Custom', bar: 'linear-gradient(90deg,#a78bfa,#7c3aed)', head: 'linear-gradient(135deg,#8b5cf6,#6d28d9)',
+    icon: 'linear-gradient(135deg,#a78bfa,#7c3aed)', dot: '#8b5cf6', chip: 'pls-tone-violet', num: 'text-[#6d28d9] dark:text-violet-300', Icon: Shield,
+  },
+};
+/** "Green — Trusted payers" → "Green", for tabs and chips. */
+const shortName = (name: string) => name.split('—')[0].trim();
 
 const fmtMetric = (k: PartyMetricKey, v: number | string | boolean | null): string => {
   if (v == null) return '—';
@@ -48,6 +69,28 @@ const fmtMetric = (k: PartyMetricKey, v: number | string | boolean | null): stri
   if (t === 'days') return `${v}d`;
   if (t === 'bool') return v ? 'Yes' : 'No';
   return String(v);
+};
+/** A condition as a chip: "Days past credit period ≥ 15d". */
+const condText = (c: PartyCondition) => {
+  const t = typeOf(c.field);
+  const v =
+    t === 'money' ? inrCompact(Number(c.value)) : t === 'percent' ? `${c.value}%` : t === 'days' ? `${c.value}d` : t === 'bool' ? (String(c.value) === 'true' ? 'Yes' : 'No') : t === 'number' ? String(c.value) : `“${c.value}”`;
+  return `${META_BY_KEY.get(c.field)?.label ?? c.field} ${OP_LABEL[c.op]} ${v}`;
+};
+/** Numbers as numbers and text / yes-no as text — what the server stores. */
+const normalized = (c: PartyCondition): PartyCondition => ({
+  field: c.field,
+  op: c.op,
+  value: typeOf(c.field) === 'text' || typeOf(c.field) === 'bool' ? String(c.value) : c.value === '' ? '' : Number(c.value),
+});
+
+/** Where a party stands, for its rail and avatar: old overdue, any trouble, or fine. */
+type Standing = 'rose' | 'amber' | 'emerald';
+const standingOf = (m: PartyMetrics): Standing => (m.overdue > 0 && m.oldestOverdueDays >= 60 ? 'rose' : m.overdue > 0 || m.brokenPromises > 0 ? 'amber' : 'emerald');
+const STANDING: Record<Standing, { av: string; rail: string; dot: string; label: string }> = {
+  rose: { av: 'bg-[#fff1f2] text-[#be123c] ring-1 ring-[#fecdd3] dark:bg-rose-500/15 dark:text-rose-300 dark:ring-rose-400/30', rail: 'linear-gradient(180deg,#fb7185,#e11d48)', dot: '#be123c', label: 'High risk' },
+  amber: { av: 'bg-[#fffbeb] text-[#b45309] ring-1 ring-[#fde68a] dark:bg-amber-500/15 dark:text-amber-300 dark:ring-amber-400/30', rail: 'linear-gradient(180deg,#fcd34d,#f59e0b)', dot: '#b45309', label: 'Watch' },
+  emerald: { av: 'bg-[#ecfdf5] text-[#047857] ring-1 ring-[#a7f3d0] dark:bg-emerald-500/15 dark:text-emerald-300 dark:ring-emerald-400/30', rail: 'linear-gradient(180deg,#6ee7b7,#10b981)', dot: '#047857', label: 'Healthy' },
 };
 
 export function PartyListsPage() {
@@ -62,16 +105,26 @@ export function PartyListsPage() {
   const [editing, setEditing] = useState<PartyListDef | null>(null);
   const [builderOpen, setBuilderOpen] = useState(false);
 
+  const listById = useMemo(() => new Map(lists.map((l) => [l.id, l])), [lists]);
   const counts = useMemo(() => {
     const m = new Map<string, { members: number; outstanding: number }>();
     for (const l of lists) m.set(l.id, { members: 0, outstanding: 0 });
     let unclassified = 0;
+    const byKind: Record<PartyListKind, { n: number; outstanding: number }> = { GREEN: { n: 0, outstanding: 0 }, BLACK: { n: 0, outstanding: 0 }, CUSTOM: { n: 0, outstanding: 0 } };
     for (const p of parties) {
       if (p.matched.length === 0) unclassified += 1;
-      for (const id of p.matched) { const c = m.get(id); if (c) { c.members += 1; c.outstanding += p.metrics.outstanding; } }
+      for (const id of p.matched) {
+        const c = m.get(id);
+        if (c) (c.members += 1), (c.outstanding += p.metrics.outstanding);
+      }
+      // A party in two green lists is still one green-listed party.
+      for (const kind of new Set(p.matched.map((id) => listById.get(id)?.kind).filter(Boolean) as PartyListKind[])) {
+        byKind[kind].n += 1;
+        byKind[kind].outstanding += p.metrics.outstanding;
+      }
     }
-    return { m, unclassified };
-  }, [lists, parties]);
+    return { m, unclassified, byKind };
+  }, [lists, parties, listById]);
 
   const filtered = useMemo(() => {
     let rows = parties;
@@ -82,210 +135,396 @@ export function PartyListsPage() {
     return rows;
   }, [parties, tab, search]);
 
-  const openNew = () => { setEditing(null); setBuilderOpen(true); };
-  const openEdit = (l: PartyListDef) => { setEditing(l); setBuilderOpen(true); };
+  const openNew = () => {
+    setEditing(null);
+    setBuilderOpen(true);
+  };
+  const openEdit = (l: PartyListDef) => {
+    setEditing(l);
+    setBuilderOpen(true);
+  };
+
+  const heroTiles = [
+    { label: 'Green-listed', value: counts.byKind.GREEN.n, hint: 'trusted payers', dot: '#6ee7b7' },
+    { label: 'Black-listed', value: counts.byKind.BLACK.n, hint: `${inrCompact(counts.byKind.BLACK.outstanding)} outstanding`, dot: '#1e293b' },
+    { label: 'Custom lists', value: counts.byKind.CUSTOM.n, hint: 'parties in any custom list', dot: '#c4b5fd' },
+    { label: 'Unlisted', value: counts.unclassified, hint: 'match no list', dot: '#fcd34d' },
+  ];
 
   return (
-    <div className="rp-page space-y-5">
-      <MobileWallpaper />
-      <MobileHero
-        label="Parties classified"
-        value={String(parties.length)}
-        chip={`${lists.length} list${lists.length === 1 ? '' : 's'}`}
-        hint={`${counts.unclassified} match no list`}
-      />
+    <div className="pls-page flex flex-col gap-3.5">
+      <div className="pls-backdrop" aria-hidden />
 
-      {canEdit && (
-        <button type="button" className="rp-act rp-act-primary w-full justify-center sm:hidden" onClick={openNew}>
-          <Plus className="size-4" /> New list
-        </button>
-      )}
-
-      <div className="flex flex-wrap items-center gap-3 max-sm:hidden">
-        <div className="mr-auto">
-          <p className="text-muted-foreground text-sm">Green-list your best payers, black-list the risky ones — using your own conditions.</p>
+      {/* ── The blue header: how many parties, and where they fall ── */}
+      <section className="pls-hero">
+        <div className="flex flex-wrap items-start gap-3">
+          <div className="min-w-0 flex-1">
+            <span className="text-[12px] font-bold tracking-[0.04em] text-white/80">CRM · Party lists</span>
+            <div className="mt-0.5 flex flex-wrap items-baseline gap-x-3 gap-y-1">
+              <span className="text-[40px] leading-none font-extrabold tracking-[-0.03em] tabular-nums">{isLoading ? '—' : parties.length}</span>
+              <span className="text-[15px] font-bold text-white/90">parties classified</span>
+              <span className="rounded-full bg-white/95 px-[11px] py-[4px] text-[12px] font-extrabold text-[#2f3fb5]">
+                {lists.length} list{lists.length === 1 ? '' : 's'}
+              </span>
+            </div>
+            <p className="mt-1.5 text-[13px] text-white/80">Green-list your best payers, black-list the risky ones, using your own conditions.</p>
+          </div>
+          {canEdit && (
+            <button type="button" className="pls-hbtn" onClick={openNew}>
+              <Plus className="size-4" /> New list
+            </button>
+          )}
         </div>
-        {canEdit && <Button onClick={openNew}><Plus /> New list</Button>}
-      </div>
+        <div className="mt-4 grid grid-cols-2 gap-2 md:grid-cols-4">
+          {heroTiles.map((t) => (
+            <div key={t.label} className="pls-htile">
+              <div className="pls-htile-label">
+                <span className="size-2 shrink-0 rounded-full" style={{ background: t.dot, boxShadow: '0 0 0 2px rgba(255,255,255,.35)' }} />
+                {t.label}
+              </div>
+              <div className="mt-0.5 text-[22px] font-extrabold tabular-nums">{isLoading ? '—' : t.value}</div>
+              <div className="truncate text-[11.5px] text-white/75">{t.hint}</div>
+            </div>
+          ))}
+        </div>
+      </section>
 
-      {/* List cards */}
       {isLoading ? (
-        <div className="text-muted-foreground flex items-center justify-center gap-2 py-16 text-sm"><Loader2 className="size-4 animate-spin" /> Evaluating parties…</div>
+        <div className="pl-muted flex items-center justify-center gap-2 py-16 text-sm">
+          <Loader2 className="size-4 animate-spin" /> Evaluating parties…
+        </div>
       ) : (
         <>
-          <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
-            {lists.map((l) => {
-              const st = kindStyle(l);
-              const c = counts.m.get(l.id);
+          {/* ── One card per list ── */}
+          <section className="grid grid-cols-[repeat(auto-fill,minmax(min(100%,280px),1fr))] gap-3">
+            {lists.map((l, i) => {
+              const k = KIND[l.kind];
+              const c = counts.m.get(l.id) ?? { members: 0, outstanding: 0 };
+              const on = tab === l.id;
               return (
-                <div key={l.id} className={cn('bg-card rp-party overflow-hidden rounded-xl border shadow-sm transition-all max-sm:rounded-[20px] max-sm:border-0 max-sm:shadow-none', tab === l.id && 'ring-primary ring-2')}>
-                  <div className={cn('h-1.5 bg-gradient-to-r max-sm:h-[5px]', st.bar)} />
-                  <div className="p-3">
-                    <div className="flex items-start gap-2">
-                      <span className={cn('flex size-8 shrink-0 items-center justify-center rounded-lg ring-1 ring-inset', st.chip)}>{st.icon}</span>
-                      <button type="button" onClick={() => setTab(tab === l.id ? 'all' : l.id)} className="min-w-0 flex-1 text-left">
-                        <div className="flex items-center gap-1.5 truncate font-semibold">{l.name}{!l.enabled && <span className="text-muted-foreground text-xs font-normal">(off)</span>}</div>
-                        {l.description && <div className="text-muted-foreground truncate text-xs">{l.description}</div>}
+                <div
+                  key={l.id}
+                  className="pls-card flex flex-col gap-3 p-4 pt-5"
+                  data-on={on}
+                  data-off={!l.enabled}
+                  style={{ '--bar': k.bar, animationDelay: `${i * 60}ms` } as CSSProperties}
+                >
+                  <div className="flex items-start gap-3">
+                    <span className="pls-icon" style={{ '--icon': k.icon, '--dot': k.dot } as CSSProperties}>
+                      <k.Icon className="size-[18px]" />
+                    </span>
+                    {/* The card is its own tab: pick it to see just its parties. */}
+                    <button type="button" onClick={() => setTab(on ? 'all' : l.id)} className="min-w-0 flex-1 cursor-pointer text-left" aria-pressed={on}>
+                      <span className="flex items-center gap-2 text-[15px] leading-tight font-extrabold">
+                        <span className="truncate">{l.name}</span>
+                        {!l.enabled && <span className="pl-chip pl-tone-indigo shrink-0 px-2 text-[10.5px]">Off</span>}
+                      </span>
+                      <span className="pl-muted mt-0.5 block truncate text-[12px]">{l.description || 'No description'}</span>
+                    </button>
+                    {canEdit && (
+                      <button type="button" onClick={() => openEdit(l)} className="pl-eye shrink-0" aria-label={`Edit ${l.name}`} title="Edit list">
+                        <Pencil className="size-4" />
                       </button>
-                      {canEdit && (
-                        <button type="button" onClick={() => openEdit(l)} className="text-muted-foreground hover:text-foreground shrink-0 rounded p-1" aria-label="Edit list"><Pencil className="size-3.5" /></button>
-                      )}
+                    )}
+                  </div>
+                  <div className="flex items-end justify-between gap-3">
+                    <div className="flex items-baseline gap-1.5">
+                      <span className={cn('text-[30px] leading-none font-extrabold tabular-nums', k.num)}>{c.members}</span>
+                      <span className="pl-muted text-[12px] font-semibold">parties</span>
                     </div>
-                    <div className="mt-2.5 flex items-end justify-between">
-                      <div>
-                        <div className="rp-money-value text-2xl font-bold tabular-nums leading-none max-sm:mt-0">{c?.members ?? 0}</div>
-                        <div className="text-muted-foreground text-xs">parties</div>
-                      </div>
-                      <div className="text-right">
-                        <div className="font-semibold tabular-nums" title={inrFull(c?.outstanding ?? 0)}>{inrCompact(c?.outstanding ?? 0)}</div>
-                        <div className="text-muted-foreground text-xs">outstanding</div>
-                      </div>
+                    <div className="flex items-baseline gap-1.5" title={inrFull(c.outstanding)}>
+                      <span className="text-[16px] font-extrabold tabular-nums">{inrCompact(c.outstanding)}</span>
+                      <span className="pl-muted text-[12px] font-semibold">outstanding</span>
                     </div>
-                    <div className="text-muted-foreground mt-2 border-t pt-2 text-[11px]">
-                      Matches <strong>{l.match === 'ALL' ? 'ALL' : 'ANY'}</strong> of {l.conditions.length} condition{l.conditions.length === 1 ? '' : 's'}
-                    </div>
+                  </div>
+                  <span className="pl-kpi-track mt-0" role="img" aria-label={`${c.members} of ${parties.length} parties`}>
+                    <span style={{ width: `${parties.length ? (c.members / parties.length) * 100 : 0}%`, background: k.bar }} />
+                  </span>
+                  <div className="flex flex-wrap items-center gap-1.5">
+                    <span className="pl-chip pl-tone-indigo px-2 text-[11px]">Match {l.match}</span>
+                    {l.conditions.map((cond, j) => (
+                      <span key={j} className="pls-cond">
+                        {condText(cond)}
+                      </span>
+                    ))}
                   </div>
                 </div>
               );
             })}
-          </div>
+            {canEdit && (
+              <button type="button" className="pls-new flex flex-col items-center justify-center gap-2.5" onClick={openNew}>
+                <span className="pls-new-plus">
+                  <Plus className="size-5" />
+                </span>
+                Create a new list
+              </button>
+            )}
+          </section>
 
-          {/* Party table with filter tabs */}
-          <div className="bg-card rp-glass overflow-hidden rounded-xl border shadow-sm max-sm:rounded-[22px] max-sm:border-0 max-sm:shadow-none">
-            <div className="flex flex-wrap items-center gap-2 border-b bg-gradient-to-r from-slate-50 to-transparent px-3 py-2.5 max-sm:border-b-0 max-sm:bg-none">
-              <div className="rp-noscroll flex flex-wrap gap-1 max-sm:flex-nowrap max-sm:gap-2 max-sm:overflow-x-auto">
-                <TabBtn active={tab === 'all'} onClick={() => setTab('all')}>All · {parties.length}</TabBtn>
-                {lists.map((l) => <TabBtn key={l.id} active={tab === l.id} onClick={() => setTab(l.id)} dot={kindStyle(l).dot}>{l.name.split('—')[0].trim()} · {counts.m.get(l.id)?.members ?? 0}</TabBtn>)}
-                <TabBtn active={tab === 'unclassified'} onClick={() => setTab('unclassified')}>Unlisted · {counts.unclassified}</TabBtn>
+          {/* ── The parties, under list tabs ── */}
+          <section className="pl-ledger overflow-hidden">
+            <div className="pls-toolbar flex flex-wrap items-center gap-2.5 px-3 py-2.5">
+              <div className="rp-noscroll flex max-w-full gap-1.5 overflow-x-auto max-sm:w-full">
+                <TabBtn on={tab === 'all'} onClick={() => setTab('all')} label="All" count={parties.length} />
+                {lists.map((l) => (
+                  <TabBtn key={l.id} on={tab === l.id} onClick={() => setTab(l.id)} label={shortName(l.name)} count={counts.m.get(l.id)?.members ?? 0} dot={KIND[l.kind].dot} />
+                ))}
+                <TabBtn on={tab === 'unclassified'} onClick={() => setTab('unclassified')} label="Unlisted" count={counts.unclassified} dot="#cbd5e1" />
               </div>
-              <div className="relative ml-auto w-full sm:w-56">
-                <Search className="text-muted-foreground pointer-events-none absolute top-1/2 left-3 size-4 -translate-y-1/2" />
-                <Input placeholder="Search party or agent…" className="rp-control h-9 pl-9" value={search} onChange={(e) => setSearch(e.target.value)} />
-              </div>
+              <label className="pls-search ml-auto w-full sm:w-[300px]">
+                <span className="sr-only">Search party or agent</span>
+                <Search className="pl-muted pointer-events-none absolute top-1/2 left-3 size-4 -translate-y-1/2" />
+                <input placeholder="Search party or agent…" value={search} onChange={(e) => setSearch(e.target.value)} />
+              </label>
             </div>
-            <PartyTable rows={filtered} lists={lists} />
-          </div>
+            <PartyTable rows={filtered} listById={listById} />
+          </section>
         </>
       )}
 
-      {builderOpen && <ListBuilder lists={lists} editing={editing} onClose={() => setBuilderOpen(false)} />}
+      {builderOpen && <ListBuilder lists={lists} parties={parties} editing={editing} onClose={() => setBuilderOpen(false)} />}
     </div>
   );
 }
 
-function TabBtn({ active, onClick, children, dot }: { active: boolean; onClick: () => void; children: React.ReactNode; dot?: string }) {
+function TabBtn({ on, onClick, label, count, dot }: { on: boolean; onClick: () => void; label: string; count: number; dot?: string }) {
   return (
-    <button type="button" data-on={active} onClick={onClick} className={cn('rp-fpill inline-flex items-center gap-1.5 rounded-lg px-2.5 py-1 text-xs font-medium transition-colors', active ? 'bg-primary text-primary-foreground' : 'text-muted-foreground hover:bg-slate-100')}>
-      {dot && <span className={cn('size-2 rounded-full', dot)} />}{children}
+    <button type="button" aria-pressed={on} onClick={onClick} className="pls-tab">
+      {dot && <span className="size-2 shrink-0 rounded-full" style={{ background: dot, boxShadow: on ? '0 0 0 2px rgba(255,255,255,.6)' : undefined }} />}
+      {label}
+      <span className="pls-tab-n">{count}</span>
     </button>
   );
 }
 
-/* ── Party table ─────────────────────────────────────────────────────────────── */
+/* ── The parties ─────────────────────────────────────────────────────────────── */
 
-const TABLE_METRICS: PartyMetricKey[] = ['outstanding', 'overdue', 'oldestOverdueDays', 'lifetimeRevenue', 'collectionRate', 'avgPaymentDays', 'brokenPromises'];
+/** The grid's figures, in order. Days past credit sits beside the oldest overdue
+ *  so a party put on a list by the credit-period rule shows why. */
+const TABLE_METRICS: PartyMetricKey[] = ['outstanding', 'overdue', 'oldestOverdueDays', 'daysPastCredit', 'lifetimeRevenue', 'collectionRate', 'avgPaymentDays', 'brokenPromises'];
+/** The same figures on a phone card, where a column is a third of the screen. */
+const SHORT_LABEL: Partial<Record<PartyMetricKey, string>> = {
+  outstanding: 'Outstanding', overdue: 'Overdue', oldestOverdueDays: 'Oldest due', daysPastCredit: 'Past credit',
+  lifetimeRevenue: 'Revenue', collectionRate: 'Collected', avgPaymentDays: 'Avg pay', brokenPromises: 'Broken',
+};
+type Level = 'ok' | 'warn' | 'bad';
+const LEVEL_CHIP: Record<Level, string> = { ok: 'pl-tone-emerald', warn: 'pls-tone-amber', bad: 'pl-tone-rose' };
+const LEVEL_BAR: Record<Level, string> = {
+  ok: 'linear-gradient(90deg,#6ee7b7,#10b981)',
+  warn: 'linear-gradient(90deg,#fcd34d,#f59e0b)',
+  bad: 'linear-gradient(90deg,#fb7185,#e11d48)',
+};
+const LEVEL_TEXT: Record<Level, string> = { ok: 'text-[#047857] dark:text-emerald-400', warn: 'text-[#b45309] dark:text-amber-400', bad: 'text-[#be123c] dark:text-rose-400' };
 
-function PartyTable({ rows, lists }: { rows: PartyClassRow[]; lists: PartyListDef[] }) {
-  const listById = useMemo(() => new Map(lists.map((l) => [l.id, l])), [lists]);
-  if (rows.length === 0) return <div className="text-muted-foreground py-12 text-center text-sm">No parties here.</div>;
+/** One figure, drawn the way the mockup draws that kind of figure: a bar behind
+ *  money, a toned chip for days and promises, a toned bar for the collection rate. */
+function MetricCell({ k, p, maxOut, maxRev }: { k: PartyMetricKey; p: PartyClassRow; maxOut: number; maxRev: number }) {
+  const m = p.metrics;
+  const v = (m as unknown as Record<string, number | null>)[k];
+  const title = typeOf(k) === 'money' && v != null ? inrFull(Number(v)) : k === 'daysPastCredit' && m.creditPeriod != null ? `Credit period ${m.creditPeriod} days` : undefined;
+  const bar = (w: number, bg: string) => (
+    <span className="pls-mbar">
+      <span style={{ width: `${Math.max(0, Math.min(100, w))}%`, background: bg }} />
+    </span>
+  );
+  if (v == null) return <span className="text-[#c3c9d6] dark:text-slate-600">—</span>;
+  const n = Number(v);
+  switch (k) {
+    case 'outstanding':
+      return (
+        <span title={title}>
+          <span className="font-extrabold">{fmtMetric(k, n)}</span>
+          {bar((n / maxOut) * 100, 'linear-gradient(90deg,#8ea0f8,#3b4fd8)')}
+        </span>
+      );
+    case 'lifetimeRevenue':
+      return (
+        <span title={title}>
+          <span className="font-bold text-[#3a4256] dark:text-slate-300">{fmtMetric(k, n)}</span>
+          {bar((n / maxRev) * 100, 'linear-gradient(90deg,#c4b5fd,#7c3aed)')}
+        </span>
+      );
+    case 'overdue':
+      return n > 0 ? (
+        <span title={title}>
+          <span className="font-extrabold text-[#be123c] dark:text-rose-400">{fmtMetric(k, n)}</span>
+          {bar((n / (m.outstanding || 1)) * 100, 'linear-gradient(90deg,#fb7185,#e11d48)')}
+        </span>
+      ) : (
+        <span className="font-bold text-[#047857] dark:text-emerald-400">Nil</span>
+      );
+    case 'collectionRate': {
+      const lvl: Level = n >= 90 ? 'ok' : n >= 70 ? 'warn' : 'bad';
+      return (
+        <span>
+          <span className={cn('font-extrabold', LEVEL_TEXT[lvl])}>{fmtMetric(k, n)}</span>
+          {bar(n, LEVEL_BAR[lvl])}
+        </span>
+      );
+    }
+    case 'oldestOverdueDays':
+    case 'daysPastCredit':
+    case 'avgPaymentDays': {
+      if (k !== 'avgPaymentDays' && n <= 0) return <span className="text-[#c3c9d6] dark:text-slate-600" title={title}>—</span>;
+      const lvl: Level =
+        k === 'avgPaymentDays' ? (n > 45 ? 'bad' : n > 30 ? 'warn' : 'ok') : k === 'oldestOverdueDays' ? (n >= 60 ? 'bad' : n >= 30 ? 'warn' : 'ok') : n >= 30 ? 'bad' : 'warn';
+      return (
+        <span className={cn('pl-chip px-2 text-[12.5px]', LEVEL_CHIP[lvl])} title={title}>
+          {fmtMetric(k, n)}
+        </span>
+      );
+    }
+    case 'brokenPromises':
+      return n ? <span className={cn('pl-chip px-2 text-[12.5px]', LEVEL_CHIP[n >= 3 ? 'bad' : 'warn'])}>{n}</span> : <span className="font-semibold text-[#94a3b8]">0</span>;
+    default:
+      return <span className="font-bold">{fmtMetric(k, n)}</span>;
+  }
+}
+
+function ListChips({ p, listById }: { p: PartyClassRow; listById: Map<string, PartyListDef> }) {
+  if (!p.matched.length) return <span className="pl-muted text-[11px] font-semibold">Unlisted</span>;
+  return (
+    <span className="flex flex-wrap gap-1">
+      {p.matched.map((id) => {
+        const l = listById.get(id);
+        if (!l) return null;
+        return (
+          <span key={id} className={cn('pl-chip gap-1 px-2 text-[11px]', KIND[l.kind].chip)}>
+            <span className="size-1.5 rounded-full" style={{ background: l.kind === 'BLACK' ? '#fff' : KIND[l.kind].dot }} />
+            {shortName(l.name)}
+          </span>
+        );
+      })}
+    </span>
+  );
+}
+
+type SortKey = 'party' | PartyMetricKey;
+
+function PartyTable({ rows, listById }: { rows: PartyClassRow[]; listById: Map<string, PartyListDef> }) {
+  // Biggest exposure first, as the mockup opens; any column re-sorts it.
+  const [sort, setSort] = useState<{ key: SortKey; dir: 1 | -1 }>({ key: 'outstanding', dir: -1 });
+  const sorted = useMemo(() => {
+    const val = (p: PartyClassRow) => (p.metrics as unknown as Record<string, number | null>)[sort.key] ?? -1;
+    return [...rows].sort((a, b) => (sort.key === 'party' ? a.party.localeCompare(b.party) : Number(val(a)) - Number(val(b))) * sort.dir);
+  }, [rows, sort]);
+  const maxOut = Math.max(1, ...rows.map((p) => p.metrics.outstanding));
+  const maxRev = Math.max(1, ...rows.map((p) => p.metrics.lifetimeRevenue));
+  const sortBy = (key: SortKey) => setSort((s) => (s.key === key ? { key, dir: s.dir === 1 ? -1 : 1 } : { key, dir: key === 'party' ? 1 : -1 }));
+
+  if (rows.length === 0) return <div className="pl-muted py-12 text-center text-[13.5px] font-semibold">No parties here.</div>;
+
+  const head = (key: SortKey, label: string, right = false) => {
+    const on = sort.key === key;
+    return (
+      <th key={key} scope="col" className={cn('pl-th top-0', right ? 'text-right' : 'text-left')} aria-sort={on ? (sort.dir === 1 ? 'ascending' : 'descending') : 'none'}>
+        <button type="button" className={cn('pls-sort', right && 'flex-row-reverse')} onClick={() => sortBy(key)}>
+          {label}
+          <span className={cn('text-[9px]', on ? 'opacity-100' : 'opacity-35')}>{on && sort.dir === 1 ? '▲' : '▼'}</span>
+        </button>
+      </th>
+    );
+  };
+
   return (
     <>
-      {/* Phones get a card each — the table below is 900px wide and would only
-          be readable sideways. Same seven metrics, stacked three to a row. */}
-      <div className="flex flex-col gap-3 p-3 sm:hidden">
-        {rows.map((p) => {
+      {/* Desktop: the grid, only this region scrolling sideways. */}
+      <div className="hidden max-h-[70vh] overflow-auto [scrollbar-width:thin] sm:block">
+        <table className="pl-table min-w-[1180px]">
+          <thead>
+            <tr>
+              {head('party', 'Party')}
+              <th scope="col" className="pl-th top-0 text-left">
+                Lists
+              </th>
+              {TABLE_METRICS.map((k) => head(k, META_BY_KEY.get(k)?.label ?? k, true))}
+            </tr>
+          </thead>
+          <tbody>
+            {sorted.map((p, i) => {
+              const st = STANDING[standingOf(p.metrics)];
+              return (
+                <tr key={p.party} className="pl-tr" style={{ '--rail': st.dot, animationDelay: `${Math.min(i, 14) * 25}ms` } as CSSProperties}>
+                  <td className="pl-td">
+                    <span className="flex min-w-0 items-center gap-2.5">
+                      <span className={cn('pls-av', st.av)} title={st.label}>
+                        {initials(p.party)}
+                        <span className="pls-av-dot" style={{ background: st.dot }} />
+                      </span>
+                      <span className="flex min-w-0 flex-col">
+                        <span className="max-w-[260px] truncate text-[14px] font-extrabold">{p.party}</span>
+                        <span className="pl-muted truncate text-[11.5px] font-semibold">
+                          {p.metrics.agent || 'No agent'} • {p.metrics.region || '—'}
+                        </span>
+                      </span>
+                    </span>
+                  </td>
+                  <td className="pl-td">
+                    <ListChips p={p} listById={listById} />
+                  </td>
+                  {TABLE_METRICS.map((k) => (
+                    <td key={k} className="pl-td text-right text-[13.5px] whitespace-nowrap tabular-nums">
+                      <MetricCell k={k} p={p} maxOut={maxOut} maxRev={maxRev} />
+                    </td>
+                  ))}
+                </tr>
+              );
+            })}
+          </tbody>
+        </table>
+      </div>
+
+      {/* Phones: a card each, the same figures three to a row. */}
+      <div className="flex flex-col gap-2 p-2 sm:hidden">
+        {sorted.map((p, i) => {
+          const st = STANDING[standingOf(p.metrics)];
           const m = p.metrics as unknown as Record<string, number | null>;
-          const tone: SkinTone = Number(m.overdue) > 0 ? 'rose' : Number(m.brokenPromises) > 0 ? 'amber' : 'emerald';
           return (
-            <div key={p.party} className="rp-party">
-              <span aria-hidden className="rp-rail" style={{ background: SKIN_TONE[tone].grad }} />
-              <div className="rp-party-head">
-                <span className="rp-avatar" style={toneSurface(tone)}>{initials(p.party)}</span>
-                <div className="min-w-0 flex-1">
-                  <div className="rp-party-name truncate">{p.party}</div>
-                  <div className="rp-party-sub truncate">{p.metrics.agent || 'No agent'}{p.metrics.region ? ` · ${p.metrics.region}` : ''}</div>
-                </div>
+            <div key={p.party} className="pl-card" style={{ '--rail': st.dot, animationDelay: `${Math.min(i, 14) * 25}ms` } as CSSProperties}>
+              <div className="flex items-center gap-2.5">
+                <span className={cn('pls-av', st.av)} title={st.label}>
+                  {initials(p.party)}
+                  <span className="pls-av-dot" style={{ background: st.dot }} />
+                </span>
+                <span className="flex min-w-0 flex-col">
+                  <span className="truncate text-[15px] leading-tight font-extrabold">{p.party}</span>
+                  <span className="pl-muted truncate text-[12px] font-semibold">
+                    {p.metrics.agent || 'No agent'}
+                    {p.metrics.region ? ` · ${p.metrics.region}` : ''}
+                  </span>
+                </span>
               </div>
-              <div className="rp-item">
-                {p.matched.length > 0 && (
-                  <div className="mb-2 flex flex-wrap gap-1">
-                    {p.matched.map((id) => {
-                      const l = listById.get(id);
-                      if (!l) return null;
-                      const st = kindStyle(l);
-                      return <span key={id} className={cn('inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-[11px] font-semibold ring-1 ring-inset', st.chip)}><span className={cn('size-1.5 rounded-full', l.kind === 'BLACK' ? 'bg-white' : st.dot)} />{l.name.split('—')[0].trim()}</span>;
-                    })}
-                  </div>
-                )}
-                <div className="rp-row-stats grid-cols-3" style={{ marginTop: 0, paddingTop: 0, borderTop: 0 }}>
-                  {TABLE_METRICS.map((k) => {
-                    const v = m[k];
-                    const danger = (k === 'overdue' && Number(v) > 0) || (k === 'brokenPromises' && Number(v) > 0) || (k === 'oldestOverdueDays' && Number(v) >= 60);
-                    return (
-                      <div key={k} className="min-w-0">
-                        <div className="rp-stat-label">{META_BY_KEY.get(k)?.label}</div>
-                        <div className="rp-stat-value" style={danger ? { color: SKIN_TONE.rose.fg, fontWeight: 800 } : undefined}>{fmtMetric(k, v)}</div>
-                      </div>
-                    );
-                  })}
+              {p.matched.length > 0 && (
+                <div className="mt-2">
+                  <ListChips p={p} listById={listById} />
                 </div>
+              )}
+              <div className="pl-card-sum mt-2.5 grid grid-cols-3 gap-x-3 gap-y-2 pt-2.5">
+                {TABLE_METRICS.map((k) => {
+                  const v = m[k];
+                  const danger = (k === 'overdue' && Number(v) > 0) || (k === 'brokenPromises' && Number(v) > 0) || (k === 'oldestOverdueDays' && Number(v) >= 60) || (k === 'daysPastCredit' && Number(v) > 0);
+                  return (
+                    <div key={k} className="min-w-0">
+                      <div className="pl-mlabel truncate" title={META_BY_KEY.get(k)?.label}>{SHORT_LABEL[k] ?? META_BY_KEY.get(k)?.label}</div>
+                      <div className={cn('text-[14px] font-extrabold tabular-nums', danger && 'text-[#be123c] dark:text-rose-400')}>{fmtMetric(k, v)}</div>
+                    </div>
+                  );
+                })}
               </div>
             </div>
           );
         })}
       </div>
-
-    <div className="overflow-x-auto max-sm:hidden">
-      <table className="w-full min-w-[900px] text-sm">
-        <thead>
-          <tr className="text-muted-foreground border-b text-left text-xs uppercase tracking-wide">
-            <th className="py-2 pl-3 pr-3 font-semibold">Party</th>
-            <th className="py-2 pr-3 font-semibold">Lists</th>
-            {TABLE_METRICS.map((k) => <th key={k} className="py-2 pr-3 text-right font-semibold">{META_BY_KEY.get(k)?.label}</th>)}
-          </tr>
-        </thead>
-        <tbody>
-          {rows.map((p) => (
-            <tr key={p.party} className="border-b last:border-0 hover:bg-slate-50/60">
-              <td className="py-2 pl-3 pr-3">
-                <div className="flex items-center gap-2">
-                  <span className="bg-primary/10 text-primary flex size-7 shrink-0 items-center justify-center rounded-full text-[11px] font-bold">{initials(p.party)}</span>
-                  <span className="min-w-0">
-                    <span className="block truncate font-medium">{p.party}</span>
-                    <span className="text-muted-foreground block truncate text-xs">{p.metrics.agent || 'No agent'}{p.metrics.region ? ` · ${p.metrics.region}` : ''}</span>
-                  </span>
-                </div>
-              </td>
-              <td className="py-2 pr-3">
-                <div className="flex flex-wrap gap-1">
-                  {p.matched.length === 0 && <span className="text-muted-foreground text-xs">—</span>}
-                  {p.matched.map((id) => {
-                    const l = listById.get(id);
-                    if (!l) return null;
-                    const st = kindStyle(l);
-                    return <span key={id} className={cn('inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-[11px] font-semibold ring-1 ring-inset', st.chip)}><span className={cn('size-1.5 rounded-full', l.kind === 'BLACK' ? 'bg-white' : st.dot)} />{l.name.split('—')[0].trim()}</span>;
-                  })}
-                </div>
-              </td>
-              {TABLE_METRICS.map((k) => {
-                const v = (p.metrics as unknown as Record<string, number | null>)[k];
-                const danger = (k === 'overdue' && Number(v) > 0) || (k === 'brokenPromises' && Number(v) > 0) || (k === 'oldestOverdueDays' && Number(v) >= 60);
-                return <td key={k} className={cn('py-2 pr-3 text-right tabular-nums', danger && 'text-rose-600 font-semibold')} title={typeOf(k) === 'money' && v != null ? inrFull(Number(v)) : undefined}>{fmtMetric(k, v)}</td>;
-              })}
-            </tr>
-          ))}
-        </tbody>
-      </table>
-    </div>
     </>
   );
 }
 
-/* ── List builder dialog ─────────────────────────────────────────────────────── */
+/* ── The list editor ─────────────────────────────────────────────────────────── */
 
 const newCondition = (): PartyCondition => ({ field: 'outstanding', op: '>=', value: 0 });
+const FIELD_OPTIONS = PARTY_METRIC_META.map((m) => ({ value: m.key, label: m.label }));
 
-function ListBuilder({ lists, editing, onClose }: { lists: PartyListDef[]; editing: PartyListDef | null; onClose: () => void }) {
+function ListBuilder({ lists, parties, editing, onClose }: { lists: PartyListDef[]; parties: PartyClassRow[]; editing: PartyListDef | null; onClose: () => void }) {
   const save = useSavePartyListsConfig();
   const confirm = useConfirm();
   const [name, setName] = useState(editing?.name ?? '');
@@ -297,24 +536,40 @@ function ListBuilder({ lists, editing, onClose }: { lists: PartyListDef[]; editi
 
   const patchCond = (i: number, p: Partial<PartyCondition>) => setConditions((cs) => cs.map((c, j) => (j === i ? { ...c, ...p } : c)));
   const setField = (i: number, field: PartyMetricKey) => {
-    const ops = OPERATORS_FOR_TYPE[typeOf(field)];
     const t = typeOf(field);
-    patchCond(i, { field, op: ops[0], value: t === 'text' ? '' : t === 'bool' ? 'true' : 0 });
+    patchCond(i, { field, op: OPERATORS_FOR_TYPE[t][0], value: t === 'text' ? '' : t === 'bool' ? 'true' : 0 });
   };
 
+  // The live preview: who this list would hold if saved now, by the server's rule.
+  const draft = conditions.map(normalized);
+  const hit = parties.filter((p) => matchPartyList({ match, conditions: draft }, p.metrics)).length;
+
   const persist = (nextLists: PartyListDef[]) =>
-    save.mutate({ lists: nextLists }, { onSuccess: () => { toast.success('Saved'); onClose(); }, onError: (e) => toast.error(getApiErrorMessage(e, 'Failed')) });
+    save.mutate(
+      { lists: nextLists },
+      {
+        onSuccess: () => {
+          toast.success('Saved');
+          onClose();
+        },
+        onError: (e) => toast.error(getApiErrorMessage(e, 'Failed')),
+      },
+    );
 
   const submit = () => {
     if (!name.trim()) return toast.error('Give the list a name.');
     if (conditions.length === 0) return toast.error('Add at least one condition.');
     const def: PartyListDef = {
       id: editing?.id ?? `list-${Math.random().toString(36).slice(2, 9)}`,
-      name: name.trim(), kind, color: null, description: description.trim() || null, match, enabled,
-      conditions: conditions.map((c) => ({ field: c.field, op: c.op, value: typeOf(c.field) === 'text' || typeOf(c.field) === 'bool' ? String(c.value) : Number(c.value) })),
+      name: name.trim(),
+      kind,
+      color: null,
+      description: description.trim() || null,
+      match,
+      enabled,
+      conditions: conditions.map((c) => ({ ...normalized(c), value: typeOf(c.field) === 'text' || typeOf(c.field) === 'bool' ? String(c.value) : Number(c.value) })),
     };
-    const next = editing ? lists.map((l) => (l.id === editing.id ? def : l)) : [...lists, def];
-    persist(next);
+    persist(editing ? lists.map((l) => (l.id === editing.id ? def : l)) : [...lists, def]);
   };
 
   useSaveShortcut(submit);
@@ -325,102 +580,134 @@ function ListBuilder({ lists, editing, onClose }: { lists: PartyListDef[]; editi
     persist(lists.filter((l) => l.id !== editing.id));
   };
 
+  const last = conditions[conditions.length - 1];
+  const lastMeta = last ? META_BY_KEY.get(last.field) : undefined;
+
   return (
     <Dialog open onOpenChange={(o) => !o && onClose()}>
-      <DialogContent className="max-h-[92vh] w-[calc(100vw-2rem)] sm:max-w-2xl">
-        <DialogHeader>
-          <DialogTitle>{editing ? 'Edit list' : 'New party list'}</DialogTitle>
-          <DialogDescription>Name it, pick a type, then add the conditions a party must meet.</DialogDescription>
-        </DialogHeader>
+      <DialogContent className="pls-page w-[calc(100vw-1rem)] gap-0 overflow-hidden rounded-[22px] p-0 sm:max-w-[760px]">
+        <div className="pls-dlg-head" style={{ '--head': KIND[kind].head } as CSSProperties}>
+          <DialogTitle className="text-[18px] font-extrabold text-white">{editing ? 'Edit list' : 'New party list'}</DialogTitle>
+          <DialogDescription className="mt-0.5 text-[12.5px] text-white/80">Name it, pick a type, then add the conditions a party must meet.</DialogDescription>
+          <div className="mt-3 flex items-baseline gap-2">
+            <span className="text-[22px] font-extrabold tabular-nums">{hit}</span>
+            <span className="text-[12.5px] font-semibold text-white/85">
+              of {parties.length} parties match right now{enabled ? '' : ' (list is off)'}
+            </span>
+          </div>
+        </div>
 
-        <div className="-mx-1 max-h-[68vh] space-y-4 overflow-y-auto px-1 pb-1">
-          <div className="grid gap-3 sm:grid-cols-2">
-            <div className="space-y-1">
-              <Label className="text-xs">List name</Label>
-              <Input value={name} onChange={(e) => setName(e.target.value)} placeholder="e.g. Green — Trusted payers" autoFocus />
-            </div>
-            <div className="space-y-1">
-              <Label className="text-xs">Type</Label>
+        <div className="max-h-[62vh] space-y-3.5 overflow-y-auto bg-[#f3f6fb] p-3.5 sm:p-4 dark:bg-transparent">
+          <section className="pls-sec grid gap-3 p-3.5 sm:grid-cols-2">
+            <label className="flex flex-col gap-1.5">
+              <span className="pls-label">List name</span>
+              <input className="pls-input" value={name} onChange={(e) => setName(e.target.value)} placeholder="e.g. Black — Crossed credit" autoFocus />
+            </label>
+            <div className="flex flex-col gap-1.5">
+              <span className="pls-label">Type</span>
               <div className="grid grid-cols-3 gap-1.5">
-                {(['GREEN', 'BLACK', 'CUSTOM'] as PartyListKind[]).map((k) => {
-                  const st = kindStyle({ kind: k, color: null });
-                  return (
-                    <button key={k} type="button" onClick={() => setKind(k)} className={cn('inline-flex h-9 items-center justify-center gap-1 rounded-lg border text-xs font-semibold capitalize transition-colors', kind === k ? cn(st.chip, 'ring-2') : 'bg-white text-slate-600 hover:bg-slate-50')}>
-                      {st.icon} {k.toLowerCase()}
-                    </button>
-                  );
-                })}
+                {(['GREEN', 'BLACK', 'CUSTOM'] as PartyListKind[]).map((k) => (
+                  <button key={k} type="button" aria-pressed={kind === k} onClick={() => setKind(k)} className={cn('pls-kind', kind === k && KIND[k].chip)} style={{ '--dot': KIND[k].dot } as CSSProperties}>
+                    <span className="size-[9px] rounded-full" style={{ background: kind === k && k === 'BLACK' ? '#fff' : KIND[k].dot }} />
+                    {KIND[k].label}
+                  </button>
+                ))}
               </div>
             </div>
-          </div>
+            <label className="flex flex-col gap-1.5 sm:col-span-2">
+              <span className="pls-label">Description (optional)</span>
+              <input className="pls-input text-[13.5px] font-semibold" value={description} onChange={(e) => setDescription(e.target.value)} placeholder="What this list is for…" />
+            </label>
+          </section>
 
-          <div className="space-y-1">
-            <Label className="text-xs">Description (optional)</Label>
-            <Input value={description} onChange={(e) => setDescription(e.target.value)} placeholder="What this list is for…" />
-          </div>
-
-          <div className="rounded-xl border bg-slate-50/60 p-3">
-            <div className="mb-2 flex items-center gap-2">
-              <span className="text-sm font-semibold">Conditions</span>
-              <div className="ml-1 flex rounded-lg border bg-white p-0.5 text-xs">
+          <section className="pls-sec flex flex-col gap-2.5 p-3.5">
+            <div className="flex flex-wrap items-center gap-2.5">
+              <span className="text-[14px] font-extrabold">Conditions</span>
+              <div role="group" aria-label="Match" className="pl-seg">
                 {(['ALL', 'ANY'] as const).map((m) => (
-                  <button key={m} type="button" onClick={() => setMatch(m)} className={cn('rounded-md px-2 py-0.5 font-semibold transition-colors', match === m ? 'bg-primary text-primary-foreground' : 'text-muted-foreground')}>
+                  <button key={m} type="button" aria-pressed={match === m} onClick={() => setMatch(m)} className="pl-seg-btn h-7 px-2.5 text-[12px]">
                     Match {m}
                   </button>
                 ))}
               </div>
-              <span className="text-muted-foreground text-xs">{match === 'ALL' ? 'every condition must hold' : 'any one condition is enough'}</span>
+              <span className="pl-muted text-[12px] font-semibold">{match === 'ALL' ? 'every condition must hold' : 'any one condition is enough'}</span>
             </div>
 
-            <div className="space-y-2">
-              {conditions.map((c, i) => {
-                const t = typeOf(c.field);
-                const ops = OPERATORS_FOR_TYPE[t];
-                return (
-                  <div key={i} className="flex flex-wrap items-center gap-2 rounded-lg border bg-white p-2">
-                    <span className="text-muted-foreground w-6 text-center text-xs font-semibold">{i === 0 ? 'IF' : match === 'ALL' ? 'AND' : 'OR'}</span>
-                    <div className="min-w-[10rem] flex-1">
-                      <NativeSelect
-                        value={c.field}
-                        onChange={(v) => setField(i, v as PartyMetricKey)}
-                        options={PARTY_METRIC_META.map((m) => m.key)}
-                        renderOption={(v) => <span>{META_BY_KEY.get(v as PartyMetricKey)?.label ?? v}</span>}
-                      />
-                    </div>
-                    <div className="w-28">
-                      <NativeSelect value={c.op} onChange={(v) => patchCond(i, { op: v as PartyListOperator })} options={ops} renderOption={(v) => <span>{OP_LABEL[v as PartyListOperator]}</span>} />
-                    </div>
-                    <div className="w-32">
-                      {t === 'bool' ? (
-                        <NativeSelect value={String(c.value)} onChange={(v) => patchCond(i, { value: v })} options={['true', 'false']} renderOption={(v) => <span>{v === 'true' ? 'Yes' : 'No'}</span>} />
-                      ) : t === 'text' ? (
-                        <Input value={String(c.value)} onChange={(e) => patchCond(i, { value: e.target.value })} placeholder="value" />
-                      ) : (
-                        <Input type="number" inputMode="decimal" className="tabular-nums" value={String(c.value)} onChange={(e) => patchCond(i, { value: e.target.value })} placeholder="0" />
-                      )}
-                    </div>
-                    <button type="button" onClick={() => setConditions((cs) => cs.filter((_, j) => j !== i))} className="text-muted-foreground hover:text-destructive rounded p-1" aria-label="Remove"><X className="size-4" /></button>
+            {conditions.map((c, i) => {
+              const t = typeOf(c.field);
+              const unit = UNIT[t];
+              const n = parties.filter((p) => matchPartyCondition(normalized(c), p.metrics)).length;
+              return (
+                <div key={i} className="pls-crow">
+                  <span className="pls-join" data-first={i === 0}>
+                    {i === 0 ? 'IF' : match === 'ALL' ? 'AND' : 'OR'}
+                  </span>
+                  <div className="pl-field min-w-[12rem] flex-1">
+                    <NativeSelect value={c.field} onChange={(v) => setField(i, v as PartyMetricKey)} options={FIELD_OPTIONS} />
                   </div>
-                );
-              })}
-            </div>
-            <Button type="button" variant="outline" className="mt-2 w-full gap-1.5 border-dashed" onClick={() => setConditions((cs) => [...cs, newCondition()])}><Plus className="size-4" /> Add condition</Button>
-            <p className="text-muted-foreground mt-2 text-[11px]">{META_BY_KEY.get(conditions[conditions.length - 1]?.field)?.hint}</p>
-          </div>
+                  <div className="pl-field w-[7.5rem]">
+                    <NativeSelect value={c.op} onChange={(v) => patchCond(i, { op: v as PartyListOperator })} options={OPERATORS_FOR_TYPE[t].map((o) => ({ value: o, label: OP_LABEL[o] }))} />
+                  </div>
+                  <div className={cn('relative w-[7.5rem]', t === 'bool' && 'pl-field')}>
+                    {t === 'bool' ? (
+                      <NativeSelect value={String(c.value)} onChange={(v) => patchCond(i, { value: v })} options={[{ value: 'true', label: 'Yes' }, { value: 'false', label: 'No' }]} />
+                    ) : (
+                      <>
+                        <input
+                          className={cn('pls-input text-[13.5px] tabular-nums', unit && 'pr-7')}
+                          type={t === 'text' ? 'text' : 'number'}
+                          inputMode={t === 'text' ? 'text' : 'decimal'}
+                          value={String(c.value)}
+                          onChange={(e) => patchCond(i, { value: e.target.value })}
+                          placeholder={t === 'text' ? 'value' : '0'}
+                          aria-label="Value"
+                        />
+                        {unit && <span className="pls-unit">{unit}</span>}
+                      </>
+                    )}
+                  </div>
+                  <span className="pls-hits" data-zero={n === 0} title="Parties meeting this condition on its own">
+                    {n} match
+                  </span>
+                  <button type="button" onClick={() => setConditions((cs) => cs.filter((_, j) => j !== i))} className="pl-eye shrink-0" aria-label="Remove condition">
+                    <X className="size-4" />
+                  </button>
+                </div>
+              );
+            })}
+            <button type="button" className="pls-add" onClick={() => setConditions((cs) => [...cs, newCondition()])}>
+              + Add condition
+            </button>
+            {lastMeta && (
+              <p className="pl-muted text-[12px] leading-snug">
+                <strong className="font-extrabold">{lastMeta.label}:</strong> {lastMeta.hint}
+              </p>
+            )}
+          </section>
 
-          <label className="flex items-center gap-2 text-sm">
-            <input type="checkbox" checked={enabled} onChange={(e) => setEnabled(e.target.checked)} className="size-4 rounded border-slate-300" />
-            <CheckCircle2 className={cn('size-4', enabled ? 'text-emerald-500' : 'text-slate-300')} /> List is active (evaluated live)
+          <label className="pls-sec flex cursor-pointer items-center justify-between gap-3 p-3.5">
+            <span>
+              <span className="block text-[14px] font-extrabold">List is active</span>
+              <span className="pl-muted block text-[12px]">Parties are evaluated live against these conditions.</span>
+            </span>
+            <Switch checked={enabled} onCheckedChange={setEnabled} />
           </label>
         </div>
 
-        <DialogFooter className="gap-2 sm:justify-between">
-          {editing ? <Button variant="ghost" className="text-destructive" onClick={remove}><Trash2 className="size-4" /> Delete</Button> : <span />}
-          <div className="flex gap-2">
-            <Button variant="outline" onClick={onClose}>Cancel</Button>
-            <Button onClick={submit} disabled={save.isPending}>{save.isPending ? <Loader2 className="animate-spin" /> : <CheckCircle2 />} Save list</Button>
-          </div>
-        </DialogFooter>
+        <div className="flex items-center gap-2 border-t bg-white/90 px-4 py-3 dark:bg-transparent">
+          {editing && (
+            <button type="button" className="pl-btn text-rose-600 dark:text-rose-400" onClick={remove}>
+              <Trash2 className="size-4" /> Delete
+            </button>
+          )}
+          <span className="flex-1" />
+          <button type="button" className="pl-btn" onClick={onClose}>
+            Cancel
+          </button>
+          <button type="button" className="pl-btn pl-btn-primary px-4 text-[14px]" onClick={submit} disabled={save.isPending}>
+            {save.isPending ? <Loader2 className="size-4 animate-spin" /> : <CheckCircle2 className="size-4" />} Save list
+          </button>
+        </div>
       </DialogContent>
     </Dialog>
   );

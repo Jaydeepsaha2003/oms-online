@@ -13,6 +13,7 @@ export type PartyMetricKey =
   | 'overdue'
   | 'overduePct'
   | 'oldestOverdueDays'
+  | 'daysPastCredit'
   | 'lifetimeRevenue'
   | 'fyRevenue'
   | 'invoiceCount'
@@ -44,7 +45,13 @@ export const PARTY_METRIC_META: PartyMetricMeta[] = [
   { key: 'outstanding', label: 'Outstanding ₹', type: 'money', hint: 'Net receivable across open invoices' },
   { key: 'overdue', label: 'Overdue ₹', type: 'money', hint: 'Balance past its due date' },
   { key: 'overduePct', label: 'Overdue %', type: 'percent', hint: 'Overdue ÷ outstanding' },
-  { key: 'oldestOverdueDays', label: 'Oldest overdue (days)', type: 'days', hint: 'Age of the oldest overdue invoice' },
+  { key: 'oldestOverdueDays', label: 'Oldest overdue (days)', type: 'days', hint: 'Days the oldest overdue invoice is past its due date' },
+  {
+    key: 'daysPastCredit',
+    label: 'Days past credit period',
+    type: 'days',
+    hint: "How far the oldest unpaid bill has run beyond this party's credit period — its age less the credit days (0 while every bill is within credit). E.g. ≥ 15 = crossed credit by 15 days.",
+  },
   { key: 'lifetimeRevenue', label: 'Lifetime revenue ₹', type: 'money', hint: 'All-time confirmed sales' },
   { key: 'fyRevenue', label: 'This-FY revenue ₹', type: 'money', hint: 'Confirmed sales this financial year' },
   { key: 'invoiceCount', label: 'Invoices (lifetime)', type: 'number', hint: 'Count of confirmed sales invoices' },
@@ -108,6 +115,10 @@ export interface PartyMetrics {
   overdue: number;
   overduePct: number | null;
   oldestOverdueDays: number;
+  /** See the `daysPastCredit` metric: 0 while every unpaid bill is within credit. */
+  daysPastCredit: number;
+  /** The party's credit period in days, as its customer record has it. */
+  creditPeriod: number | null;
   lifetimeRevenue: number;
   fyRevenue: number;
   invoiceCount: number;
@@ -123,6 +134,53 @@ export interface PartyMetrics {
   agent: string | null;
   state: string | null;
   active: boolean;
+}
+
+/**
+ * Does a party's metrics meet one condition? The server evaluates the lists
+ * with this and the list editor counts its live "N match" with it, so the two
+ * can never disagree about who is in a list.
+ */
+export function matchPartyCondition(c: PartyCondition, m: PartyMetrics): boolean {
+  const raw = (m as unknown as Record<string, unknown>)[c.field];
+  // Text metrics.
+  if (typeof raw === 'string' || c.op === 'contains' || c.op === 'notContains') {
+    const a = String(raw ?? '').toLowerCase();
+    const b = String(c.value ?? '').toLowerCase();
+    switch (c.op) {
+      case 'contains': return a.includes(b);
+      case 'notContains': return !a.includes(b);
+      case '==': return a === b;
+      case '!=': return a !== b;
+      default: return false;
+    }
+  }
+  // Boolean metrics.
+  if (typeof raw === 'boolean') {
+    const b = c.value === 'true' || c.value === 1 || c.value === '1';
+    return c.op === '!=' ? raw !== b : raw === b;
+  }
+  // Numeric metrics — a null metric (e.g. no receipts yet) never matches, and
+  // neither does a half-typed value.
+  if (raw == null || c.value === '') return false;
+  const a = Number(raw);
+  const b = Number(c.value);
+  if (!Number.isFinite(a) || !Number.isFinite(b)) return false;
+  switch (c.op) {
+    case '>=': return a >= b;
+    case '<=': return a <= b;
+    case '>': return a > b;
+    case '<': return a < b;
+    case '==': return a === b;
+    case '!=': return a !== b;
+    default: return false;
+  }
+}
+
+/** A list matches when ALL (or ANY) of its conditions hold; an empty one never does. */
+export function matchPartyList(list: Pick<PartyListDef, 'match' | 'conditions'>, m: PartyMetrics): boolean {
+  if (!list.conditions.length) return false;
+  return list.match === 'ANY' ? list.conditions.some((c) => matchPartyCondition(c, m)) : list.conditions.every((c) => matchPartyCondition(c, m));
 }
 
 /** One party with its metrics and which lists it currently matches. */

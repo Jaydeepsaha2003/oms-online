@@ -19,10 +19,12 @@ import {
 import { toast } from 'sonner';
 import { GlobalWorkerOptions, getDocument, type PDFDocumentProxy } from 'pdfjs-dist';
 import pdfWorker from 'pdfjs-dist/build/pdf.worker.min.mjs?url';
+import { LEDGER_DUE_FILTERS } from '@oms/shared';
 import type {
   DueFromCalc,
   LedgerBalanceRow,
   LedgerClearedResult,
+  LedgerDueFilter,
   LedgerReceiptLine,
   NoteMode,
   PartyLedgerFooter,
@@ -37,6 +39,7 @@ import { formatDate } from '@/lib/date-format';
 import { usePermissions } from '@/hooks/use-permissions';
 import { DateRangeCalendar } from '@/components/common/date-range-calendar';
 import { NativeSelect } from '@/components/common/combo';
+import type { ComboboxOption } from '@/components/ui/combobox';
 import { Button } from '@/components/ui/button';
 import { Label } from '@/components/ui/label';
 import { Popover, PopoverAnchor, PopoverContent, PopoverTrigger } from '@/components/ui/popover';
@@ -95,10 +98,14 @@ const vtLabel = (vt: string) => vt.toLowerCase().replace(/\b\w/g, (c) => c.toUpp
  * due date, past due is not yet due but under half the credit period left.
  */
 const AGEING = [
-  { key: 'overDue', label: 'Over due', dot: '#e11d48', fg: 'text-rose-700 dark:text-rose-400', bar: 'linear-gradient(90deg,#fb7185,#e11d48)', hint: 'past the due date' },
-  { key: 'pastDue', label: 'Past due', dot: '#f59e0b', fg: 'text-amber-700 dark:text-amber-400', bar: 'linear-gradient(90deg,#fcd34d,#f59e0b)', hint: 'under half the credit left' },
-  { key: 'normal', label: 'Normal due', dot: '#10b981', fg: 'text-emerald-700 dark:text-emerald-400', bar: 'linear-gradient(90deg,#6ee7b7,#10b981)', hint: 'within terms' },
+  { key: 'overDue', due: 'OVERDUE', label: 'Over due', dot: '#e11d48', fg: 'text-rose-700 dark:text-rose-400', bar: 'linear-gradient(90deg,#fb7185,#e11d48)', hint: 'past the due date' },
+  { key: 'pastDue', due: 'PAST DUE', label: 'Past due', dot: '#f59e0b', fg: 'text-amber-700 dark:text-amber-400', bar: 'linear-gradient(90deg,#fcd34d,#f59e0b)', hint: 'under half the credit left' },
+  { key: 'normal', due: 'NORMAL', label: 'Normal due', dot: '#10b981', fg: 'text-emerald-700 dark:text-emerald-400', bar: 'linear-gradient(90deg,#6ee7b7,#10b981)', hint: 'within terms' },
 ] as const;
+
+/** The Due type choices, labelled for the combo. */
+const DUE_OPTIONS: ComboboxOption[] = LEDGER_DUE_FILTERS.map((f) => ({ value: f.value, label: f.label }));
+const dueLabelOf = (v: string) => LEDGER_DUE_FILTERS.find((f) => f.value === v)?.label ?? v;
 
 /** Text size for the ledger (A · A · A), remembered per device. */
 const ZOOM_KEY = 'oms:ledger-zoom';
@@ -256,6 +263,7 @@ function useLedgerFilters() {
     to: get('to', ymd(new Date())),
     mode: get('mode', 'BOTH') as 'BOTH' | 'B' | 'C',
     voucherType: get('vtype', ''),
+    dueType: get('due', '') as LedgerDueFilter | '',
     preset: get('preset', ''),
     showBalance: params.get('balance') === '1',
   };
@@ -273,6 +281,7 @@ function useLedgerFilters() {
     if (changes.to !== undefined) write('to', changes.to);
     if (changes.mode !== undefined) write('mode', changes.mode === 'BOTH' ? '' : changes.mode);
     if (changes.voucherType !== undefined) write('vtype', changes.voucherType);
+    if (changes.dueType !== undefined) write('due', changes.dueType);
     if (changes.preset !== undefined) write('preset', changes.preset);
     if (changes.showBalance !== undefined) write('balance', changes.showBalance ? '1' : '');
     setParams(next, { replace: true });
@@ -289,7 +298,7 @@ export function PartyLedgerPage() {
   // Off by default (`balance=1` in the URL turns it on): the running Balance per
   // transaction is a detail, not something every glance at the ledger needs —
   // Closing Balance (the actual bottom line) always shows regardless.
-  const { party, agent, group, from, to, mode, voucherType, preset, showBalance, patch, clear } =
+  const { party, agent, group, from, to, mode, voucherType, dueType, preset, showBalance, patch, clear } =
     useLedgerFilters();
   const [receiptFor, setReceiptFor] = useState<PartyLedgerRow | null>(null);
   /** Which period chip has its picker open — the desktop bar's or the phone's. */
@@ -325,8 +334,9 @@ export function PartyLedgerPage() {
       to,
       mode,
       voucherType: voucherType || undefined,
+      dueType: dueType || undefined,
     }),
-    [party, agent, group, from, to, mode, voucherType, custByName, groupByName],
+    [party, agent, group, from, to, mode, voucherType, dueType, custByName, groupByName],
   );
 
   const { data, isFetching } = usePartyLedger(query);
@@ -364,6 +374,7 @@ export function PartyLedgerPage() {
     params.set('to', q.to);
     if (q.mode) params.set('mode', q.mode);
     if (q.voucherType) params.set('voucherType', q.voucherType);
+    if (q.dueType) params.set('dueType', q.dueType);
     return `/party-ledger/export.${fmt}?${params.toString()}`;
   };
   const [pdfLoading, setPdfLoading] = useState(false);
@@ -617,13 +628,15 @@ export function PartyLedgerPage() {
 
   const modeLabel = mode === 'BOTH' ? 'Bank & Cash' : mode === 'B' ? 'Bank' : 'Cash';
   /** Filters that live in the phone's sheet, counted on its button. */
-  const sheetFilters = [agent && agent !== 'All', group, voucherType].filter(Boolean).length;
+  const sheetFilters = [agent && agent !== 'All', group, voucherType, dueType].filter(Boolean).length;
+  /** What a partial list is limited to, for the Current Total line. */
+  const onlyLabel = [voucherType, dueType && dueLabelOf(dueType)].filter(Boolean).join(' · ');
   /** An agent, group or all-parties ledger: each row says whose entry it is. */
   const multiParty = !!data && data.scope !== 'CUSTOMER';
   const pendingTotal = kpis ? kpis.overDue.amount + kpis.pastDue.amount + kpis.normal.amount : 0;
   const canPlan = query.customerId != null && can('payment:view');
   const outstandingNote =
-    closingNet == null && footer ? 'clear voucher type' : windowEndsInPast ? `as at ${formatDate(to)}` : undefined;
+    closingNet == null && footer ? 'clear the filters' : windowEndsInPast ? `as at ${formatDate(to)}` : undefined;
 
   /* ── Controls, shared by the desktop bar and the phone's filter card ── */
   const onParty = (v: string) => patch({ party: v, ...(v ? { agent: '', group: '' } : {}) });
@@ -690,7 +703,7 @@ export function PartyLedgerPage() {
   const balanceSwitch = (
     <Switch checked={showBalance && !!running} onCheckedChange={(v) => patch({ showBalance: v })} disabled={!running} />
   );
-  const balanceTitle = running ? undefined : 'Clear the voucher type filter to see running balances';
+  const balanceTitle = running ? undefined : 'Clear the voucher type and due type filters to see running balances';
 
   const pdfButton = canPrintLedger && (
     <button
@@ -744,6 +757,7 @@ export function PartyLedgerPage() {
         <PlSelect label="Group" value={group} onChange={onGroup} options={groupList} className="max-w-[200px] flex-[1_1_150px]" />
         {periodButton('d')}
         <PlSelect label="Voucher type" value={voucherType} onChange={(v) => patch({ voucherType: v })} options={data?.voucherTypes ?? []} className="max-w-[190px] flex-[1_1_150px]" />
+        <PlSelect label="Due type" value={dueType} onChange={(v) => patch({ dueType: v as LedgerDueFilter | '' })} options={DUE_OPTIONS} className="max-w-[170px] flex-[1_1_140px]" />
         {modeSeg(false)}
         <label
           className={cn('flex h-[38px] items-center gap-2 px-1.5 text-[12.5px] font-extrabold select-none', running ? 'cursor-pointer' : 'cursor-not-allowed opacity-50')}
@@ -863,8 +877,18 @@ export function PartyLedgerPage() {
         {AGEING.map((a) => {
           const k = kpis?.[a.key];
           const share = k && pendingTotal > 0 ? (k.amount / pendingTotal) * 100 : 0;
+          const on = dueType === a.due;
           return (
-            <div key={a.key} className="pl-kpi gap-[3px]">
+            // Each tile is also its Due type filter: tap Over due to see those bills.
+            <button
+              key={a.key}
+              type="button"
+              className="pl-kpi pl-kpi-pick gap-[3px] text-left"
+              data-on={on}
+              aria-pressed={on}
+              title={on ? 'Show every bill again' : `Show only the ${a.label.toLowerCase()} bills`}
+              onClick={() => patch({ dueType: on ? '' : a.due })}
+            >
               <span className="pl-kpi-label">
                 <span className="pl-kpi-dot" style={{ background: a.dot, boxShadow: `0 0 0 3px ${a.dot}26` }} />
                 {a.label}
@@ -877,7 +901,7 @@ export function PartyLedgerPage() {
                 <span style={{ width: `${share}%`, background: a.bar }} />
               </span>
               <span className="pl-kpi-hint">{a.hint}</span>
-            </div>
+            </button>
           );
         })}
       </section>
@@ -1051,7 +1075,7 @@ export function PartyLedgerPage() {
                     carries the filter in its label and takes the bottom-line styling. */}
                 <FootRow
                   kind={footer.closing ? 'current' : 'close'}
-                  label={footer.closing ? 'Current Total' : `Current Total · ${voucherType} only`}
+                  label={footer.closing ? 'Current Total' : `Current Total · ${onlyLabel} only`}
                   cells={balanceCells(footer.current)}
                   lead={LEAD_COLS}
                   trailing={viewCol}
@@ -1176,7 +1200,7 @@ export function PartyLedgerPage() {
                 </div>
               )}
               <div className="pl-mfoot-row flex items-center justify-between gap-2.5">
-                <span className="pl-mfoot-label">{footer.closing ? 'Current Total' : `Current Total · ${voucherType} only`}</span>
+                <span className="pl-mfoot-label">{footer.closing ? 'Current Total' : `Current Total · ${onlyLabel} only`}</span>
                 <span className="text-[12.5px] font-extrabold tabular-nums">{balanceCells(footer.current).map((v) => moneyOrDash(v)).join('  /  ')}</span>
               </div>
               {footer.closing && closingNet != null && (
@@ -1205,7 +1229,8 @@ export function PartyLedgerPage() {
               ['Agent', 'All agents', agent === 'All' ? '' : agent, onAgent, agentList],
               ['Group', 'All groups', group, onGroup, groupList],
               ['Voucher type', 'All voucher types', voucherType, (v: string) => patch({ voucherType: v }), data?.voucherTypes ?? []],
-            ] as [string, string, string, (v: string) => void, string[]][]
+              ['Due type', 'All bills', dueType, (v: string) => patch({ dueType: v as LedgerDueFilter | '' }), DUE_OPTIONS],
+            ] as [string, string, string, (v: string) => void, (string | ComboboxOption)[]][]
           ).map(([label, all, value, onChange, options]) => (
             <div key={label}>
               <p className="pl-mlabel mb-1.5">{label}</p>
@@ -1729,7 +1754,7 @@ function PlSelect({
   placeholder?: string;
   value: string;
   onChange: (v: string) => void;
-  options: string[];
+  options: (string | ComboboxOption)[];
   className?: string;
 }) {
   return (

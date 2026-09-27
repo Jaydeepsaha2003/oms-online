@@ -1,8 +1,8 @@
 import { Injectable } from '@nestjs/common';
 import {
   DEFAULT_PARTY_LISTS,
+  matchPartyList,
   type PartyClassRow,
-  type PartyCondition,
   type PartyListDef,
   type PartyListsConfig,
   type PartyListsResult,
@@ -59,52 +59,11 @@ export class PartyListsService {
     const [{ lists }, parties] = await Promise.all([this.getConfig(), this.computeMetrics()]);
     const active = lists.filter((l) => l.enabled);
     for (const p of parties) {
-      p.matched = active.filter((l) => this.matchList(l, p.metrics)).map((l) => l.id);
+      p.matched = active.filter((l) => matchPartyList(l, p.metrics)).map((l) => l.id);
     }
     // Most "interesting" first: matched lists, then biggest exposure.
     parties.sort((a, b) => b.matched.length - a.matched.length || b.metrics.outstanding - a.metrics.outstanding || b.metrics.lifetimeRevenue - a.metrics.lifetimeRevenue);
     return { lists, parties, asOf: new Date().toISOString() };
-  }
-
-  private matchList(list: PartyListDef, m: PartyMetrics): boolean {
-    if (!list.conditions.length) return false;
-    const results = list.conditions.map((c) => this.matchCond(c, m));
-    return list.match === 'ANY' ? results.some(Boolean) : results.every(Boolean);
-  }
-
-  private matchCond(c: PartyCondition, m: PartyMetrics): boolean {
-    const raw = (m as unknown as Record<string, unknown>)[c.field];
-    // Text metrics.
-    if (typeof raw === 'string' || (c.op === 'contains' || c.op === 'notContains')) {
-      const a = String(raw ?? '').toLowerCase();
-      const b = String(c.value ?? '').toLowerCase();
-      switch (c.op) {
-        case 'contains': return a.includes(b);
-        case 'notContains': return !a.includes(b);
-        case '==': return a === b;
-        case '!=': return a !== b;
-        default: return false;
-      }
-    }
-    // Boolean metrics.
-    if (typeof raw === 'boolean') {
-      const b = c.value === 'true' || c.value === 1 || c.value === '1';
-      return c.op === '!=' ? raw !== b : raw === b;
-    }
-    // Numeric metrics — a null metric (e.g. no receipts yet) never matches.
-    if (raw == null) return false;
-    const a = Number(raw);
-    const b = Number(c.value);
-    if (!Number.isFinite(a) || !Number.isFinite(b)) return false;
-    switch (c.op) {
-      case '>=': return a >= b;
-      case '<=': return a <= b;
-      case '>': return a > b;
-      case '<': return a < b;
-      case '==': return a === b;
-      case '!=': return a !== b;
-      default: return false;
-    }
   }
 
   /* ── Per-party metrics ──────────────────────────────────────────────────── */
@@ -115,7 +74,7 @@ export class PartyListsService {
     const fyStart = this.startOfFinYear(now);
     const [challans, custRows, receipts, advances, orders, payFollowups] = await Promise.all([
       this.prisma.challan.findMany({ where: { challanStatus: 'CONFIRMED' }, select: { code: true, total: true, invDate: true, dueDate: true, customerId: true, customerName: true, transaction: true } }),
-      this.prisma.customer.findMany({ select: { id: true, partyName: true, agentName: true, region: true, state: true, active: true } }),
+      this.prisma.customer.findMany({ select: { id: true, partyName: true, agentName: true, region: true, state: true, active: true, creditPeriod: true } }),
       this.prisma.acctPaymentReceipt.findMany({ select: { custId: true, invNo: true, recAmt: true, recDate: true } }),
       this.prisma.acctPartyAdvance.findMany({ select: { custId: true, bankAmt: true, cashAmt: true } }),
       this.prisma.order.findMany({ where: { status: 'CONFIRMED' }, select: { customerId: true, customerName: true, orderDate: true } }),
@@ -147,7 +106,7 @@ export class PartyListsService {
 
     interface Acc {
       customerId: number | null; party: string;
-      outstanding: number; overdue: number; oldestOverdueDays: number;
+      outstanding: number; overdue: number; oldestOverdueDays: number; daysPastCredit: number;
       lifetimeRevenue: number; fyRevenue: number; invoiceCount: number; openInvoices: number; billed: number; received: number;
     }
     const byKey = new Map<string, Acc>();
@@ -156,7 +115,7 @@ export class PartyListsService {
       if (!SALES.has((c.transaction ?? '').trim().toUpperCase())) continue;
       const key = keyOf(c.customerName);
       let a = byKey.get(key);
-      if (!a) { a = { customerId: c.customerId ?? null, party: c.customerName || '—', outstanding: 0, overdue: 0, oldestOverdueDays: 0, lifetimeRevenue: 0, fyRevenue: 0, invoiceCount: 0, openInvoices: 0, billed: 0, received: 0 }; byKey.set(key, a); }
+      if (!a) { a = { customerId: c.customerId ?? null, party: c.customerName || '—', outstanding: 0, overdue: 0, oldestOverdueDays: 0, daysPastCredit: 0, lifetimeRevenue: 0, fyRevenue: 0, invoiceCount: 0, openInvoices: 0, billed: 0, received: 0 }; byKey.set(key, a); }
       if (a.customerId == null && c.customerId != null) a.customerId = c.customerId;
       const total = num(c.total);
       const received = recvByInv.get(c.code) ?? 0;
@@ -173,6 +132,15 @@ export class PartyListsService {
           const days = Math.floor((today.getTime() - this.startOfDay(c.dueDate).getTime()) / DAY);
           if (days > 0) { a.overdue += bal; a.oldestOverdueDays = Math.max(a.oldestOverdueDays, days); }
         }
+        // Past the party's credit period: the bill's age less the credit days on
+        // its customer record — the terms as they stand, not as they were when
+        // the bill was raised. A bill with no known party falls back to its own
+        // due date, which is how the terms were set when it was billed.
+        const credit =
+          custById.get(c.customerId ?? -1)?.creditPeriod ??
+          (c.dueDate ? Math.round((this.startOfDay(c.dueDate).getTime() - this.startOfDay(c.invDate).getTime()) / DAY) : 0);
+        const age = Math.floor((today.getTime() - this.startOfDay(c.invDate).getTime()) / DAY);
+        a.daysPastCredit = Math.max(a.daysPastCredit, age - credit);
       }
     }
 
@@ -206,6 +174,8 @@ export class PartyListsService {
         overdue: r0(a.overdue),
         overduePct: a.outstanding > 0 ? r0((a.overdue / a.outstanding) * 100) : a.overdue > 0 ? 100 : 0,
         oldestOverdueDays: a.oldestOverdueDays,
+        daysPastCredit: Math.max(0, a.daysPastCredit),
+        creditPeriod: cust?.creditPeriod ?? null,
         lifetimeRevenue: r0(a.lifetimeRevenue),
         fyRevenue: r0(a.fyRevenue),
         invoiceCount: a.invoiceCount,
