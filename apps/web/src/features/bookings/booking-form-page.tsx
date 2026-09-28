@@ -73,39 +73,8 @@ export function BookingFormPage() {
   const [lines, setLines] = useState<BookingLine[]>([]);
   const keyer = useRef(0);
 
-  /**
-   * Rates settled with the customer, keyed `CATEGORY|SUBCATEGORY`.
-   *
-   * Held as raw strings so a half-typed box behaves like every other input on
-   * the form; blanks are dropped on submit, since an empty box means "no deal
-   * on this size", not "this size is free".
-   */
-  const [agreed, setAgreed] = useState<Record<string, string>>({});
-
   const customers = useMemo(() => (lookups?.customers ?? []).map((c) => c.name), [lookups]);
   const productCategories = useMemo(() => lookups?.categories ?? [], [lookups]);
-
-  /**
-   * The size classes each product category sells in.
-   *
-   * The sub-category IS the size class — `4-PCS-CUP-FG` carries the size (6.5)
-   * and the pcs per box (4) — so the product master already answers this and
-   * no new master data is needed. Both figures are shown next to the rate box
-   * so the operator can see what they are pricing.
-   */
-  const sizeClasses = useMemo(() => {
-    const byCategory = new Map<string, { subCategory: string; size: number | null; pcs: number | null }[]>();
-    for (const row of lookups?.items ?? []) {
-      const cat = (row.category ?? '').trim().toUpperCase();
-      const sub = (row.subCategory ?? '').trim().toUpperCase();
-      if (!cat || !sub) continue;
-      const list = byCategory.get(cat) ?? [];
-      if (!list.some((x) => x.subCategory === sub)) list.push({ subCategory: sub, size: row.size, pcs: row.pcs });
-      byCategory.set(cat, list);
-    }
-    for (const list of byCategory.values()) list.sort((a, b) => (a.size ?? 0) - (b.size ?? 0) || a.subCategory.localeCompare(b.subCategory));
-    return byCategory;
-  }, [lookups]);
 
   const onCustomer = (name: string) => {
     const c = lookups?.customers.find((x) => x.name === name);
@@ -147,34 +116,10 @@ export function BookingFormPage() {
     setLineBags('');
     setLineKgs('');
   };
-  const removeLine = (key: string) => {
-    const gone = lines.find((l) => l.key === key);
-    setLines((ls) => ls.filter((l) => l.key !== key));
-    // Rates for a category that is no longer booked would be saved against
-    // nothing — and would silently reappear if the line were added back.
-    if (gone?.category) {
-      setAgreed((a) => Object.fromEntries(Object.entries(a).filter(([k]) => !k.startsWith(`${gone.category}|`))));
-    }
-  };
-
-  /** Booked categories that actually sell in size classes — the only ones a
-   *  per-size rate means anything for. A blank category has none. */
-  const ratedLines = useMemo(() => lines.filter((l) => l.category && (sizeClasses.get(l.category)?.length ?? 0) > 0), [lines, sizeClasses]);
+  const removeLine = (key: string) => setLines((ls) => ls.filter((l) => l.key !== key));
 
   const totalBags = useMemo(() => lines.reduce((s, l) => s + (n(l.bags) ?? 0), 0), [lines]);
   const totalKgs = useMemo(() => lines.reduce((s, l) => s + (n(l.kgs) ?? 0), 0), [lines]);
-
-  /** Only the boxes actually filled in, as the server's shape. */
-  const agreedRates = useMemo(
-    () =>
-      Object.entries(agreed)
-        .map(([key, value]) => {
-          const [pCategory, subCategory] = key.split('|');
-          return { pCategory, subCategory, rate: n(value) ?? 0 };
-        })
-        .filter((r) => r.pCategory && r.subCategory && r.rate > 0),
-    [agreed],
-  );
 
   const submitRef = useRef<() => void>(() => {});
   const submit = async () => {
@@ -183,10 +128,7 @@ export function BookingFormPage() {
     const ok = await confirm({
       title: 'Create this booking?',
       description:
-        `${lines.length} line(s) — ${lines.map((l) => `${l.bags || 0} bag / ${l.kgs || 0} kg ${l.category || BOOKING_NO_CATEGORY}`).join(', ')} — reserved for "${customer.trim()}". Rates are frozen as of ${bookingDate}.` +
-        (agreedRates.length
-          ? ` ${agreedRates.length} settled rate(s): ${agreedRates.map((r) => `${r.subCategory} @ ₹${r.rate}`).join(', ')}.`
-          : ''),
+        `${lines.length} line(s) — ${lines.map((l) => `${l.bags || 0} bag / ${l.kgs || 0} kg ${l.category || BOOKING_NO_CATEGORY}`).join(', ')} — reserved for "${customer.trim()}". Rates are frozen as of ${bookingDate}.`,
       confirmText: 'Create booking',
     });
     if (!ok) return;
@@ -196,7 +138,6 @@ export function BookingFormPage() {
       category: category.trim() || null,
       bookingDate,
       items: lines.map((l) => ({ pCategory: l.category, bags: n(l.bags) ?? 0, kgs: n(l.kgs) ?? 0 })),
-      rates: agreedRates,
       comment: comment.trim() || null,
     };
     create.mutate(input, {
@@ -416,56 +357,6 @@ export function BookingFormPage() {
                 </div>
               )}
             </section>
-
-            {/*
-              Agreed rates — only for the categories actually booked, and only those
-              that sell in size classes. Optional throughout: leave every box empty
-              and the booking prices off the chart exactly as it always has.
-            */}
-            {ratedLines.length > 0 && (
-              <section className="bb-rise rounded-2xl bg-[var(--bb-card)] px-[22px] pt-5 pb-[22px] shadow-[var(--bb-shadow-card)]" style={{ animationDelay: '0.2s' }}>
-                <p className={cn(SECTION, 'text-amber-600')}>Agreed rates</p>
-                <p className="mt-1 text-[11px] text-[var(--bb-muted)]">
-                  A rate settled with this party for a size. It replaces the chart rate <em>and</em> this party's own discount
-                  for that size — a negotiated price is the whole price, not a base to discount again. Leave a box empty to
-                  price it off the chart.
-                </p>
-                <div className="mt-3 space-y-3">
-                  {ratedLines.map((l) => (
-                    <div key={l.key} className="space-y-1.5">
-                      <p className="text-[11px] font-black uppercase tracking-wide text-[var(--bb-muted)]">{l.category}</p>
-                      <div className="grid grid-cols-2 gap-2.5 sm:grid-cols-3">
-                        {(sizeClasses.get(l.category) ?? []).map((sc) => {
-                          const key = `${l.category}|${sc.subCategory}`;
-                          return (
-                            <div key={key} className="space-y-1 rounded-xl border-[0.8px] border-[var(--bb-line)] bg-[var(--bb-input-bg)] px-2.5 py-2">
-                              <p className="truncate text-[12px] font-bold text-[var(--bb-ink)]" title={sc.subCategory}>
-                                {sc.subCategory}
-                              </p>
-                              <p className="text-[10.5px] font-medium text-[var(--bb-muted)]">
-                                {sc.size ? `Size ${sc.size}` : 'No size'}
-                                {sc.pcs ? ` · ${sc.pcs} pcs/box` : ''}
-                              </p>
-                              <Input
-                                type="number"
-                                step="any"
-                                min={0}
-                                inputMode="decimal"
-                                className={cn(FIELD, 'h-8 text-right tabular-nums')}
-                                placeholder="Chart rate"
-                                value={agreed[key] ?? ''}
-                                onChange={(e) => setAgreed((a) => ({ ...a, [key]: e.target.value }))}
-                                aria-label={`Agreed rate for ${sc.subCategory}`}
-                              />
-                            </div>
-                          );
-                        })}
-                      </div>
-                    </div>
-                  ))}
-                </div>
-              </section>
-            )}
           </div>
 
           {/* ── Summary panel ───────────────────────────────────────────────── */}

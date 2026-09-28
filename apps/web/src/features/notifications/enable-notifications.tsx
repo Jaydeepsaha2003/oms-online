@@ -96,40 +96,12 @@ export function usePushEnrolment() {
   return { needsEnrolling, supported, enabling, problem, enable };
 }
 
-/** The enrol offer as a self-contained panel — rendered inside the bell. */
-export function EnablePushPanel({ onDone }: { onDone?: () => void }) {
-  const { needsEnrolling, enabling, problem, enable } = usePushEnrolment();
-  if (!needsEnrolling) return null;
-  return (
-    <div className="border-b bg-amber-50/70 px-3 py-2.5 dark:bg-amber-400/10">
-      <p className="text-[13px] font-semibold">Turn on notifications on this device</p>
-      <p className="text-muted-foreground mt-0.5 text-[11.5px]">
-        Get alerts even when OMS is closed. Your phone will ask you to allow them.
-      </p>
-      {problem && <p className="mt-1.5 text-[11.5px] text-amber-700 dark:text-amber-400">{problem}</p>}
-      <div className="mt-2 flex items-center gap-2">
-        <Button
-          type="button"
-          size="sm"
-          className="h-7 text-[12px]"
-          disabled={enabling}
-          onClick={() => void enable().then((ok) => ok && onDone?.())}
-        >
-          {enabling ? <Loader2 className="animate-spin" /> : <BellRing />} Turn on
-        </Button>
-      </div>
-    </div>
-  );
-}
-
 /**
  * This device's notification settings, always shown.
  *
- * {@link EnablePushPanel} renders nothing once the device is enrolled, which is
- * right for a one-off pitch and wrong for everything after it: there was then no
- * way to see whether THIS phone was set up, and no way to silence just this one.
- * Both belong to the device, so both live here, in the bell that every device
- * already has.
+ * A one-off "turn on" pitch disappears once the device is enrolled, leaving no
+ * way to see whether THIS phone is set up, or to silence just this one. Both
+ * belong to the device, so both live here, in the bell that every user has.
  */
 export function DeviceNotificationSettings() {
   const { needsEnrolling, supported, enabling, problem, enable } = usePushEnrolment();

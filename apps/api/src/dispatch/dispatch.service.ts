@@ -1303,7 +1303,8 @@ export class DispatchService implements OnModuleInit {
          * the booking's own delta for that line. The TOTAL is what agrees.
          */
         const bags = round3(kgs / bagWeight.kgsPerBag);
-        const agreed = booking.rates.find((r) => r.pCategory === category && r.subCategory === subCategory);
+        // The bill carries the booking's frozen booking-date rate; this is the same figure, for the result.
+        const frozen = await this.bookings.priceOrderLine(booking.id, { pCategory: category, subCategory, product, productName: product, psize: row.size });
         return {
           subCategory,
           product,
@@ -1312,8 +1313,7 @@ export class DispatchService implements OnModuleInit {
           kgs,
           bags,
           size: row.size,
-          rate: agreed?.rate ?? row.rate ?? 0,
-          fromAgreedRate: !!agreed,
+          rate: frozen?.rate ?? row.rate ?? 0,
           comment: line.comment ?? null,
         };
       }),
@@ -1381,7 +1381,6 @@ export class DispatchService implements OnModuleInit {
           kgs: l.kgs,
           bags: l.bags,
           rate: l.rate,
-          fromAgreedRate: l.fromAgreedRate,
           orderItemId,
           dispatchId: res.status === 'CREATED' ? res.dispatch.id : null,
           dispatchCode: res.status === 'CREATED' ? (res.dispatch.code ?? null) : null,

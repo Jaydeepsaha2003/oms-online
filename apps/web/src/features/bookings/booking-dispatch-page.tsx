@@ -96,14 +96,12 @@ export function BookingDispatchPage() {
   const itemFor = (subCategory: string, product: string) =>
     (options?.items ?? []).find((i) => i.subCategory === subCategory && i.product === product) ?? null;
 
-  /** The rate this line will actually go out at — settled first, chart second. */
-  const rateFor = (subCategory: string, product: string) => {
-    const settled = (options?.rates ?? []).find(
-      (r) => r.bookingId === bookingId && r.pCategory === CATEGORY && r.subCategory === subCategory,
-    );
-    if (settled) return { rate: settled.rate, agreed: true };
-    return { rate: itemFor(subCategory, product)?.rate ?? 0, agreed: false };
-  };
+  /** The rate this line will be billed at: frozen on the chosen booking at its
+   *  booking date (today's chart only if the booking has no price for it). */
+  const rateFor = (subCategory: string, product: string) =>
+    (options?.frozenRates ?? []).find((r) => r.bookingId === bookingId && r.subCategory === subCategory && r.product === product)?.rate ??
+    itemFor(subCategory, product)?.rate ??
+    0;
 
   /**
    * The same arithmetic the server does, shown before saving.
@@ -120,8 +118,8 @@ export function BookingDispatchPage() {
         const pcs = item?.pcs ? r2(box * item.pcs) : 0;
         const kgs = item?.weight ? r2(pcs * item.weight) : 0;
         const bags = kgsPerBag ? r3(kgs / kgsPerBag) : 0;
-        const { rate, agreed } = rateFor(l.subCategory, l.product);
-        return { ...l, box, pcs, kgs, bags, rate, agreed, amount: r2(pcs * rate) };
+        const rate = rateFor(l.subCategory, l.product);
+        return { ...l, box, pcs, kgs, bags, rate, amount: r2(pcs * rate) };
       }),
     // eslint-disable-next-line react-hooks/exhaustive-deps
     [lines, options, kgsPerBag, bookingId],
@@ -393,11 +391,6 @@ export function BookingDispatchPage() {
                         <td className="text-right tabular-nums">{l.bags}</td>
                         <td className="text-right tabular-nums">
                           {l.rate}
-                          {l.agreed && (
-                            <span className="ml-1 rounded-[3px] bg-amber-100 px-1 text-[9.5px] font-bold text-amber-800" title="Rate settled on this booking">
-                              DEAL
-                            </span>
-                          )}
                         </td>
                         <td className="text-right font-semibold tabular-nums">{l.amount.toLocaleString('en-IN')}</td>
                         <td className="text-center">

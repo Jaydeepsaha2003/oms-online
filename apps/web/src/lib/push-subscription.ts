@@ -1,5 +1,5 @@
 import type { PushSubscriptionRequest, VapidPublicKeyResult } from '@oms/shared';
-import { ANDROID_CERT_STEPS, CERT_DOWNLOAD_URL, currentRegistration, downloadCertificate, isAndroid, reportWorkerFailure } from './service-worker';
+import { ANDROID_CERT_STEPS, CERT_DOWNLOAD_URL, currentRegistration, downloadCertificate, isAndroid, isPhone, reportWorkerFailure } from './service-worker';
 import { http } from './api';
 
 export type SubscribeResult = { ok: true } | { ok: false; reason: string };
@@ -39,6 +39,10 @@ function registrationFailureReason(err: unknown): string {
     reportWorkerFailure(err);
     downloadCertificate();
     return `This phone doesn’t trust OMS’s security certificate yet, so it can’t turn notifications on. OMS has started downloading it (OMS-rootCA.crt — if nothing arrived, open https://${host}${CERT_DOWNLOAD_URL}). To install it, ${ANDROID_CERT_STEPS} After that, tap Turn on again.`;
+  }
+  // A laptop browser is never sent to install the certificate.
+  if (!isPhone()) {
+    return `This browser could not start the app’s background service, so notifications can’t be turned on here. Reload OMS and try again, or use Chrome or Edge.${detail}`;
   }
   return `Notifications need the app’s background service, which this device refused to start. This is usually the security certificate: open https://${host}/oms-rootCA.crt to install the OMS certificate, then reload and try again.${detail}`;
 }
@@ -105,6 +109,13 @@ export async function hasActivePushSubscription(): Promise<boolean> {
   const registration = await currentRegistration();
   if (!registration) return false;
   const existing = await registration.pushManager.getSubscription().catch(() => null);
+  // The device belongs to whoever is signed in NOW. Enrolled under one login and
+  // then used under another, it kept delivering to the first — the phone said
+  // "On" while the Users page said "Not enabled". Re-sending it re-links it.
+  const json = existing?.toJSON() as { endpoint?: string; keys?: { p256dh: string; auth: string } } | undefined;
+  if (json?.endpoint && json.keys) {
+    void http.post('/notifications/push-subscribe', { endpoint: json.endpoint, keys: json.keys } satisfies PushSubscriptionRequest).catch(() => {});
+  }
   return !!existing;
 }
 

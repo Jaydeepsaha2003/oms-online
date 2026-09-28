@@ -51,6 +51,11 @@ export const isWorkerCertRefused = () => workerCertRefused;
  *  Settings, which needs the file in Downloads (see the servers' route). */
 export const CERT_DOWNLOAD_URL = '/oms-rootCA.crt?download=1';
 export const isAndroid = () => typeof navigator !== 'undefined' && /Android/i.test(navigator.userAgent);
+/** A phone or tablet. Only these are ever asked to install the OMS certificate —
+ *  a laptop browser never is. (An iPad reports itself as a Mac with touch.) */
+export const isPhone = () =>
+  typeof navigator !== 'undefined' &&
+  (/Android|iPhone|iPad|iPod/i.test(navigator.userAgent) || (/Macintosh/.test(navigator.userAgent) && navigator.maxTouchPoints > 1));
 /** Start the certificate download. No page can install a CA — the phone only
  *  lets its owner do that, in Settings — so fetching the file is as far as
  *  automation goes. */

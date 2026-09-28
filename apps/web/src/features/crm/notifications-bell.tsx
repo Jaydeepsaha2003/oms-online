@@ -9,7 +9,7 @@ import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover
 import { useFollowupBoard, useFollowupSummary, useResolveFollowup, useSnoozeFollowup } from './use-crm';
 import { useNudgeCount } from './followup-nudge';
 import { usePermissions } from '@/hooks/use-permissions';
-import { DeviceNotificationSettings, EnablePushPanel, usePushEnrolment } from '@/features/notifications/enable-notifications';
+import { DeviceNotificationSettings, usePushEnrolment } from '@/features/notifications/enable-notifications';
 import { Chip, FollowupPartyList } from './crm-shared';
 
 /**
@@ -29,26 +29,25 @@ export function NotificationsBell() {
 }
 
 /**
- * For users with no CRM access: the bell exists only while there is something to
- * offer — enrolling this device. Once enrolled it disappears rather than sitting
- * there opening an empty panel.
+ * For users with no CRM access: always there, opening this device's settings —
+ * turn alerts on, see that they are on (or why this browser cannot), and the
+ * sound. It used to vanish once the device was enrolled, or on a browser
+ * without push, which left a dispatch-only user with no bell at all.
  */
 function DeviceOnlyBell() {
-  const [open, setOpen] = useState(false);
   const { needsEnrolling } = usePushEnrolment();
-  if (!needsEnrolling) return null;
   return (
-    <Popover open={open} onOpenChange={setOpen}>
+    <Popover>
       <PopoverTrigger asChild>
-        <Button variant="ghost" size="icon" className="relative" aria-label="Turn on notifications for this device">
+        <Button variant="ghost" size="icon" className="relative" aria-label="Notifications on this device">
           <Bell />
           {/* Amber, not red: nothing is wrong — something is simply available to
               switch on. */}
-          <span className="ring-background absolute top-1.5 right-1.5 size-2 rounded-full bg-amber-500 ring-2" />
+          {needsEnrolling && <span className="ring-background absolute top-1.5 right-1.5 size-2 rounded-full bg-amber-500 ring-2" />}
         </Button>
       </PopoverTrigger>
       <PopoverContent align="end" className="w-80 max-w-[calc(100vw-1rem)] overflow-hidden p-0">
-        <EnablePushPanel onDone={() => setOpen(false)} />
+        <DeviceNotificationSettings />
       </PopoverContent>
     </Popover>
   );

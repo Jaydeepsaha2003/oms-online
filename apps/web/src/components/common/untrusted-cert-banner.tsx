@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react';
 import { ShieldAlert, X } from 'lucide-react';
-import { ANDROID_CERT_STEPS, CERT_DOWNLOAD_URL, WORKER_CERT_EVENT, isAndroid, isWorkerCertRefused } from '@/lib/service-worker';
+import { ANDROID_CERT_STEPS, CERT_DOWNLOAD_URL, WORKER_CERT_EVENT, isAndroid, isPhone, isWorkerCertRefused } from '@/lib/service-worker';
 
 const DISMISS_KEY = 'oms:cert-banner-dismissed';
 
@@ -50,10 +50,11 @@ export function UntrustedCertBanner() {
     return () => window.removeEventListener(WORKER_CERT_EVENT, check);
   }, []);
 
-  if (!insecure || dismissed) return null;
-
   const host = typeof window !== 'undefined' ? window.location.host : '';
   const isHttps = typeof window !== 'undefined' && window.location.protocol === 'https:';
+  // A laptop browser is never asked to install the certificate; only the plain
+  // http:// warning is left for it.
+  if (!insecure || dismissed || (isHttps && !isPhone())) return null;
 
   const dismiss = () => {
     setDismissed(true);

@@ -81,34 +81,12 @@ export interface BookingDto {
   precloseAt: string | null;
   /** The product-category lines reserved on this booking (e.g. 1 bag GLASS, 1 bag CUP). */
   items: BookingItemDto[];
-  /** Size-class rates settled with the customer for this booking. Empty when
-   *  the booking prices purely off the chart. */
-  rates: BookingRateDto[];
   conversions: BookingConversionDto[];
   createdAt: string;
   updatedAt: string;
 }
 
 /** One product-category line reserved on a booking. */
-/**
- * A rate settled with the customer for one size class, on one booking.
- *
- * The sub-category IS the size class — `4-PCS-CUP-FG` says size 6.5 and 4 pcs
- * to a box — so this needs no separate size field.
- */
-export interface BookingRateDto {
-  id: number;
-  bookingId: number;
-  pCategory: string;
-  subCategory: string;
-  /** Absolute agreed selling rate — replaces the chart rate AND the customer's
-   *  own delta for a matching line, rather than being added to either. */
-  rate: number;
-  userName: string | null;
-  createdAt: string;
-  updatedAt: string;
-}
-
 export interface BookingItemDto {
   id: number;
   bookingId: number;
@@ -169,16 +147,7 @@ export interface CreateBookingInput {
   /** Defaults to today on the server; this is the rate-basis date. */
   bookingDate?: string | null;
   items: CreateBookingItemInput[];
-  /** Optional per-size-class agreed rates. Omitted (or empty) means this
-   *  booking prices off the chart exactly as before. */
-  rates?: CreateBookingRateInput[];
   comment?: string | null;
-}
-
-export interface CreateBookingRateInput {
-  pCategory: string;
-  subCategory: string;
-  rate: number;
 }
 
 export interface UpdateBookingInput {
@@ -250,10 +219,6 @@ export interface LinkBookingItemsInput {
 
 /** A priced preview of one convertible line, using booking-date rates. */
 export interface BookingQuoteLine {
-  /** Set when this line priced off a rate settled on the booking rather than
-   *  off the chart. When present it IS `rate` (before any design rate), and
-   *  `productDelta` is 0 — a negotiated price is not discounted again. */
-  bookingRate?: number | null;
   productName: string | null;
   designType: string | null;
   /** Base product chart rate as of the booking date. */
@@ -407,9 +372,8 @@ export interface BookingDispatchLineResult {
   pcs: number;
   kgs: number;
   bags: number;
+  /** The booking's frozen booking-date rate — what the bill carries. */
   rate: number;
-  /** True when `rate` came from a rate settled on the booking. */
-  fromAgreedRate: boolean;
   orderItemId: number;
   dispatchId: number | null;
   dispatchCode: string | null;
@@ -433,9 +397,9 @@ export interface BookingDispatchOptions {
    *  bags could not be derived, so the booking's draw-down would be wrong. */
   kgsPerBag: number | null;
   bookings: BookingDrawOptionDto[];
-  /** Agreed rates across those bookings, so the form can price without a
-   *  round trip per line. */
-  rates: BookingRateDto[];
+  /** Each item's rate as frozen on each booking (booking-date chart + the
+   *  party's special then) — what the bill will carry. */
+  frozenRates: { bookingId: number; subCategory: string; product: string; rate: number }[];
   /** The sellable items in this category, with the figures the arithmetic
    *  needs. */
   items: BookingDispatchItemOption[];
