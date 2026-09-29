@@ -204,6 +204,13 @@ foreach ($v in $pending | Select-Object -First $Max) {
     Start-Sleep -Seconds 3
   }
   Write-Host "IRN ok: $irn   e-way: $(if ($ewb) { $ewb } else { 'none' })   $(if ($local) { 'Maharashtra: invoice x2, separately' } else { 'outside MH: invoice 2 + e-way 2' })"
+  # Tally first shows "e-Invoice and e-Way Bill generated successfully ... Press any key to continue"
+  # (SSS-778); the Print box comes after it. Enter only while such a box is up and the Print box is not.
+  foreach ($i in 1..3) {
+    Start-Sleep -Seconds 2
+    $t = Seen 'after-irn'
+    if ($t -match 'Pressanykey' -and $t -notmatch 'Copies') { Key '~' } else { break }
+  }
 
   if (-not $local -and $ewb) { Print-Once 2 2 }
   else {
