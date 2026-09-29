@@ -95,6 +95,12 @@ if (-not $function:Snap) {
   $asTask = ([System.WindowsRuntimeSystemExtensions].GetMethods() | Where-Object { $_.Name -eq 'AsTask' -and $_.GetParameters().Count -eq 1 -and $_.GetParameters()[0].ParameterType.Name -eq 'IAsyncOperation`1' })[0]
   function Await($op, [Type]$t) { $task = $asTask.MakeGenericMethod($t).Invoke($null, @($op)); [void]$task.Wait(-1); $task.Result }
   function Read-Screen($png) {
+    # OCR reads Tally's small text only when enlarged: at 1x it skipped "SSS-778/26-27" on a
+    # highlighted row and read 774 as 776; at 2x both came out right (real Day Book photos).
+    $img = [System.Drawing.Image]::FromFile($png)
+    $big = New-Object System.Drawing.Bitmap ($img.Width * 2), ($img.Height * 2)
+    $g = [System.Drawing.Graphics]::FromImage($big); $g.InterpolationMode = 'HighQualityBicubic'; $g.DrawImage($img, 0, 0, $big.Width, $big.Height); $g.Dispose(); $img.Dispose()
+    $png = $png -replace '\.png$', '-x2.png'; $big.Save($png, [System.Drawing.Imaging.ImageFormat]::Png); $big.Dispose()
     $file = Await ([Windows.Storage.StorageFile]::GetFileFromPathAsync($png)) ([Windows.Storage.StorageFile])
     $stream = Await ($file.OpenAsync([Windows.Storage.FileAccessMode]::Read)) ([Windows.Storage.Streams.IRandomAccessStream])
     $bitmap = Await ((Await ([Windows.Graphics.Imaging.BitmapDecoder]::CreateAsync($stream)) ([Windows.Graphics.Imaging.BitmapDecoder])).GetSoftwareBitmapAsync()) ([Windows.Graphics.Imaging.SoftwareBitmap])
@@ -165,8 +171,8 @@ foreach ($v in $pending | Select-Object -First $Max) {
   Key '^f' 'VchNo' 'the Day Book'
   Key "$no~" 'Lookfor' 'the "Look for" filter box'
   $t = Seen 'filtered'
-  # Exactly one row left: the "For <date>" heading + one row = two dates on screen.
-  if (-not (Is-ThisBill $t) -or $t -notmatch 'VchNo' -or [regex]::Matches($t, '\d{1,2}-[A-Za-z]{3}-\d\d').Count -ne 2) { Stop-Here "The Day Book is not showing $no alone - stopped before opening anything." }
+  # Exactly one row left: one bill number on screen, and it is this one.
+  if (-not (Is-ThisBill $t) -or $t -notmatch 'VchNo' -or [regex]::Matches($t, '\d+/\d\d-\d\d').Count -ne 1) { Stop-Here "The Day Book is not showing $no alone - stopped before opening anything." }
   Key '~'
   # Made by hand meanwhile? (SSS-752 was, while an old list still offered it.) Never re-save a bill that has an IRN.
   if (Txt (Ask-Tally $byNo).IRN) { Stop-Here "$no already has its e-invoice (made by hand?) - stopped, nothing saved. Press Esc in Tally." }
