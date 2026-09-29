@@ -19,9 +19,9 @@ function Snap($name) { Write-Host "PHOTO: $name"; "fake.png" }
 # $env:DRY_EWB=1 adds the e-Way line to Printer Settings.
 function Read-Screen($png) {
   # $env:DRY_GATEWAY=1 -> Tally starts on the Gateway (helper should press K, not Alt+G).
-  if ($env:DRY_GATEWAY) { return 'Gateway of Tally Balance Sheet Day Book Vch No For 24-Sep-26 24-Sep-26 ANIL METAL Sales No. SSS-747/26-27 Party Alc name: ANIL METAL Look for Do you want to generate e-Invoice? Print Number of Copies Printer Settings' }
+  if ($env:DRY_GATEWAY) { return 'Gateway of Tally Balance Sheet Day Book Vch No For 24-Sep-26 24-Sep-26 ANIL METAL Sales No. SSS-747/26-27 Party Alc name: ANIL METAL Look for Do you want to generate e-Invoice? Yes or No Print Number of Copies Printer Settings' }
   if ($env:DRY_WRONG) { return 'Saved Views Day Book Vch No For 24-Sep-26 24-Sep-26 MUKTI KITCHENWARE Sales No. SSS-738/26-27 Party Alc name: MUKTI KITCHENWARE Look for' }
-  'Saved Views Day Book Vch No For 24-Sep-26 24-Sep-26 ANIL METAL Sales No. SSS-747/26-27 Party Alc name: ANIL METAL Look for Do you want to generate e-Invoice? Print Number of Copies Printer Settings' + $(if ($env:DRY_EWB) { ' Number of copies for e-Way Bill' } else { '' })
+  'Saved Views Day Book Vch No For 24-Sep-26 24-Sep-26 ANIL METAL Sales No. SSS-747/26-27 Party Alc name: ANIL METAL Look for Do you want to generate e-Invoice? Yes or No Print Number of Copies Printer Settings' + $(if ($env:DRY_EWB) { ' Number of copies for e-Way Bill' } else { '' })
 }
 function New-Object { [pscustomobject]@{} | Add-Member -PassThru ScriptMethod AppActivate { $true } | Add-Member -PassThru ScriptMethod SendKeys { param($k) Write-Host "KEY: $k" } }
 & "$PSScriptRoot\tally-einvoice-helper.ps1" -Auto

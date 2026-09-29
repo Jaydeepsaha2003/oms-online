@@ -180,7 +180,9 @@ foreach ($v in $pending | Select-Object -First $Max) {
   $t = Seen 'before-save'
   if (-not (Is-ThisBill $t) -or $t -notmatch 'Party|ledger') { Stop-Here "$no is not open in Tally - stopped BEFORE saving anything. Press Esc in Tally (don't save)." }
   Key '^a'
-  Key 'y' 'generate.{0,3}Invoice' 'the "generate e-Invoice?" question'
+  # Two wordings: "Do you want to generate e-Invoice?" and, with an e-way bill due, "Do you want to send
+  # voucher details for e-Invoice and e-Way Bill generation?" (SSS-778). OCR reads "e-Invoice" as "e-lnvoice".
+  Key 'y' '(?=.*YesorNo)(?=.*(generate|voucherdetailsfor).{0,4}[Il1]nvoice)' 'the "e-Invoice?" question'
 
   # IRN. If the portal login pops up, the owner types it — this script never handles passwords.
   Write-Host 'Waiting for the IRN (up to 5 min)...'
