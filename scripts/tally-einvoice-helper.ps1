@@ -8,9 +8,9 @@
     3. only then prints it. No IRN = no print, and the helper stops.
   It never types the e-invoice password: save the login in Tally, or log in yourself when asked.
 
-  Right-click > Run with PowerShell  -> ONE bill, pausing before every key (watch Tally).
-  powershell -File tally-einvoice-helper.ps1 -List        -> only shows the pending bills.
-  powershell -File tally-einvoice-helper.ps1 -Auto -Max 20 -> no pauses, up to 20 bills.
+  Double-click tally-einvoice.bat   -> ONE bill, hands-off (don't touch the keyboard while it runs).
+  powershell -File tally-einvoice-helper.ps1 -List     -> only shows the pending bills.
+  powershell -File tally-einvoice-helper.ps1 -Max 20   -> up to 20 bills, one after another.
 #>
 param([switch]$Auto, [int]$Max = 1, [switch]$List, [string]$Tally = 'http://localhost:9000')
 $ErrorActionPreference = 'Stop'
@@ -20,7 +20,6 @@ $ErrorActionPreference = 'Stop'
 # Checked on the Tally PC with SSS-747: Go To > Day Book > date > Ctrl+F "Look for" the number > open > save > "generate e-Invoice?" Yes.
 # 1.5 s after each key: at 0.8 s Tally was still opening the bill and swallowed Ctrl+A (SSS-750).
 # 1 s after bringing Tally to the front: sooner, and Alt of Alt+G was lost (opened Group Creation).
-$OpenAndSend = @('%g', 'Day Book~', '{F2}', '{DATE}~', '^f', '{NO}~', '~', '^a', 'y')
 # Printing, the owner's rule (duplex printer, so never "copies 2" of the invoice alone — copy 2
 # would land on the back of copy 1):
 #  party in Maharashtra   : e-invoice only, printed TWICE as two separate prints
@@ -49,16 +48,16 @@ $pending | ForEach-Object { Write-Host ("{0}  {1}  {2}  ({3})" -f (Txt $_.DATE),
 if ($List) { return }
 
 $sh = New-Object -ComObject WScript.Shell
-# Step mode: after each key, bring this window back so the next Enter reaches the helper, not Tally
-# (an Enter that went to Tally opened "Bills Payable - GST" from the Go To list).
-$Host.UI.RawUI.WindowTitle = 'e-invoice helper'
-function Back-To-Helper { if (-not $Auto) { Start-Sleep -Milliseconds 300; [void]$sh.AppActivate('e-invoice helper') } }
+# No step mode any more: pausing for the owner's Enter meant handing the keyboard back and forth,
+# and Windows won't let a background window take focus back — the owner's Enter went to Tally
+# (it opened "Bills Payable - GST" once, RAMSON's bill another time). The run is hands-off; the
+# screen checks below are what keep it on the right bill.
 # Bring Tally to the front by its program (tally.exe), not the window title — the title
-# changes with the screen, and "TallyPrime" alone was once not found. Keys only ever go to Tally.
+# changes with the screen, and "TallyPrime" alone was once not found.
 function Focus-Tally {
   foreach ($try in 1..3) {
     $p = Get-Process | Where-Object { $_.ProcessName -like 'tally*' -and $_.MainWindowHandle -ne 0 } | Select-Object -First 1
-    if ($p -and $sh.AppActivate($p.Id)) { return $true }
+    if ($p) { [void]$sh.AppActivate($p.Id); Start-Sleep -Milliseconds 300; if (Is-TallyFront) { return $true } }
     Start-Sleep -Milliseconds 700
   }
   $false
@@ -71,7 +70,12 @@ $log = Join-Path $PSScriptRoot 'helper-log'
 $script:shot = 0
 if (-not $function:Snap) {
   Add-Type -AssemblyName System.Drawing
-  Add-Type 'using System; using System.Runtime.InteropServices; public static class Win { public struct R { public int L, T, Rt, B; } [DllImport("user32.dll")] public static extern bool GetWindowRect(IntPtr h, out R r); [DllImport("user32.dll")] public static extern bool PrintWindow(IntPtr h, IntPtr dc, uint f); }'
+  Add-Type 'using System; using System.Runtime.InteropServices; public static class Win { public struct R { public int L, T, Rt, B; } [DllImport("user32.dll")] public static extern bool GetWindowRect(IntPtr h, out R r); [DllImport("user32.dll")] public static extern bool PrintWindow(IntPtr h, IntPtr dc, uint f); [DllImport("user32.dll")] public static extern IntPtr GetForegroundWindow(); }'
+  # Keys go only to Tally: checked right before every key, since anything can take the focus meanwhile.
+  function Is-TallyFront {
+    $p = Get-Process | Where-Object { $_.ProcessName -like 'tally*' -and $_.MainWindowHandle -ne 0 } | Select-Object -First 1
+    $p -and [Win]::GetForegroundWindow() -eq $p.MainWindowHandle
+  }
   # PrintWindow draws Tally's own window even when this console is on top of it, so a photo
   # never needs to move the focus (in step mode the next Enter must reach this window, and
   # while the owner types the portal login, focus must stay in Tally).
@@ -104,17 +108,21 @@ function Stop-Here($msg) { [console]::Beep(800, 600); throw "$msg  Photos: $log"
 function Seen($name) { (Read-Screen (Snap $name)) -replace '\s', '' }
 # Bill number as OCR can read it: the digits part (OCR sometimes reads S as 5).
 function Shows-Bill($t) { $t -like ('*' + ($script:no -replace '^SSS-', '') + '*') }
+# The number alone is not enough: on the real Day Book photo OCR read 774 as 776. Party names
+# (bigger, letters) came out exactly, so every "is this the bill?" check wants both.
+function Shows-Party($t) { ($t -replace '[^A-Za-z0-9]', '').ToUpper().Contains($script:partyKey) }
+function Is-ThisBill($t) { (Shows-Bill $t) -and (Shows-Party $t) }
 
 # One key into Tally. $gate: a pattern Tally's screen MUST show first, or nothing is sent.
 function Key($k, $gate = $null, $what = '') {
-  if (-not $Auto) { Read-Host "Next key: $k   (Enter = send, Ctrl+C = stop)" | Out-Null }
-  if (-not (Focus-Tally)) { Stop-Here 'TallyPrime window not found - stopped.' }
+  Write-Host "  key $k"
+  if (-not (Focus-Tally)) { Stop-Here 'Could not bring Tally to the front - stopped.' }
   Start-Sleep -Milliseconds 1000
   if ($gate -and (Seen "before $k") -notmatch $gate) { Stop-Here "Tally is not showing $what - stopped before pressing $k." }
+  if (-not (Is-TallyFront)) { Stop-Here "Another window took the focus - stopped before pressing $k." }
   $sh.SendKeys($k)
   Start-Sleep -Milliseconds 1500
   try { [void](Snap "after $k") } catch { }
-  Back-To-Helper
 }
 
 # One print from Tally's Print box: F5 sets the copies first, every time (Tally may remember the last ones).
@@ -131,6 +139,8 @@ function Print-Once($invCopies, $ewbCopies) {
 
 foreach ($v in $pending | Select-Object -First $Max) {
   $no = Txt $v.VOUCHERNUMBER; $script:no = $no
+  $script:partyKey = ((Txt $v.PARTYLEDGERNAME) -replace '[^A-Za-z0-9]', '').ToUpper()
+  if ($script:partyKey.Length -lt 3) { Stop-Here "$no : no party name from Tally - stopped." }
   if ($no -notmatch '^SSS-\d+/\d\d-\d\d$') { throw "Odd bill number '$no' - stopped before asking Tally anything." }
   # Built plainly: quotes nested inside "$(...)" got dropped and sent Tally a broken formula.
   $byNo = '$VoucherNumber = "' + $no + '"'
@@ -140,19 +150,24 @@ foreach ($v in $pending | Select-Object -First $Max) {
   if (-not $state) { Stop-Here "$no : Tally gave no party state - stopped before touching the bill." }
   $local = $state -eq 'Maharashtra'
   Write-Host "`n== $no  $(Txt $v.PARTYLEDGERNAME)  ($state) =="
-  foreach ($k in $OpenAndSend) {
-    $k = $k.Replace('{DATE}', $date).Replace('{NO}', $no)
-    if ($k -eq '^a') {
-      # Made by hand meanwhile? (SSS-752 was, while an old list still offered it.) Never re-save a bill that has an IRN.
-      if (Txt (Ask-Tally $byNo).IRN) { Stop-Here "$no already has its e-invoice (made by hand?) - stopped, nothing saved. Press Esc in Tally." }
-      # Save only if Tally really shows THIS bill open (a slipped step once opened SSS-738 instead of 752).
-      $t = Seen 'before-save'
-      if (-not (Shows-Bill $t) -or $t -notmatch 'Party|ledger') { Stop-Here "$no is not open in Tally - stopped BEFORE saving anything. Press Esc in Tally (don't save)." }
-      Key $k
-    }
-    elseif ($k -eq 'y') { Key 'y' 'generate.{0,3}Invoice' 'the "generate e-Invoice?" question' }
-    else { Key $k }
-  }
+  # Open the bill: Go To > Day Book > its date > Ctrl+F "Look for" its number > Enter. Each step checks the screen first.
+  Key '%g'
+  Key 'Day Book~' 'SavedViews|CreateVoucher' 'the Go To box'
+  Key '{F2}' 'VchNo' 'the Day Book'
+  Key "$date~"
+  Key '^f' 'VchNo' 'the Day Book'
+  Key "$no~" 'Lookfor' 'the "Look for" filter box'
+  $t = Seen 'filtered'
+  # Exactly one row left: the "For <date>" heading + one row = two dates on screen.
+  if (-not (Is-ThisBill $t) -or $t -notmatch 'VchNo' -or [regex]::Matches($t, '\d{1,2}-[A-Za-z]{3}-\d\d').Count -ne 2) { Stop-Here "The Day Book is not showing $no alone - stopped before opening anything." }
+  Key '~'
+  # Made by hand meanwhile? (SSS-752 was, while an old list still offered it.) Never re-save a bill that has an IRN.
+  if (Txt (Ask-Tally $byNo).IRN) { Stop-Here "$no already has its e-invoice (made by hand?) - stopped, nothing saved. Press Esc in Tally." }
+  # Save only if Tally really shows THIS bill open (a slipped step once opened SSS-738 instead of 752, another RAMSON's).
+  $t = Seen 'before-save'
+  if (-not (Is-ThisBill $t) -or $t -notmatch 'Party|ledger') { Stop-Here "$no is not open in Tally - stopped BEFORE saving anything. Press Esc in Tally (don't save)." }
+  Key '^a'
+  Key 'y' 'generate.{0,3}Invoice' 'the "generate e-Invoice?" question'
 
   # IRN. If the portal login pops up, the owner types it — this script never handles passwords.
   Write-Host 'Waiting for the IRN (up to 5 min)...'
@@ -181,7 +196,7 @@ foreach ($v in $pending | Select-Object -First $Max) {
     Print-Once 1 0
     # Second copy on its own sheet: open the bill again (Day Book still filtered to it) and print once more.
     $t = Seen 'after-first-print'
-    if (-not (Shows-Bill $t)) { Stop-Here "First copy printed; Tally is not on $no any more - print the second copy by hand." }
+    if (-not (Is-ThisBill $t)) { Stop-Here "First copy printed; Tally is not on $no any more - print the second copy by hand." }
     if ($t -notmatch 'Party|ledger') { Key '~' }
     Key '%p' 'Party|ledger' "bill $no open"
     Print-Once 1 0

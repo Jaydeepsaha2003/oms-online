@@ -12,13 +12,14 @@ function Invoke-WebRequest { param($Uri, $Method, $Body, [switch]$UseBasicParsin
 }
 function Start-Sleep {}
 function Get-Process { [pscustomobject]@{ ProcessName = 'tally'; MainWindowHandle = 1; Id = 4242 } }
+function Is-TallyFront { $true }
 # Fake Tally screen. $env:DRY_WRONG=1 -> another bill is open (the helper must stop before Ctrl+A).
 function Snap($name) { Write-Host "PHOTO: $name"; "fake.png" }
 # Otherwise every screen the helper checks for is "on show" (bill, e-invoice question, Print box, Printer Settings);
 # $env:DRY_EWB=1 adds the e-Way line to Printer Settings.
 function Read-Screen($png) {
-  if ($env:DRY_WRONG) { return 'Sales No. SSS-738/26-27 Party Alc name: MUKTI KITCHENWARE' }
-  'Sales No. SSS-747/26-27 Party Alc name: ANIL METAL Do you want to generate e-Invoice? Print Number of Copies Printer Settings' + $(if ($env:DRY_EWB) { ' Number of copies for e-Way Bill' } else { '' })
+  if ($env:DRY_WRONG) { return 'Saved Views Day Book Vch No For 24-Sep-26 24-Sep-26 MUKTI KITCHENWARE Sales No. SSS-738/26-27 Party Alc name: MUKTI KITCHENWARE Look for' }
+  'Saved Views Day Book Vch No For 24-Sep-26 24-Sep-26 ANIL METAL Sales No. SSS-747/26-27 Party Alc name: ANIL METAL Look for Do you want to generate e-Invoice? Print Number of Copies Printer Settings' + $(if ($env:DRY_EWB) { ' Number of copies for e-Way Bill' } else { '' })
 }
 function New-Object { [pscustomobject]@{} | Add-Member -PassThru ScriptMethod AppActivate { $true } | Add-Member -PassThru ScriptMethod SendKeys { param($k) Write-Host "KEY: $k" } }
 & "$PSScriptRoot\tally-einvoice-helper.ps1" -Auto
