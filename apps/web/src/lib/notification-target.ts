@@ -1,5 +1,6 @@
 import { useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
+import { hasPermission } from '@oms/shared';
 import { useAuthStore } from '@/stores/auth-store';
 
 /**
@@ -66,6 +67,28 @@ export async function takePendingNotificationTarget(): Promise<string | null> {
   }
 }
 
+/**
+ * Where a notification's page lands for THIS user. Dispatch Order needs
+ * dispatch:create, and order alerts also reach people who only see orders or
+ * Design Track — they get the order in View Orders rather than "Forbidden".
+ */
+function landingFor(url: string): string {
+  const u = new URL(url, window.location.origin);
+  const perms = useAuthStore.getState().user?.permissions ?? [];
+  if (u.pathname !== '/dispatch/new' || hasPermission(perms, 'dispatch:create')) return url;
+  const code = u.searchParams.get('code');
+  if (hasPermission(perms, 'order:view')) return `/orders${code ? `?q=${encodeURIComponent(code)}` : ''}`;
+  return hasPermission(perms, 'designtrack:view') ? '/dispatch/design-track' : '/';
+}
+
+/** Set while the router is mounted, for callers outside it (the in-app toast). */
+let go: ((url: string) => void) | null = null;
+
+/** Open a notification's page — from the in-app toast or popup. */
+export function openNotificationTarget(url: unknown): void {
+  if (isInAppPath(url)) go?.(url);
+}
+
 /** Mounted once inside the router. Handles both halves: the message a running
  *  app gets, and the stash a cold-started one has to go looking for. */
 export function useNotificationNavigation(): void {
@@ -73,11 +96,18 @@ export function useNotificationNavigation(): void {
   const isBootstrapping = useAuthStore((s) => s.isBootstrapping);
 
   useEffect(() => {
+    go = (url) => navigate(landingFor(url));
+    return () => {
+      go = null;
+    };
+  }, [navigate]);
+
+  useEffect(() => {
     if (!('serviceWorker' in navigator)) return;
     const onMessage = (e: MessageEvent) => {
       const data = e.data as { type?: string; url?: string } | undefined;
       if (data?.type !== 'NOTIFICATION_NAVIGATE') return;
-      if (isInAppPath(data.url)) navigate(data.url);
+      openNotificationTarget(data.url);
     };
     navigator.serviceWorker.addEventListener('message', onMessage);
     return () => navigator.serviceWorker.removeEventListener('message', onMessage);
@@ -89,7 +119,7 @@ export function useNotificationNavigation(): void {
     if (isBootstrapping) return;
     let cancelled = false;
     void takePendingNotificationTarget().then((url) => {
-      if (!cancelled && url) navigate(url, { replace: true });
+      if (!cancelled && url) navigate(landingFor(url), { replace: true });
     });
     return () => {
       cancelled = true;
