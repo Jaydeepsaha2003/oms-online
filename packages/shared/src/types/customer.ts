@@ -91,6 +91,9 @@ export interface CustomerDto {
   billingRate: number | null;
   transporterId: number | null;
   transportName: string | null;
+  /** E-way bill transporter for this party when not the challan's own (e.g. a booking agent's onward carrier). */
+  ewayTransporter: string | null;
+  ewayTransporterGstin: string | null;
   /** Tally "Under" account group. */
   groupId: number | null;
   bagName: string | null;
@@ -138,6 +141,8 @@ export interface CustomerInput {
   partyName: string;
   billingRate?: number | null;
   transportName?: string | null;
+  ewayTransporter?: string | null;
+  ewayTransporterGstin?: string | null;
   groupId?: number | null;
   bagName?: string | null;
   packing?: number | null;

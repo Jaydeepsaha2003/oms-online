@@ -384,6 +384,11 @@ model Customer {
   tallyLedgerGuid  String?
   tallyLedgerName  String?
   tallyGstin       String?
+  /// The transporter on this party's e-way bills, when it is not the challan's own
+  /// (one booking agent, e.g. MUMBAI CAIRRES, hands FRIENDS STEEL HOUSE to SACHDEVA
+  /// ROADLINES and KAMALA STORES to VNMS). Empty = the challan transporter's GSTIN.
+  ewayTransporter      String?
+  ewayTransporterGstin String?
 
   /// Tally "Under" — the account group this ledger belongs to.
   groupId          Int?

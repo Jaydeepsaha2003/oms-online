@@ -57,6 +57,18 @@ export class CreateCustomerDto {
   @MaxLength(255)
   transportName?: string;
 
+  /** This party's e-way bill transporter, when not the challan's (empty = use the challan's). */
+  @IsOptional()
+  @IsString()
+  @MaxLength(255)
+  ewayTransporter?: string;
+
+  /** GSTIN or TRANSIN (15 characters), or empty to clear. */
+  @IsOptional()
+  @IsString()
+  @Matches(/^([0-9A-Za-z]{15})?$/, { message: 'E-way transporter GSTIN / ID must be 15 letters and digits.' })
+  ewayTransporterGstin?: string;
+
   @IsOptional()
   @Type(() => Number)
   @IsInt()

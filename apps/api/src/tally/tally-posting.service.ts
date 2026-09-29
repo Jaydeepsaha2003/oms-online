@@ -151,7 +151,7 @@ export class TallyPostingService {
     const ledgers = new Map(parseLedgers(await this.tally.exportFromCompany('OmsDebtors', DEBTORS_TDL)).map((l) => [l.guid, l]));
     const customers = new Map(
       (
-        await this.prisma.customer.findMany({ where: { tallyLedgerGuid: { not: null } }, select: { id: true, tallyLedgerGuid: true, tallyGstin: true, city: true } })
+        await this.prisma.customer.findMany({ where: { tallyLedgerGuid: { not: null } }, select: { id: true, tallyLedgerGuid: true, tallyGstin: true, city: true, ewayTransporter: true, ewayTransporterGstin: true } })
       ).map((c) => [c.id, c]),
     );
     const { gstLockDate } = await this.tally.getConfig();
@@ -201,7 +201,15 @@ export class TallyPostingService {
           ? [partyBlock, ...blocks]
           : blocks;
     const built = all.length ? null : voucher;
-    if (built) built.transporterId = ctx.transporters.get((c.transName ?? '').trim().toUpperCase()) ?? null;
+    if (built) {
+      // The party's own e-way transporter wins (a booking agent's onward carrier, e.g.
+      // MUMBAI CAIRRES → SACHDEVA ROADLINES for FRIENDS); else the challan transporter's GSTIN.
+      const cust = c.customerId != null ? ctx.customers.get(c.customerId) : undefined;
+      if (cust?.ewayTransporterGstin) {
+        built.transporterId = cust.ewayTransporterGstin;
+        built.shippedBy = cust.ewayTransporter || built.shippedBy;
+      } else built.transporterId = ctx.transporters.get((c.transName ?? '').trim().toUpperCase()) ?? null;
+    }
     return {
       challanId: c.id,
       code: c.code,

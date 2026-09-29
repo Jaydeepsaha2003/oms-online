@@ -73,6 +73,8 @@ const EXCEL_COLUMNS: ExcelColumn[] = [
   { header: 'BILLING RATE', key: 'billingRate' },
   { header: 'TID', key: 'transporterId' },
   { header: 'TRANSPORT NAME', key: 'transportName' },
+  { header: 'E-WAY TRANSPORTER', key: 'ewayTransporter' },
+  { header: 'E-WAY TRANSPORTER GSTIN', key: 'ewayTransporterGstin' },
   { header: 'BAG NAME', key: 'bagName' },
   { header: 'PACKING', key: 'packing' },
   { header: 'FREIGHT', key: 'freight' },
@@ -454,6 +456,12 @@ export class CustomersService {
           result.errors.push(`Row ${i + 2}: invalid EMAIL "${email}" — skipped.`);
           continue;
         }
+        // E-way transporter columns: an older sheet without them leaves the saved values alone.
+        const ewayGstin = 'E-WAY TRANSPORTER GSTIN' in row ? (uc(row['E-WAY TRANSPORTER GSTIN']) ?? null) : undefined;
+        if (ewayGstin && !/^[0-9A-Z]{15}$/.test(ewayGstin)) {
+          result.errors.push(`Row ${i + 2}: E-WAY TRANSPORTER GSTIN "${ewayGstin}" must be 15 letters and digits — skipped.`);
+          continue;
+        }
 
         // All text fields are stored UPPERCASE.
         const data: Prisma.CustomerUncheckedCreateInput = {
@@ -464,6 +472,8 @@ export class CustomersService {
           billingRate: toNum(row['BILLING RATE']),
           transporterId: transporter?.id ?? null,
           transportName: uc(transportName),
+          ewayTransporter: 'E-WAY TRANSPORTER' in row ? (uc(row['E-WAY TRANSPORTER']) ?? null) : undefined,
+          ewayTransporterGstin: ewayGstin,
           bagName: uc(row['BAG NAME']),
           packing: packing ?? transporter?.packing ?? null,
           freight: freight ?? transporter?.freight ?? null,
@@ -602,6 +612,9 @@ export class CustomersService {
       billingRate: dto.billingRate ?? null,
       transporterId: transporter?.id ?? null,
       transportName: uc(dto.transportName),
+      // Only when sent, so a caller that doesn't know these fields never clears them.
+      ...(dto.ewayTransporter !== undefined ? { ewayTransporter: uc(dto.ewayTransporter) } : {}),
+      ...(dto.ewayTransporterGstin !== undefined ? { ewayTransporterGstin: uc(dto.ewayTransporterGstin) } : {}),
       groupId: dto.groupId,
       bagName: uc(dto.bagName),
       packing: dto.packing ?? transporter?.packing ?? null,
@@ -678,6 +691,8 @@ export class CustomersService {
       billingRate: r.billingRate,
       transporterId: r.transporterId,
       transportName: r.transportName,
+      ewayTransporter: r.ewayTransporter,
+      ewayTransporterGstin: r.ewayTransporterGstin,
       groupId: r.groupId,
       bagName: r.bagName,
       packing: r.packing,

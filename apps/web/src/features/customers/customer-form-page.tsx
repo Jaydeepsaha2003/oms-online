@@ -43,6 +43,8 @@ const EMPTY = {
   partyName: '',
   billingRate: '',
   transportName: '',
+  ewayTransporter: '',
+  ewayTransporterGstin: '',
   bagName: '',
   packing: '',
   freight: '',
@@ -113,6 +115,8 @@ export function CustomerFormPage() {
       partyName: existing.partyName ?? '',
       billingRate: existing.billingRate?.toString() ?? '',
       transportName: existing.transportName ?? '',
+      ewayTransporter: existing.ewayTransporter ?? '',
+      ewayTransporterGstin: existing.ewayTransporterGstin ?? '',
       bagName: existing.bagName ?? '',
       packing: existing.packing?.toString() ?? '',
       freight: existing.freight?.toString() ?? '',
@@ -226,6 +230,8 @@ export function CustomerFormPage() {
       partyName: form.partyName.trim(),
       billingRate: numOrNull(form.billingRate),
       transportName: form.transportName || null,
+      ewayTransporter: form.ewayTransporter.trim() || null,
+      ewayTransporterGstin: form.ewayTransporterGstin.trim() || null,
       bagName: form.bagName || null,
       packing: numOrNull(form.packing),
       freight: numOrNull(form.freight),
@@ -459,6 +465,15 @@ export function CustomerFormPage() {
           </Field>
           <Field label="Box Rate">
             <Input type="number" value={form.boxRate} onChange={(e) => set('boxRate', e.target.value)} />
+          </Field>
+          {/* Only when this party's goods go on with another carrier than the one above
+              (e.g. MUMBAI CAIRRES hands FRIENDS STEEL HOUSE to SACHDEVA ROADLINES).
+              Empty = the e-way bill uses the Transport Name's own GSTIN. */}
+          <Field label="E-way Transporter">
+            <Input value={form.ewayTransporter} onChange={(e) => set('ewayTransporter', e.target.value)} placeholder="Same as Transport Name" />
+          </Field>
+          <Field label="E-way Transporter GSTIN">
+            <Input value={form.ewayTransporterGstin} maxLength={15} onChange={(e) => set('ewayTransporterGstin', e.target.value.toUpperCase())} placeholder="15 letters and digits" />
           </Field>
         </Section>
 
