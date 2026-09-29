@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
+import { useSearchParams } from 'react-router-dom';
 import {
   Camera,
   CalendarClock,
@@ -153,9 +154,12 @@ function DispatchCard({
   selectMode,
   selected,
   onToggleSelect,
+  flash,
 }: {
   line: PendingLineDto;
   index: number;
+  /** One of the lines a notification was about — lit for a while. */
+  flash?: boolean;
   showRates: boolean;
   canDeletePhotos: boolean;
   onClick: () => void;
@@ -218,6 +222,7 @@ function DispatchCard({
           'border-rose-300 bg-rose-50/60 ring-1 ring-rose-200 dark:border-rose-400/30 dark:bg-rose-500/[0.06] dark:ring-rose-400/20',
         locked && !selectMode && 'opacity-60',
         selected && 'border-primary ring-2 ring-primary bg-primary/5',
+        flash && 'dn-flash-card',
       )}
     >
       <span
@@ -595,7 +600,7 @@ export function DispatchOrderPage() {
   // pool — but never while someone has a line open to dispatch (the sheet
   // below): a background refetch mid-entry would be jarring, and a successful
   // dispatch already forces its own immediate refresh via useCreateDispatch.
-  const { data, isLoading } = usePendingOrders(query, { autoRefresh: !active });
+  const { data, isLoading, isPlaceholderData } = usePendingOrders(query, { autoRefresh: !active });
   const hasFilters =
     !!dueType ||
     !!customer ||
@@ -680,6 +685,54 @@ export function DispatchOrderPage() {
   };
   const items = data?.items ?? [];
   const totalPages = data?.totalPages ?? 1;
+
+  /*
+   * Opened from an order alert: `?customer=…&order=…`. The party becomes the
+   * filter (any other filter could hide the order, so they are cleared), the
+   * page steps to the order's lines, scrolls to them and lights them for 10s.
+   * A just-placed order can take a few seconds to reach the pending pool; the
+   * 2s refresh picks it up, and the search gives up after 20s.
+   */
+  const [searchParams, setSearchParams] = useSearchParams();
+  const [flash, setFlash] = useState<{ orderId: number; lit: boolean } | null>(null);
+  useEffect(() => {
+    const party = searchParams.get('customer');
+    if (!party) return;
+    const orderId = Number(searchParams.get('order'));
+    resetFilters();
+    setCustomer(party);
+    setFlash(orderId ? { orderId, lit: false } : null);
+    setSearchParams({}, { replace: true });
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- applied once per link
+  }, [searchParams]);
+  useEffect(() => {
+    if (!flash || flash.lit || !data || isPlaceholderData) return;
+    if (data.items.some((l) => l.orderId === flash.orderId)) setFlash({ ...flash, lit: true });
+    else if (page < totalPages) setPage(page + 1);
+  }, [flash, data, isPlaceholderData, page, totalPages, setPage]);
+  useEffect(() => {
+    if (!flash) return;
+    if (!flash.lit) {
+      const giveUp = setTimeout(() => setFlash(null), 20_000);
+      return () => clearTimeout(giveUp);
+    }
+    // The table and the cards both render; the visible one is scrolled to.
+    const el = [...document.querySelectorAll<HTMLElement>('.dn-flash, .dn-flash-card')].find((e) => e.offsetParent);
+    const calm = window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+    el?.scrollIntoView({ block: 'center', behavior: calm ? 'auto' : 'smooth' });
+    if (el?.tabIndex === 0) el.focus({ preventScroll: true });
+    // Some webviews never animate a smooth scroll — land it anyway.
+    const settle = setTimeout(() => {
+      const r = el?.getBoundingClientRect();
+      if (r && (r.bottom < 0 || r.top > window.innerHeight)) el?.scrollIntoView({ block: 'center' });
+    }, 800);
+    const done = setTimeout(() => setFlash(null), 10_000);
+    return () => {
+      clearTimeout(settle);
+      clearTimeout(done);
+    };
+  }, [flash]);
+  const lit = (r: PendingLineDto) => !!flash?.lit && r.orderId === flash.orderId;
   /** Quantity totals for the lines on this page. Summed from the very same
    *  `rem*` fields the Bags/Pcs/Kgs/Box columns render, so the footer can never
    *  disagree with the grid above it. Rounded because Kgs is fractional and a
@@ -1254,6 +1307,7 @@ export function DispatchOrderPage() {
             columns={cols.visibleColumns}
             rows={items}
             rowKey={(r) => r.orderItemId}
+            rowClassName={(r) => (lit(r) ? 'dn-flash' : undefined)}
             isLoading={isLoading}
             dense
             hideSortIcon
@@ -1312,6 +1366,7 @@ export function DispatchOrderPage() {
                 selectMode={selectMode}
                 selected={selected.has(r.orderItemId)}
                 onToggleSelect={() => toggleSelect(r)}
+                flash={lit(r)}
               />
             ))
           )}

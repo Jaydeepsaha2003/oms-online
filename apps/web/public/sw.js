@@ -292,6 +292,8 @@ self.addEventListener('push', (event) => {
  *  list — `?search=` drives its search box, which matches the dispatch code and
  *  the order code among other fields. */
 function notificationTarget(d) {
+  // The server's own link wins (order alerts carry one); same-origin only.
+  if (typeof d.url === 'string' && d.url.startsWith('/') && !d.url.startsWith('//')) return d.url;
   if (d.followupId) return `/${d.kind === 'PAYMENT' ? 'crm/payments' : 'crm'}?followup=${d.followupId}`;
   if (d.kind !== 'dispatch') return '/';
   const code = d.dispatchCode || d.orderCode;

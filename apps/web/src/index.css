@@ -2832,3 +2832,21 @@ select:not(:disabled):not([multiple]):focus-visible {
 @media (prefers-reduced-motion: reduce) {
   .pls-card { animation: none; }
 }
+
+/* ── Dispatch Order: the lines an order alert was about, lit for 10s ────────
+ * Opaque tints: the pinned ORD# cell must stay solid over what scrolls under
+ * it. An animation outranks the zebra / hover utilities that paint the cells. */
+@keyframes dnFlashRow { 0%, 100% { background-color: #fff4cc; } 50% { background-color: #fcd97a; } }
+@keyframes dnFlashRowDark { 0%, 100% { background-color: #3a2f12; } 50% { background-color: #6b5014; } }
+@keyframes dnFlashCard { 0%, 100% { outline-color: rgb(245 158 11); outline-offset: 2px; } 50% { outline-color: rgb(245 158 11 / 0.35); outline-offset: 6px; } }
+.dn-flash > td { animation: dnFlashRow 1.2s ease-in-out infinite; }
+.dn-flash > td:first-child { box-shadow: inset 4px 0 0 #f59e0b; }
+.dark .dn-flash > td { animation-name: dnFlashRowDark; }
+.dn-flash-card {
+  outline: 3px solid rgb(245 158 11); animation: dnFlashCard 1.2s ease-in-out infinite;
+  background-image: linear-gradient(rgb(251 191 36 / 0.16), rgb(251 191 36 / 0.16));
+}
+@media (prefers-reduced-motion: reduce) {
+  .dn-flash > td { animation: none; background-color: #fde68a; }
+  .dn-flash-card { animation: none; }
+}

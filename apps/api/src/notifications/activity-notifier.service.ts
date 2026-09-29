@@ -49,6 +49,16 @@ export class ActivityNotifier {
     private readonly ledger: NotificationLedger,
   ) {}
 
+  /**
+   * An order alert's data, with the page it opens: Dispatch Order filtered to
+   * the party, that order's lines lit (see DispatchOrderPage). `code` lets a
+   * user who can't dispatch land on the order in View Orders instead.
+   */
+  private orderData(f: { orderId: number; orderCode?: string | null; customerName: string }) {
+    const q = new URLSearchParams({ customer: f.customerName, order: String(f.orderId), ...(f.orderCode ? { code: f.orderCode } : {}) });
+    return { kind: 'order', orderId: f.orderId, orderCode: f.orderCode ?? null, customerName: f.customerName, url: `/dispatch/new?${q}` };
+  }
+
   /** A new order was placed — dispatch and design track both need to know. */
   orderCreated(f: Actor & { orderId: number; orderCode?: string | null; customerName: string; itemCount: number }): void {
     const code = f.orderCode || `#${f.orderId}`;
@@ -56,7 +66,7 @@ export class ActivityNotifier {
       {
         title: `New order — ${f.customerName}`,
         body: this.line([code, this.items(f.itemCount), this.by(f.userName)]),
-        data: { kind: 'order', orderId: f.orderId, orderCode: f.orderCode ?? null },
+        data: this.orderData(f),
       },
       f.actorId,
       `order:created:${f.orderId}`,
@@ -72,7 +82,7 @@ export class ActivityNotifier {
       {
         title: `Order updated — ${f.customerName}`,
         body: this.line([code, f.summary ?? null, this.items(f.itemCount), this.by(f.userName)]),
-        data: { kind: 'order', orderId: f.orderId, orderCode: f.orderCode ?? null },
+        data: this.orderData(f),
       },
       f.actorId,
       `order:updated:${f.orderId}:${f.summary ?? f.itemCount}`,

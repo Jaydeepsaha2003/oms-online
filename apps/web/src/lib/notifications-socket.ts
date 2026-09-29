@@ -5,6 +5,7 @@ import { useAuthStore } from '@/stores/auth-store';
 import { queryClient } from './query';
 import { http } from './api';
 import { playTestChime } from './chime';
+import { openNotificationTarget } from './notification-target';
 
 let socket: Socket | null = null;
 
@@ -104,15 +105,26 @@ export function connectNotificationsSocket(): void {
   // listened for it here, so every targeted in-app notification was silently
   // dropped. Web Push covers the closed-app case separately.
   socket.on('notification', (n: AppNotification) => {
+    // The page the alert is about, when it names one (order alerts do).
+    const url = n.data?.url;
+    const open = () => openNotificationTarget(url);
     if (typeof Notification !== 'undefined' && Notification.permission === 'granted') {
       try {
-        new Notification(n.title, { body: n.body, icon: '/icons/icon-192-v4.png' });
+        const popup = new Notification(n.title, { body: n.body, icon: '/icons/icon-192-v4.png' });
+        popup.onclick = () => {
+          window.focus();
+          open();
+          popup.close();
+        };
       } catch {
         /* ignore — some platforms restrict constructing Notification directly */
       }
     }
     playTestChime();
-    toast.info(n.title, { description: n.body });
+    toast.info(n.title, {
+      description: n.body,
+      ...(typeof url === 'string' ? { duration: 8000, action: { label: 'View', onClick: open } } : {}),
+    });
   });
 }
 
