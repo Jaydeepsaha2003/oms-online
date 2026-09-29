@@ -151,8 +151,15 @@ foreach ($v in $pending | Select-Object -First $Max) {
   $local = $state -eq 'Maharashtra'
   Write-Host "`n== $no  $(Txt $v.PARTYLEDGERNAME)  ($state) =="
   # Open the bill: Go To > Day Book > its date > Ctrl+F "Look for" its number > Enter. Each step checks the screen first.
-  Key '%g'
-  Key 'Day Book~' 'SavedViews|CreateVoucher' 'the Go To box'
+  # From the Gateway, K ("Day BooK") opens the Day Book directly. Elsewhere Go To (Alt+G), tried twice:
+  # once the Alt+G reached Tally as nothing at all and it stayed on the Gateway.
+  $t = Seen 'start'
+  if ($t -match 'GatewayofTally' -and $t -match 'BalanceSheet' -and $t -notmatch 'SavedViews') { Key 'k' }
+  else {
+    Key '%g'
+    if ((Seen 'go-to') -notmatch 'SavedViews|CreateVoucher') { Key '%g' }
+    Key 'Day Book~' 'SavedViews|CreateVoucher' 'the Go To box'
+  }
   Key '{F2}' 'VchNo' 'the Day Book'
   Key "$date~"
   Key '^f' 'VchNo' 'the Day Book'
