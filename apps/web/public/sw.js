@@ -272,12 +272,20 @@ self.addEventListener('push', (event) => {
   } catch {
     /* non-JSON or missing payload — use the default above */
   }
+  const d = data.data ?? {};
+  // One notification per thing it is about: a newer alert on the same order /
+  // dispatch / follow-up replaces the older one, and `renotify` makes that
+  // replacement buzz again rather than update silently.
+  const about = d.orderId ?? d.dispatchId ?? d.followupId ?? d.orderItemId;
   event.waitUntil(
     self.registration.showNotification(data.title, {
       body: data.body,
       icon: '/icons/icon-192-v4.png',
       badge: '/icons/icon-192-v4.png',
-      data: data.data ?? {},
+      data: d,
+      vibrate: [200, 100, 200],
+      timestamp: Date.now(),
+      ...(about != null ? { tag: `${d.kind ?? 'oms'}:${about}`, renotify: true } : {}),
     }),
   );
 });
