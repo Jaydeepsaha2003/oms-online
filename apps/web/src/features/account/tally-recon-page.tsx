@@ -1,4 +1,4 @@
-import { Fragment, useEffect, useMemo, useRef, useState } from 'react';
+import { Fragment, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { toast } from 'sonner';
 import {
   AlertTriangle,
@@ -620,19 +620,28 @@ export function TallyReconPage() {
   const canReconcileOpening = (row: ReconRow) =>
     canMatchOpening(row) && (canAddOpening(row) ? canCreateOpeningBalance : canUpdateOpeningBalance);
 
-  const visible = useMemo(
-    () =>
-      rows.filter((r) => {
-        if (status === 'PROBLEMS' && !RECON_PROBLEM_STATUSES.includes(r.status)) return false;
-        if (status && status !== 'PROBLEMS' && r.status !== status) return false;
-        if (review && r.review !== review) return false;
-        if (vchType && r.vchType !== vchType) return false;
-        if (tallySet.size && !tallySet.has(r.ledgerName)) return false;
-        if (omsSet.size && !(r.customerName && omsSet.has(r.customerName))) return false;
-        return true;
-      }),
-    [rows, status, review, vchType, tallySet, omsSet],
+  /** The filters other than "review", so the Solved section can count its own lines. */
+  const matchesFilters = useCallback(
+    (r: ReconRow) => {
+      if (status === 'PROBLEMS' && !RECON_PROBLEM_STATUSES.includes(r.status)) return false;
+      if (status && status !== 'PROBLEMS' && r.status !== status) return false;
+      if (vchType && r.vchType !== vchType) return false;
+      if (tallySet.size && !tallySet.has(r.ledgerName)) return false;
+      if (omsSet.size && !(r.customerName && omsSet.has(r.customerName))) return false;
+      return true;
+    },
+    [status, vchType, tallySet, omsSet],
   );
+  /*
+   * Lines marked solved leave the working list: sitting among the open ones
+   * they read as still pending. They live in the Solved section above the
+   * table, opened with its button (= the "Solved" review filter).
+   */
+  const visible = useMemo(
+    () => rows.filter((r) => matchesFilters(r) && (review ? r.review === review : r.review !== 'SOLVED')),
+    [rows, matchesFilters, review],
+  );
+  const solvedHere = useMemo(() => rows.filter((r) => r.review === 'SOLVED' && matchesFilters(r)).length, [rows, matchesFilters]);
 
   /** Party blocks, Tally-style: a heading per ledger with its rows beneath. */
   const blocks = useMemo(() => {
@@ -1056,7 +1065,7 @@ export function TallyReconPage() {
               value={review}
               onChange={(v) => setReview(v as ReconReview | '')}
               options={[
-                { value: '', label: 'Any review' },
+                { value: '', label: 'Not solved' },
                 { value: 'OPEN', label: 'Unmarked' },
                 { value: 'PENDING', label: 'Pending' },
                 { value: 'SOLVED', label: 'Solved' },
@@ -1435,6 +1444,24 @@ export function TallyReconPage() {
             }} />
         ) : (
           <>
+            {/* The Solved section: its lines are kept out of the list below. */}
+            {(solvedHere > 0 || review === 'SOLVED') && (
+              <button
+                type="button"
+                onClick={() => setReview(review === 'SOLVED' ? '' : 'SOLVED')}
+                className={cn(
+                  'flex w-full shrink-0 items-center gap-2 border-b px-3 py-2 text-left text-[12.5px] font-semibold',
+                  review === 'SOLVED'
+                    ? 'bg-emerald-600 text-white'
+                    : 'bg-emerald-50 text-emerald-800 hover:bg-emerald-100 dark:bg-emerald-500/10 dark:text-emerald-300',
+                )}
+              >
+                <Check className="size-4" />
+                {review === 'SOLVED'
+                  ? `Showing ${solvedHere} solved line${solvedHere === 1 ? '' : 's'} — back to the open ones`
+                  : `Solved — ${solvedHere} line${solvedHere === 1 ? '' : 's'} kept aside. Show them`}
+              </button>
+            )}
             {/* Desktop grid. */}
             <div
               className={cn(

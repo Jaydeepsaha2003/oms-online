@@ -31,6 +31,7 @@ export function MultiSelect({
   className,
   searchPlaceholder,
   emptyText = 'Nothing to choose from.',
+  renderOption,
 }: {
   label: string;
   values: string[];
@@ -41,6 +42,8 @@ export function MultiSelect({
   className?: string;
   searchPlaceholder?: string;
   emptyText?: string;
+  /** How an option reads in the list (the value itself by default). */
+  renderOption?: (option: string) => React.ReactNode;
 }) {
   const [open, setOpen] = useState(false);
   const [query, setQuery] = useState('');
@@ -193,7 +196,7 @@ export function MultiSelect({
                   >
                     {on && <Check className="size-3" />}
                   </span>
-                  <span className="min-w-0 flex-1 truncate">{option}</span>
+                  <span className="min-w-0 flex-1 truncate">{renderOption ? renderOption(option) : option}</span>
                 </button>
               );
             })

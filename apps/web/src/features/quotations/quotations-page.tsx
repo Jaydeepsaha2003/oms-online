@@ -170,7 +170,9 @@ export function QuotationsPage() {
   const handleDelete = async (q: QuotationDto) => {
     const ok = await confirm({
       title: 'Delete quotation?',
-      description: `${q.code ?? `#${q.id}`} will be permanently removed.`,
+      description:
+        `${q.code ?? `#${q.id}`} will be permanently removed` +
+        (q.sourceOrderCode && q.status !== 'CANCELLED' ? `, together with the draft order ${q.sourceOrderCode} it was made from.` : '.'),
       confirmText: 'Delete',
       destructive: true,
     });

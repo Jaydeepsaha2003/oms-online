@@ -75,6 +75,16 @@ export interface OrderItemPhotoDto {
   createdAt: string;
 }
 
+/** A party's earlier line of the same item — for "same as last time" on a repeat order. */
+export interface PastOrderLineDto {
+  orderCode: string | null;
+  orderDate: string;
+  /** The design NAME chosen then (as the order form stores it). */
+  design: string | null;
+  designType: string | null;
+  photos: OrderItemPhotoDto[];
+}
+
 /** A photo on an order-line input: existing photos carry `id`; newly-uploaded
  *  ones carry `path` + `url` (from {@link UploadedFileDto}). */
 export interface OrderItemPhotoInput {

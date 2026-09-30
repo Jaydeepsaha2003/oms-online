@@ -58,6 +58,7 @@ import {
 } from '@oms/shared';
 import { getApiErrorMessage } from '@/lib/api';
 import { cn } from '@/lib/utils';
+import { formatDate } from '@/lib/date-format';
 import { detectSizeOrPcs, useAutoSizePcs } from '@/lib/auto-size-pcs';
 import { usePermissions } from '@/hooks/use-permissions';
 import { useConfirm } from '@/components/common/confirm';
@@ -88,7 +89,7 @@ import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip
 import { settingValues, useOrderQtyLayout, useSettings } from '@/features/settings/use-settings';
 import { useCustomerSpecialRates } from '@/features/special-rates/use-special-rates';
 import { useAgentRateAddOns } from '@/features/agent-commission/use-agent-commission';
-import { useCreateOrder, useOrder, useOrderLookups, useUpdateOrder } from './use-orders';
+import { useCreateOrder, useOrder, useOrderLookups, usePastOrderLines, useUpdateOrder } from './use-orders';
 import { useDraftPhotoCheck, useFulfillOrder } from '../dispatch/use-dispatch';
 import {
   useConvertQuotation,
@@ -1620,6 +1621,44 @@ export function OrderFormPage() {
 
   // Picking names only changes the label; the code and summed rate come from the item.
   const onDesignName = (name: string) => setEntry((e) => ({ ...e, designName: name }));
+
+  /*
+   * Repeat order: this party's earlier lines of the item just picked, one per
+   * design name, with the photos they carried. Offered, never applied on its
+   * own — the party may want something new this time.
+   */
+  const { data: pastRaw = [] } = usePastOrderLines(
+    docKind === 'order' && entry.product ? customer : '',
+    entry.itemName,
+    docKind === 'order' ? id : undefined,
+  );
+  const pastLines = useMemo(() => {
+    const seen = new Set<string>();
+    // "NA", "N/A" and blank all mean no design. Such a line is worth offering
+    // only for its photos; with none it has nothing to carry over.
+    const noDesign = (name: string) => ['', 'NA', 'N/A', '-'].includes(name.trim().toUpperCase());
+    return pastRaw
+      .map((p) => {
+        const name = designNameOf({ designName: p.design, designType: p.designType });
+        return { ...p, name: noDesign(name) ? '' : name };
+      })
+      .filter((p) => (p.name || p.photos.length) && !seen.has(`${p.name}|${p.photos.length > 0}`) && !!seen.add(`${p.name}|${p.photos.length > 0}`));
+  }, [pastRaw, designNameOf]);
+  /** Take an earlier line's design name (when it is still a valid choice for
+   *  this item) and its photos (the same files — nothing is copied). */
+  const applyPastLine = (p: (typeof pastLines)[number]) => {
+    const valid = new Set(designNameOptions.choices.map((c) => c.designName.trim().toUpperCase()));
+    const nameOk = !!p.name && p.name.split('+').every((part) => valid.has(part.trim().toUpperCase()));
+    setEntry((e) => {
+      const have = new Set((e.photos ?? []).map((ph) => ph.url));
+      const photos = [
+        ...(e.photos ?? []),
+        ...p.photos.filter((ph) => !have.has(ph.url)).map((ph) => ({ url: ph.url, path: ph.path, filename: ph.filename, mimeType: ph.mimeType, size: ph.size, title: `${p.orderCode ?? 'Earlier order'} · ${e.itemName}` })),
+      ];
+      return { ...e, ...(nameOk ? { designName: p.name } : {}), photos };
+    });
+    if (!nameOk && p.name) toast.info(`"${p.name}" is not a design name for this item any more — pick one; the photos were added.`);
+  };
 
   // The item's design code has no names in the master (or it has no design) → lock to "NA".
   const noDesignNames = designNameOptions.choices.length === 0;
@@ -3247,6 +3286,29 @@ export function OrderFormPage() {
               )}
             </div>
           </div>
+
+          {pastLines.length > 0 && (
+            <div className="flex flex-wrap items-center gap-2 rounded-md border border-sky-200 bg-sky-50/70 px-3 py-2 text-xs dark:border-sky-400/30 dark:bg-sky-400/10">
+              <span className="font-semibold text-sky-900 dark:text-sky-200">Ordered before:</span>
+              {pastLines.map((p) => (
+                <button
+                  key={`${p.orderCode}-${p.name}`}
+                  type="button"
+                  onClick={() => applyPastLine(p)}
+                  title="Use this design name and its photos"
+                  className="bg-card inline-flex items-center gap-1.5 rounded-md border border-sky-300 px-2 py-1 hover:bg-sky-100 dark:border-sky-400/40 dark:hover:bg-sky-400/15"
+                >
+                  {p.photos[0] && <img src={p.photos[0].url} alt="" className="size-6 rounded object-cover" />}
+                  <span className="font-semibold">{p.name || 'No design'}</span>
+                  <span className="text-muted-foreground">
+                    {p.orderCode ?? ''} · {formatDate(p.orderDate)}
+                    {p.photos.length ? ` · ${p.photos.length} photo${p.photos.length === 1 ? '' : 's'}` : ''}
+                  </span>
+                  <span className="font-bold text-sky-700 dark:text-sky-300">Use</span>
+                </button>
+              ))}
+            </div>
+          )}
 
           {/* Items panel toolbar: count · rows-to-show setting · Draw from booking. */}
           <div className="flex flex-wrap items-center justify-between gap-2">

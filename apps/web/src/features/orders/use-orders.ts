@@ -1,5 +1,5 @@
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
-import type { BookingQuoteLine, OrderDto, OrderFilterOptions, OrderInput, OrderItemOption, OrderItemPhotoDto, OrderList, OrderLookups, OrderLookupsWire, OrderQuery, OrderTimeline, PriceAsOfInput, UploadedFileDto } from '@oms/shared';
+import type { BookingQuoteLine, OrderDto, OrderFilterOptions, OrderInput, OrderItemOption, OrderItemPhotoDto, OrderList, OrderLookups, OrderLookupsWire, OrderQuery, OrderTimeline, PastOrderLineDto, PriceAsOfInput, UploadedFileDto } from '@oms/shared';
 import { downloadFile, http } from '@/lib/api';
 
 const KEY = ['orders'] as const;
@@ -104,6 +104,16 @@ function composeOrderLookups(wire: OrderLookupsWire): OrderLookups {
   }
   const { productRows: _rows, ...rest } = wire;
   return { ...rest, items };
+}
+
+/** This party's earlier lines of the same item (design name + photos), for a repeat order. */
+export function usePastOrderLines(customerName: string, productName: string, excludeOrderId?: number) {
+  return useQuery({
+    queryKey: [...KEY, 'past-lines', customerName, productName, excludeOrderId],
+    queryFn: () => http.get<PastOrderLineDto[]>('/orders/past-lines', { params: { customerName, productName, excludeOrderId } }),
+    enabled: !!customerName.trim() && !!productName.trim(),
+    staleTime: 60_000,
+  });
 }
 
 export function useOrderLookups() {

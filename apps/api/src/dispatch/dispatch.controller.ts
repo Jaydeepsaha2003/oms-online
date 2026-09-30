@@ -1,7 +1,7 @@
-import { Body, Controller, Delete, Get, Param, ParseIntPipe, Patch, Post, Query, Res, StreamableFile } from '@nestjs/common';
+import { Body, Controller, Delete, ForbiddenException, Get, Param, ParseIntPipe, Patch, Post, Query, Res, StreamableFile } from '@nestjs/common';
 import { ApiBearerAuth, ApiTags } from '@nestjs/swagger';
 import type { Response } from 'express';
-import { ACTIONS, DISPATCH_EXPORT_COLUMNS, DISPATCH_RATE_EXPORT_COLUMN_IDS, hasPermission, perm, RESOURCES, type DraftPhotoCheckInput } from '@oms/shared';
+import { ACTIONS, ALL_PERMISSIONS, DISPATCH_EXPORT_COLUMNS, DISPATCH_RATE_EXPORT_COLUMN_IDS, hasPermission, perm, RESOURCES, type DraftPhotoCheckInput } from '@oms/shared';
 import { Audit, SkipAudit } from '../common/decorators/audit.decorator';
 import { AnyPermission, Permissions } from '../common/decorators/permissions.decorator';
 import { CurrentUser } from '../common/decorators/current-user.decorator';
@@ -155,6 +155,38 @@ export class DispatchController {
   unlock(@Param('orderItemId', ParseIntPipe) orderItemId: number, @CurrentUser() user: AuthenticatedUser) {
     this.dispatch.releaseLock(orderItemId, { id: user.id });
     return { ok: true };
+  }
+
+  /** Modify Dispatch's Excel: every row the screen's current filters match
+   *  (not just the page shown). Rates only for users who may see them. */
+  @Get('export')
+  @Permissions(perm(R, ACTIONS.EXPORT))
+  @Audit({ action: ACTIONS.EXPORT, resource: R, description: 'Exported dispatch records' })
+  async exportList(@Query() query: DispatchQueryDto, @Res({ passthrough: true }) res: Response, @CurrentUser() user: AuthenticatedUser) {
+    // The system admin's download, not every exporter's.
+    if (!user.permissions?.includes(ALL_PERMISSIONS)) throw new ForbiddenException('Only the system admin can download dispatches.');
+    const canViewRates = hasPermission(user.permissions, perm(R, ACTIONS.VIEWRATES));
+    const rows = (await this.dispatch.exportRows(query)).map((d) => ({
+      'Dis #': d.code ?? '',
+      Date: toExcelDate(d.dispatchDate),
+      'Ord #': d.orderId,
+      'Bag booking': d.bookingId ? `BKG-${String(d.bookingId).padStart(5, '0')}` : '',
+      Customer: d.customerName,
+      Agent: d.agentName ?? '',
+      Product: d.productName || d.product || '',
+      'Design Name': d.designType ?? '',
+      Bags: d.bags,
+      Pcs: d.pcs,
+      Kgs: d.gram,
+      Box: d.box,
+      Status: d.dispatchStatus,
+      Challan: d.challanCode ?? '',
+      'Dispatched By': d.userName ?? '',
+      ...(canViewRates ? { 'Product ₹': d.productRate ?? '', 'Design ₹': d.designRate ?? '', 'Rate ₹': d.rate ?? '' } : {}),
+      Comment: d.comment ?? '',
+    }));
+    this.excel.setDownloadHeaders(res, 'dispatches');
+    return new StreamableFile(await this.excel.jsonToBuffer(rows, { sheetName: 'Dispatches' }));
   }
 
   @Get()

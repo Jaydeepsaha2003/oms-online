@@ -66,6 +66,14 @@ export class OrdersController {
     return this.orders.lookups();
   }
 
+  /** This party's earlier orders of the same item — the design name and photos
+   *  used then, offered on the order form for a repeat order. */
+  @Get('past-lines')
+  @Permissions(perm(R, ACTIONS.VIEW))
+  pastLines(@Query('customerName') customerName?: string, @Query('productName') productName?: string, @Query('excludeOrderId') excludeOrderId?: string) {
+    return this.orders.pastLines(customerName ?? '', productName ?? '', Number(excludeOrderId) || null);
+  }
+
   /** Order Modify's item-change rate check: would the newly-picked item have
    *  priced differently as of this order's own date? */
   @Post('price-as-of')

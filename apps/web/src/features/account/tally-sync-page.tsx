@@ -284,12 +284,63 @@ function PostQueue({ canPost, canManage }: { canPost: boolean; canManage: boolea
   };
   const post = useMutation({ mutationFn: (code: string) => http.post<TallyPostResult>('/tally/post', { code }), onSuccess: done, onError: (e) => toast.error(getApiErrorMessage(e)) });
   const resolve = useMutation({ mutationFn: (code: string) => http.post<TallyPostResult>('/tally/resolve', { code }), onSuccess: done, onError: (e) => toast.error(getApiErrorMessage(e)) });
-  const busy = post.isPending || resolve.isPending;
+  /** Ticked bills, by code, for "Post selected". */
+  const [picked, setPicked] = useState<Set<string>>(new Set());
+  /** Progress of a "Post selected" run. */
+  const [bulk, setBulk] = useState<{ done: number; total: number } | null>(null);
+  const busy = post.isPending || resolve.isPending || !!bulk;
 
   const checkingTally = canManage && (tallyCheck.isPending || tallyCheck.isFetching);
   const rows = checkingTally ? [] : data ?? [];
   const ready = rows.filter((r) => !r.blocks.length || r.status === 'UNKNOWN');
   const shown = showBlocked ? rows : ready;
+
+  const postable = (r: TallyQueueRow) => !r.blocks.length && (r.status === 'NOT_POSTED' || r.status === 'FAILED');
+  const pickable = shown.filter(postable);
+  const toggle = (code: string) =>
+    setPicked((prev) => {
+      const next = new Set(prev);
+      if (next.has(code)) next.delete(code);
+      else next.add(code);
+      return next;
+    });
+
+  /**
+   * Post the ticked bills ONE AT A TIME, in bill-number order (…/770, /771,
+   * /772), each exactly as its own Post button would. Stops at the first one
+   * Tally does not take, so a later bill never lands in Tally ahead of an
+   * earlier one that still needs attention.
+   */
+  const postPicked = async () => {
+    const list = pickable.filter((r) => picked.has(r.code)).sort((a, b) => a.code.localeCompare(b.code, undefined, { numeric: true }));
+    if (!list.length) return;
+    const ok = await confirm({
+      title: `Post ${list.length} bill${list.length === 1 ? '' : 's'} to Tally?`,
+      description: `One after another, in this order: ${list.map((r) => r.code).join(', ')}. If Tally refuses one, the rest wait. After posting, check them in Tally — make the e-invoices only then.`,
+      confirmText: 'Post all',
+    });
+    if (!ok) return;
+    try {
+      for (let i = 0; i < list.length; i++) {
+        setBulk({ done: i, total: list.length });
+        const r = await http.post<TallyPostResult>('/tally/post', { code: list[i].code });
+        done(r);
+        setPicked((prev) => {
+          const next = new Set(prev);
+          next.delete(list[i].code);
+          return next;
+        });
+        if (r.status !== 'POSTED') {
+          if (i < list.length - 1) toast.warning(`Stopped at ${list[i].code} — ${list.length - i - 1} bill(s) not posted.`);
+          break;
+        }
+      }
+    } catch (e) {
+      toast.error(getApiErrorMessage(e));
+    } finally {
+      setBulk(null);
+    }
+  };
 
   const onPost = async (r: TallyQueueRow) => {
     const ok = await confirm({
@@ -318,6 +369,12 @@ function PostQueue({ canPost, canManage }: { canPost: boolean; canManage: boolea
           )}
         </div>
         <div className="flex flex-wrap gap-2">
+          {canPost && picked.size > 0 && (
+            <Button size="sm" onClick={() => void postPicked()} disabled={busy}>
+              {bulk && <Loader2 className="size-3.5 animate-spin" />}
+              {bulk ? `Posting ${bulk.done + 1} of ${bulk.total}…` : `Post selected (${picked.size})`}
+            </Button>
+          )}
           {rows.length > ready.length && (
             <Button variant="outline" size="sm" onClick={() => setShowBlocked((v) => !v)}>
               {showBlocked ? 'Ready only' : `Show all (${rows.length})`}
@@ -348,6 +405,17 @@ function PostQueue({ canPost, canManage }: { canPost: boolean; canManage: boolea
             <table className="w-full text-sm">
               <thead className="text-muted-foreground text-left text-xs">
                 <tr>
+                  {canPost && (
+                    <th className="w-7 py-1.5 pr-2">
+                      <input
+                        type="checkbox"
+                        aria-label="Select all bills ready to post"
+                        disabled={!pickable.length || busy}
+                        checked={pickable.length > 0 && pickable.every((r) => picked.has(r.code))}
+                        onChange={(e) => setPicked(e.target.checked ? new Set(pickable.map((r) => r.code)) : new Set())}
+                      />
+                    </th>
+                  )}
                   <th className="py-1.5 pr-2 font-medium">Bill</th>
                   <th className="py-1.5 pr-2 font-medium">Status</th>
                   {canPost && <th className="py-1.5 font-medium" />}
@@ -358,6 +426,13 @@ function PostQueue({ canPost, canManage }: { canPost: boolean; canManage: boolea
                   const [label, tone] = POST_LABEL[r.status];
                   return (
                     <tr key={r.challanId} className="align-top">
+                      {canPost && (
+                        <td className="py-2.5 pr-2">
+                          {postable(r) && (
+                            <input type="checkbox" aria-label={`Select ${r.code}`} disabled={busy} checked={picked.has(r.code)} onChange={() => toggle(r.code)} />
+                          )}
+                        </td>
+                      )}
                       <td className="py-2 pr-2">
                         <div className="font-semibold">{r.code}</div>
                         <div className="text-muted-foreground text-xs">

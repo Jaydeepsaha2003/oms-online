@@ -550,6 +550,9 @@ const withRates = (cols: DataColumn<PendingLineDto>[]): DataColumn<PendingLineDt
   return [...cols.slice(0, i), ...RATE_COLUMNS, ...cols.slice(i)];
 };
 
+/** Share of an order line's KGS that, once dispatched, closes it as Full (62 of 70 kg). Kgs only. */
+const FULL_DISPATCH_SHARE = 62 / 70;
+
 export function DispatchOrderPage() {
   const [dueType, setDueType] = useState('');
   const [customer, setCustomer] = useState('');
@@ -1830,6 +1833,20 @@ function DispatchSheet({
           confirmText: 'Dispatch fully',
         });
         if (!ok) return;
+      } else {
+        /*
+         * Weighing rarely lands on the ordered figure, so a line counts as done
+         * once FULL_DISPATCH_SHARE of it has gone out (the owner's rule: 62 kg on
+         * a 70 kg order is full). Closed automatically — otherwise it sits
+         * pending for the last few kilos. Same share on every size: 66.4 of 75,
+         * 70.9 of 80. KGS only — a pcs count is exact, so it is never rounded up.
+         */
+        const ordered = line.kgs ?? 0;
+        const left = (line.remKgs ?? 0) - gram;
+        if (left > 1e-6 && ordered > 0 && ordered - left >= ordered * FULL_DISPATCH_SHARE) {
+          status = 'FULLY DISPATCH';
+          toast.info(`Marked Full dispatch — ${n(Math.round((ordered - left) * 1000) / 1000)} of ${n(ordered)} kg has gone out.`);
+        }
       }
     }
     doCreate(bags, pcs, gram, box, status);

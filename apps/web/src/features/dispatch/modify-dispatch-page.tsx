@@ -7,6 +7,7 @@ import {
   ChevronLeft,
   ChevronRight,
   Eye,
+  FileSpreadsheet,
   Filter,
   History,
   Layers,
@@ -39,7 +40,7 @@ import {
   type QtyField,
   type UpdateDispatchInput,
 } from '@oms/shared';
-import { getApiErrorMessage, getDuplicateDispatch } from '@/lib/api';
+import { downloadFile, getApiErrorMessage, getDuplicateDispatch } from '@/lib/api';
 import { DuplicateDispatchDialog } from './duplicate-dispatch-dialog';
 import { cn, shortDispatchCode, shortOrderCode } from '@/lib/utils';
 import { DATE_FORMATS, formatDate, useDateFormat } from '@/lib/date-format';
@@ -53,6 +54,7 @@ import { PageSizeSelect } from '@/components/common/page-size-select';
 import { RecordHistory } from '@/components/common/record-history';
 import { DataTable, type DataColumn } from '@/components/common/data-table';
 import { NativeSelect } from '@/components/common/combo';
+import { MultiSelect } from '@/components/common/multi-select';
 import { Button } from '@/components/ui/button';
 import {
   DropdownMenu,
@@ -253,6 +255,7 @@ const COLUMNS: DataColumn<DispatchDto>[] = [
     cell: (d) => (
       <span className={cn(TEXT_CELL, 'tabular-nums')}>
         {shortOrderCode(d.orderCode, d.orderId)}
+        <BookingTag d={d} />
       </span>
     ),
   },
@@ -588,6 +591,7 @@ function GroupedLineRow({
       </span>
       <span className="text-muted-foreground font-mono text-[11px]">
         {shortOrderCode(d.orderCode, d.orderId)}
+        <BookingTag d={d} />
       </span>
       <span className="min-w-0 flex-1 truncate font-semibold text-slate-800 dark:text-slate-200">
         {d.productName || d.product || '—'}
@@ -1210,6 +1214,7 @@ function ModifyDispatchCard({
             </span>
             <span className="text-muted-foreground font-mono text-[12px]">
               {shortOrderCode(d.orderCode, d.orderId)}
+              <BookingTag d={d} />
             </span>
           </div>
           <StatusBadge s={d.dispatchStatus} />
@@ -1322,6 +1327,9 @@ function ModifyDispatchCard({
 
 export function ModifyDispatchPage() {
   const { can, permissions } = usePermissions();
+  // Several-orders pick, the bag-booking marks and the Excel download are the
+  // system admin's; everyone else keeps the single order filter.
+  const isSystemAdmin = permissions.includes(ALL_PERMISSIONS);
   const confirm = useConfirm();
   // A dispatch notification still deep-links here as /dispatch?search=DSP-01234
   // (the notifier sends orderCode for exactly that). The free-text box this fed
@@ -1338,9 +1346,9 @@ export function ModifyDispatchPage() {
   const [categoryFilter, setCategoryFilter] = useState('');
   const [productFilter, setProductFilter] = useState('');
   const [designFilter, setDesignFilter] = useState('');
-  // ORD# as typed by the user — kept as a string so the box can be empty or
-  // mid-typing; only sent once it parses to a number (see `query`).
-  const [orderFilter, setOrderFilter] = useState('');
+  // ORD# multi-pick: the grid shows only the ticked orders.
+  const [orderFilters, setOrderFilters] = useState<string[]>([]);
+  const orderIds = orderFilters.join(',') || undefined;
   const [dateFrom, setDateFrom] = useState('');
   const [dateTo, setDateTo] = useState('');
   const [datePreset, setDatePreset] = useState('');
@@ -1408,9 +1416,9 @@ export function ModifyDispatchPage() {
     category: categoryFilter || undefined,
     product: productFilter || undefined,
     design: designFilter || undefined,
-    // Passed so the OTHER dropdowns narrow to the chosen order too — the same
+    // Passed so the OTHER dropdowns narrow to the chosen orders too — the same
     // cascade every filter here takes part in.
-    orderId: /^\d+$/.test(orderFilter.trim()) ? Number(orderFilter.trim()) : undefined,
+    orderIds,
   });
 
   // Item names WITHOUT their design suffix — "12 MALBORO" stands for itself and
@@ -1418,6 +1426,7 @@ export function ModifyDispatchPage() {
   // one lists every variant in the grid, where the Item column still shows the
   // full name with its design. Type in the search box to isolate one variant.
   const itemOptions = options?.productBases ?? [];
+  const bookingOrders = useMemo(() => new Set(options?.bookingOrders ?? []), [options]);
 
   // Arriving (or re-arriving) on a deep link: apply it, then drop the param so
   // the search stays the user's to clear and a later reload isn't stuck on it.
@@ -1444,13 +1453,24 @@ export function ModifyDispatchPage() {
     design: designFilter || undefined,
     dateFrom: dateFrom || undefined,
     dateTo: dateTo || undefined,
-    // Only sent once it is actually a number — a half-typed or cleared box
-    // must not narrow the list to nothing.
-    orderId: /^\d+$/.test(orderFilter.trim()) ? Number(orderFilter.trim()) : undefined,
+    orderIds,
   };
   // Live refresh every 2s — paused while the edit dialog is open, so a
   // background refetch can never reset a quantity someone is mid-editing.
   const { data, isLoading } = useDispatches(query, { autoRefresh: !editing });
+  const [exporting, setExporting] = useState(false);
+  /** The same filters as the grid, every matching row (not only this page). */
+  const exportExcel = async () => {
+    setExporting(true);
+    try {
+      const { page: _p, pageSize: _ps, ...filters } = query;
+      await downloadFile('/dispatch/export', 'dispatches.xlsx', { params: filters });
+    } catch (e) {
+      toast.error(getApiErrorMessage(e, 'Excel download failed'));
+    } finally {
+      setExporting(false);
+    }
+  };
   const del = useDeleteDispatch();
   const items = data?.items ?? [];
   const totalPages = data?.totalPages ?? 1;
@@ -1587,7 +1607,7 @@ export function ModifyDispatchPage() {
     categoryFilter ||
     productFilter ||
     designFilter ||
-    orderFilter.trim() ||
+    orderFilters.length > 0 ||
     dateActive
   );
   const resetFilters = () => {
@@ -1598,7 +1618,7 @@ export function ModifyDispatchPage() {
     setCategoryFilter('');
     setProductFilter('');
     setDesignFilter('');
-    setOrderFilter('');
+    setOrderFilters([]);
     clearDates();
     setPage(1);
   };
@@ -1727,16 +1747,37 @@ export function ModifyDispatchPage() {
               needing a second "apply" step inside the sheet. */}
           <div className="flex w-full flex-col gap-2 sm:hidden">
             {/* Order number — see the desktop copy of this control. */}
-            <NativeSelect
-              value={orderFilter}
-              onChange={(v) => {
-                setOrderFilter(v);
-                setPage(1);
-              }}
-              options={['', ...(options?.orders ?? []).map(String)]}
-              placeholder="Order #"
-              className={cn(CONTROL, 'font-medium', orderFilter && CONTROL_ON)}
-            />
+            {isSystemAdmin ? (
+              <MultiSelect
+                label="Order #"
+                itemLabel="order"
+                values={orderFilters}
+                onChange={(v) => {
+                  setOrderFilters(v);
+                  setPage(1);
+                }}
+                options={(options?.orders ?? []).map(String)}
+                renderOption={(o) => (
+                  <>
+                    {o}
+                    {bookingOrders.has(Number(o)) && <span className="ml-2 rounded-[3px] bg-amber-100 px-1 text-[10px] font-bold text-amber-800">BAG BOOKING</span>}
+                  </>
+                )}
+                searchPlaceholder="Order number…"
+                className={cn(CONTROL, 'font-medium', orderFilters.length > 0 && CONTROL_ON)}
+              />
+            ) : (
+              <NativeSelect
+                value={orderFilters[0] ?? ''}
+                onChange={(v) => {
+                  setOrderFilters(v ? [v] : []);
+                  setPage(1);
+                }}
+                options={['', ...(options?.orders ?? []).map(String)]}
+                placeholder="Order #"
+                className={cn(CONTROL, 'font-medium', orderFilters.length > 0 && CONTROL_ON)}
+              />
+            )}
             <NativeSelect
               value={customerFilter}
               onChange={(v) => {
@@ -1854,16 +1895,37 @@ export function ModifyDispatchPage() {
                 with the rest, so choosing a customer first cuts this to that
                 party's handful of orders. */}
             <div className="sm:w-32">
-              <NativeSelect
-                value={orderFilter}
-                onChange={(v) => {
-                  setOrderFilter(v);
-                  setPage(1);
-                }}
-                options={['', ...(options?.orders ?? []).map(String)]}
-                placeholder="All orders"
-                className={cn(CONTROL, 'font-medium', orderFilter && CONTROL_ON)}
-              />
+              {isSystemAdmin ? (
+                <MultiSelect
+                  label="All orders"
+                  itemLabel="order"
+                  values={orderFilters}
+                  onChange={(v) => {
+                    setOrderFilters(v);
+                    setPage(1);
+                  }}
+                  options={(options?.orders ?? []).map(String)}
+                  renderOption={(o) => (
+                    <>
+                      {o}
+                      {bookingOrders.has(Number(o)) && <span className="ml-2 rounded-[3px] bg-amber-100 px-1 text-[10px] font-bold text-amber-800">BAG BOOKING</span>}
+                    </>
+                  )}
+                  searchPlaceholder="Order number…"
+                  className={cn(CONTROL, 'font-medium', orderFilters.length > 0 && CONTROL_ON)}
+                />
+              ) : (
+                <NativeSelect
+                  value={orderFilters[0] ?? ''}
+                  onChange={(v) => {
+                    setOrderFilters(v ? [v] : []);
+                    setPage(1);
+                  }}
+                  options={['', ...(options?.orders ?? []).map(String)]}
+                  placeholder="All orders"
+                  className={cn(CONTROL, 'font-medium', orderFilters.length > 0 && CONTROL_ON)}
+                />
+              )}
             </div>
             {/* Filter order follows the house pattern: Customer, Item Name, Agent,
                 Category, Sub Category, Design Name (skipping whichever of those this
@@ -2008,7 +2070,20 @@ export function ModifyDispatchPage() {
               </Button>
             )}
 
-            <div className="ml-auto shrink-0">
+            <div className="ml-auto flex shrink-0 items-center gap-2">
+              {isSystemAdmin && (
+                <Button
+                  variant="outline"
+                  size="icon"
+                  className="size-9 border-emerald-600 bg-emerald-600 text-white hover:bg-emerald-700 hover:text-white"
+                  title="Download Excel — every row the filters match"
+                  aria-label="Download Excel"
+                  disabled={exporting}
+                  onClick={() => void exportExcel()}
+                >
+                  {exporting ? <Loader2 className="animate-spin" /> : <FileSpreadsheet />}
+                </Button>
+              )}
               <ColumnSettings
                 columns={cols.orderedReorderable}
                 hidden={cols.hidden}
@@ -2860,3 +2935,17 @@ function EditDispatchDialog({ dispatch, onClose }: { dispatch: DispatchDto; onCl
 }
 
 export default ModifyDispatchPage;
+
+/** Marks a line drawn from a bag booking, beside its order number. */
+function BookingTag({ d }: { d: DispatchDto }) {
+  const { permissions } = usePermissions();
+  if (!d.bookingId || !permissions.includes(ALL_PERMISSIONS)) return null;
+  return (
+    <span
+      className="ml-1.5 inline-flex rounded-[4px] bg-amber-100 px-1.5 py-px align-middle font-sans text-[10px] font-bold text-amber-800 ring-1 ring-amber-300 ring-inset dark:bg-amber-400/15 dark:text-amber-300 dark:ring-amber-400/30"
+      title={`Bag booking BKG-${String(d.bookingId).padStart(5, '0')}`}
+    >
+      BAG BOOKING
+    </span>
+  );
+}

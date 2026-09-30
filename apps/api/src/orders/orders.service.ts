@@ -10,6 +10,7 @@ import {
   type OrderDto,
   type OrderFilterOptions,
   type OrderItemPhotoDto,
+  type PastOrderLineDto,
   type OrderLookupsWire,
   type OrderTimeline,
   type OrderTimelineChallanRef,
@@ -887,6 +888,43 @@ export class OrdersService {
     };
   }
 
+  /**
+   * A repeat order's memory: this party's earlier lines of the same item, one
+   * per design name (latest first, up to 5), with the photos they carried — so
+   * the order form can offer "same as last time" instead of choosing again.
+   */
+  async pastLines(customerName: string, productName: string, excludeOrderId: number | null): Promise<PastOrderLineDto[]> {
+    const customer = customerName.trim().toUpperCase();
+    const item = productName.trim().toUpperCase();
+    if (!customer || !item) return [];
+    const rows = await this.prisma.orderItem.findMany({
+      where: {
+        productName: item,
+        order: { customerName: customer, status: { not: 'CANCELLED' }, ...(excludeOrderId ? { id: { not: excludeOrderId } } : {}) },
+      },
+      include: { order: { select: { code: true, orderDate: true } }, photos: { orderBy: { id: 'asc' } } },
+      orderBy: [{ order: { orderDate: 'desc' } }, { id: 'desc' }],
+      take: 50,
+    });
+    const seen = new Set<string>();
+    const out: PastOrderLineDto[] = [];
+    for (const r of rows) {
+      const design = (r.design ?? '').trim();
+      const key = `${design}|${(r.designType ?? '').trim()}`;
+      if (seen.has(key)) continue;
+      seen.add(key);
+      out.push({
+        orderCode: r.order.code,
+        orderDate: r.order.orderDate.toISOString(),
+        design: design || null,
+        designType: r.designType,
+        photos: r.photos.map((ph) => this.toPhotoDto(ph)),
+      });
+      if (out.length === 5) break;
+    }
+    return out;
+  }
+
   async lookups(): Promise<OrderLookupsWire> {
     const [customers, prodCats, subCats, products, designs, combinations, allProducts, designNames] = await Promise.all([
       this.prisma.customer.findMany({
@@ -1600,6 +1638,9 @@ export class OrdersService {
     }
 
     await this.prisma.orderItemPhoto.delete({ where: { id: photoId } });
+    // A repeat order can reuse an earlier line's photo (same file), so the file
+    // goes only when no other line still shows it.
+    if (await this.prisma.orderItemPhoto.count({ where: { path: row.path } })) return;
     try {
       await unlink(join(UPLOADS_DIR, row.path));
     } catch {

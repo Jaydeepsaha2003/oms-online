@@ -63,6 +63,11 @@ export class DispatchQueryDto extends PaginationDto {
    *  ORD-9031; the column shows the id with its ORD- prefix stripped, so what
    *  the user reads off the row is exactly what they type here. */
   @IsOptional() @Type(() => Number) @IsInt() orderId?: number;
+  /** Several order ids at once, comma-separated ("1132,1330") — Modify
+   *  Dispatch's multi-pick of the ORD# filter. */
+  @IsOptional() @IsString() orderIds?: string;
+  /** Excel export: which columns, comma-separated ids (all when empty). */
+  @IsOptional() @IsString() columns?: string;
 }
 
 export class PendingQueryDto extends PaginationDto {

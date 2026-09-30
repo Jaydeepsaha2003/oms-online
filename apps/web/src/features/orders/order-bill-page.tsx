@@ -36,6 +36,9 @@ const FALLBACK_TERMS = [
   'Any Type Of Defect/Design Issue Should Be Reported Within 15 days After Goods Recived.',
 ];
 
+/** The payment clause for a party on 0 credit days. */
+const ADVANCE_TERM = 'Payment Should Be Made With 100% Advance';
+
 // Shown until the Settings → "Sales Order footer text" list loads.
 const FALLBACK_FOOTER = ['***THIS IS COMPUTER GENRATED {DOC_TYPE}***'];
 
@@ -83,9 +86,21 @@ export function OrderBillPage() {
    * hole in it; see renderDocLines.
    */
   const rawTerms = termsData?.terms.length ? termsData.terms : FALLBACK_TERMS;
+  /*
+   * A party on 0 credit days pays up front. Its payment clause ("…Within
+   * {{pay_terms}} Days", or a hard-typed "Within 30 Days") becomes "Payment Should Be Made With 100% Advance"
+   * rather than promising payment "within 0 days" — and the clause is
+   * added when the terms carry none.
+   */
+  const advanceTerms = (lines: string[], addIfMissing: boolean) => {
+    if (order?.paymentTermDays !== 0) return lines;
+    const isPayClause = (l: string) => /\{\{\s*pay_terms\s*\}\}/i.test(l) || /^\s*payment\b.*\bwithin\b/i.test(l);
+    const out = lines.map((l) => (isPayClause(l) ? ADVANCE_TERM : l));
+    return addIfMissing && !out.includes(ADVANCE_TERM) ? [ADVANCE_TERM, ...out] : out;
+  };
   const terms = useMemo(
     () =>
-      renderDocLines(rawTerms, {
+      renderDocLines(advanceTerms(rawTerms, true), {
         pay_terms: order?.paymentTermDays ?? null,
         party: order?.customerName ?? null,
         doc_no: order ? `#${shortOrderCode(order.code, order.id)}` : null,
@@ -102,7 +117,7 @@ export function OrderBillPage() {
   const footerLines = useMemo(
     () =>
       renderDocLines(
-        (footerData?.lines.length ? footerData.lines : FALLBACK_FOOTER).map((l) => l.replaceAll('{DOC_TYPE}', docTitle)),
+        advanceTerms((footerData?.lines.length ? footerData.lines : FALLBACK_FOOTER).map((l) => l.replaceAll('{DOC_TYPE}', docTitle)), false),
         {
           pay_terms: order?.paymentTermDays ?? null,
           party: order?.customerName ?? null,

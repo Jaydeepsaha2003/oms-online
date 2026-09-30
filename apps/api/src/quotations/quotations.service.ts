@@ -200,9 +200,13 @@ export class QuotationsService {
           ' — it cannot be deleted. Change or cancel the order instead.',
       );
     }
-    // Give the parked order back before the link disappears with the row.
-    await this.unparkOrder(current.sourceOrderId);
+    // Deleting discards the quote AND the draft it was made from: the draft had
+    // become this quotation, and handing it back left an order nobody wanted
+    // sitting in View Orders as DRAFT (ORD-1324). Cancel still hands it back.
+    // Through OrdersService.remove, so any booking quantity it held is freed.
+    const parked = await this.parkedOrderFor(current.sourceOrderId);
     await this.prisma.quotation.delete({ where: { id } });
+    if (parked != null) await this.orders.remove(parked);
   }
 
   /** Mark a quotation as sent to the customer (tracked). */

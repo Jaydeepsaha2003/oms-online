@@ -110,6 +110,17 @@ const DISPATCH_DEDUPE_WINDOW_MS = 15_000;
 // vanishes at once (order edits/new orders still refresh within the TTL).
 const PENDING_CACHE_TTL_MS = 10_000;
 
+/** Modify Dispatch's list rows: the line's design (for the Design Name column)
+ *  and its bag booking, if the line was drawn from one. */
+const LIST_INCLUDE = { orderItem: { select: { design: true, designType: true, productName: true, bookingId: true } } } as const;
+
+/** The ORD# multi-pick ("1132,1330") as ids. */
+const orderIdsOf = (q: { orderIds?: string }) =>
+  (q.orderIds ?? '')
+    .split(',')
+    .map((s) => Number(s.trim()))
+    .filter((n) => Number.isInteger(n) && n > 0);
+
 @Injectable()
 export class DispatchService implements OnModuleInit {
   constructor(
@@ -750,6 +761,60 @@ export class DispatchService implements OnModuleInit {
   /* ── Dispatch records ───────────────────────────────────────────────────── */
 
   async findMany(query: DispatchQueryDto): Promise<DispatchList> {
+    const and = this.listFilters(query);
+    const where: Prisma.DispatchWhereInput = and.length ? { AND: and } : {};
+    // Quantity totals are aggregated over the WHOLE filtered set, not the page
+    // being returned. The screen shows one figure under the table, and a
+    // per-page figure is the wrong number for the question it answers ("how
+    // much has this party taken?") — filtering to a customer with 98 lines and
+    // reading a 50-line subtotal is just misleading. Same scope the grouped
+    // Date & Party view already totals over, so the two views now agree.
+    const [rows, total, agg, returnCount] = await this.prisma.$transaction([
+      this.prisma.dispatch.findMany({
+        where,
+        include: LIST_INCLUDE,
+        orderBy: [{ dispatchDate: 'desc' }, { id: 'desc' }],
+        skip: query.skip,
+        take: query.pageSize,
+      }),
+      this.prisma.dispatch.count({ where }),
+      this.prisma.dispatch.aggregate({ where, _sum: { bags: true, pcs: true, gram: true, box: true } }),
+      // Returns carry NEGATIVE quantities, so they subtract from the sums above.
+      // Counted so the UI can say the figure is net of them.
+      this.prisma.dispatch.count({ where: { AND: [...and, { dispatchStatus: RETURNED_DISPATCH_STATUS }] } }),
+    ]);
+    const challans = await this.challanByDispatch(rows.map((r) => r.id));
+    const refs = await this.returnRefs(rows.map((r) => r.id));
+    return {
+      items: rows.map((r) => this.toDto(r, challans.get(r.id), refs)),
+      total,
+      page: query.page,
+      pageSize: query.pageSize,
+      totalPages: Math.max(1, Math.ceil(total / query.pageSize)),
+      totals: {
+        bags: r2(agg._sum.bags ?? 0),
+        pcs: r2(agg._sum.pcs ?? 0),
+        kgs: r2(agg._sum.gram ?? 0),
+        box: r2(agg._sum.box ?? 0),
+        returnCount,
+      },
+    };
+  }
+
+  /** Every dispatch row the Modify Dispatch filters match, unpaged — the Excel export. */
+  async exportRows(query: DispatchQueryDto): Promise<DispatchDto[]> {
+    const and = this.listFilters(query);
+    const rows = await this.prisma.dispatch.findMany({
+      where: and.length ? { AND: and } : {},
+      include: LIST_INCLUDE,
+      orderBy: [{ dispatchDate: 'desc' }, { id: 'desc' }],
+    });
+    const challans = await this.challanByDispatch(rows.map((r) => r.id));
+    return rows.map((r) => this.toDto(r, challans.get(r.id)));
+  }
+
+  /** The list's filters as AND clauses, shared by the page and the export. */
+  private listFilters(query: DispatchQueryDto): Prisma.DispatchWhereInput[] {
     const search = query.search?.trim();
     // Build with AND so the dropdown filters and the search box compose (each can
     // contribute its own OR without clobbering the others).
@@ -771,6 +836,8 @@ export class DispatchService implements OnModuleInit {
     // match, unlike the free-text `search` below which does orderCode LIKE and
     // would let "903" also pull in ORD-9031.
     if (query.orderId != null) and.push({ orderId: query.orderId });
+    const orderIds = orderIdsOf(query);
+    if (orderIds.length) and.push({ orderId: { in: orderIds } });
     // Both ends are normalised to the LOCAL day, the same way Challans and
     // Cheques already do it. `new Date('2026-09-05')` parses a date-only string
     // as UTC midnight, but dispatchDate is not stored to one convention: most
@@ -803,43 +870,7 @@ export class DispatchService implements OnModuleInit {
         ],
       });
     }
-    const where: Prisma.DispatchWhereInput = and.length ? { AND: and } : {};
-    // Quantity totals are aggregated over the WHOLE filtered set, not the page
-    // being returned. The screen shows one figure under the table, and a
-    // per-page figure is the wrong number for the question it answers ("how
-    // much has this party taken?") — filtering to a customer with 98 lines and
-    // reading a 50-line subtotal is just misleading. Same scope the grouped
-    // Date & Party view already totals over, so the two views now agree.
-    const [rows, total, agg, returnCount] = await this.prisma.$transaction([
-      this.prisma.dispatch.findMany({
-        where,
-        include: { orderItem: { select: { design: true, designType: true, productName: true } } },
-        orderBy: [{ dispatchDate: 'desc' }, { id: 'desc' }],
-        skip: query.skip,
-        take: query.pageSize,
-      }),
-      this.prisma.dispatch.count({ where }),
-      this.prisma.dispatch.aggregate({ where, _sum: { bags: true, pcs: true, gram: true, box: true } }),
-      // Returns carry NEGATIVE quantities, so they subtract from the sums above.
-      // Counted so the UI can say the figure is net of them.
-      this.prisma.dispatch.count({ where: { AND: [...and, { dispatchStatus: RETURNED_DISPATCH_STATUS }] } }),
-    ]);
-    const challans = await this.challanByDispatch(rows.map((r) => r.id));
-    const refs = await this.returnRefs(rows.map((r) => r.id));
-    return {
-      items: rows.map((r) => this.toDto(r, challans.get(r.id), refs)),
-      total,
-      page: query.page,
-      pageSize: query.pageSize,
-      totalPages: Math.max(1, Math.ceil(total / query.pageSize)),
-      totals: {
-        bags: r2(agg._sum.bags ?? 0),
-        pcs: r2(agg._sum.pcs ?? 0),
-        kgs: r2(agg._sum.gram ?? 0),
-        box: r2(agg._sum.box ?? 0),
-        returnCount,
-      },
-    };
+    return and;
   }
 
   /**
@@ -900,7 +931,7 @@ export class DispatchService implements OnModuleInit {
         designType: true,
         dispatchStatus: true,
         orderId: true,
-        orderItem: { select: { design: true, designType: true, productName: true } },
+        orderItem: { select: { design: true, designType: true, productName: true, bookingId: true } },
       },
     });
     type Row = (typeof rows)[number];
@@ -916,6 +947,8 @@ export class DispatchService implements OnModuleInit {
       if (q.product) out = out.filter((r) => matchesProductName(r.productName || r.product, q.product!, !q.all));
       if (q.design) out = out.filter((r) => designNameOf(r) === q.design);
       if (q.orderId != null) out = out.filter((r) => r.orderId === q.orderId);
+      const ids = orderIdsOf(q);
+      if (ids.length) out = out.filter((r) => ids.includes(r.orderId));
       return out;
     };
     const poolFor = (exclude: keyof DispatchQueryDto) => apply(rows, { ...query, [exclude]: undefined } as DispatchQueryDto);
@@ -936,7 +969,9 @@ export class DispatchService implements OnModuleInit {
       // a recent one, and 1,100+ orders sorted the other way buries it. Cascades
       // like every other list here: pick a customer and this drops to just that
       // party's orders.
-      orders: [...new Set(poolFor('orderId').map((r) => r.orderId))].sort((a, b) => b - a),
+      orders: [...new Set(apply(rows, { ...query, orderId: undefined, orderIds: undefined } as DispatchQueryDto).map((r) => r.orderId))].sort((a, b) => b - a),
+      // Orders drawn from a bag booking, so the ORD# list can mark them.
+      bookingOrders: [...new Set(rows.filter((r) => r.orderItem?.bookingId).map((r) => r.orderId))],
     };
   }
 
@@ -2154,7 +2189,7 @@ export class DispatchService implements OnModuleInit {
   }
 
   private toDto(
-    r: Dispatch & { orderItem?: { design: string | null; designType: string | null; productName: string | null } },
+    r: Dispatch & { orderItem?: { design: string | null; designType: string | null; productName: string | null; bookingId?: number | null } },
     challan?: { id: number; code: string; challanStatus: string | null } | null,
     refs?: { byReturnRow: Map<number, DispatchReturnRef>; byOutward: Map<number, DispatchReturnRef[]> },
   ): DispatchDto {
@@ -2164,6 +2199,7 @@ export class DispatchService implements OnModuleInit {
       orderItemId: r.orderItemId,
       orderId: r.orderId,
       orderCode: r.orderCode,
+      bookingId: r.orderItem?.bookingId ?? null,
       customerId: r.customerId,
       customerName: r.customerName,
       agentName: r.agentName,

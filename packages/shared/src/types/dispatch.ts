@@ -217,6 +217,8 @@ export interface DispatchDto {
   orderItemId: number;
   orderId: number;
   orderCode: string | null;
+  /** The bag booking this line was drawn from, when it was (list rows only). */
+  bookingId?: number | null;
   customerId: number | null;
   customerName: string;
   agentName: string | null;
@@ -317,6 +319,8 @@ export type DispatchQuery = PaginationQuery & {
   /** Order number as shown in the ORD# column — matched on the id exactly, so
    *  903 cannot also pull in ORD-9031 the way a free-text search would. */
   orderId?: number;
+  /** Several order ids, comma-separated — the ORD# multi-pick. */
+  orderIds?: string;
 };
 /** Distinct values present in dispatch records, for the Modify Dispatch filters.
  *  `categories` is populated for BOTH the pending pool (Dispatch Order) and the
@@ -342,6 +346,8 @@ export interface DispatchFilterOptions {
    *  the ORD# filter picks from these rather than making the user type a number
    *  and hope. Only populated for the dispatch records (Modify Dispatch). */
   orders?: number[];
+  /** Of those, the orders drawn from a bag booking. */
+  bookingOrders?: number[];
 }
 /** Quantity totals for the WHOLE filtered set — every row the filters match,
  *  not just the page in `items`. A per-page subtotal answers the wrong question
