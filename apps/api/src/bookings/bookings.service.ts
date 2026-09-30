@@ -1575,19 +1575,23 @@ export class BookingsService {
     if (!ids.length) return out;
     const items = await this.prisma.orderItem.findMany({
       where: { bookingId: { in: ids } },
-      select: { bookingId: true, order: { select: { id: true, code: true, orderDate: true, status: true } } },
+      select: { bookingId: true, status: true, bags: true, gram: true, order: { select: { id: true, code: true, orderDate: true, status: true } } },
       orderBy: [{ orderId: 'asc' }],
     });
     for (const it of items) {
       if (it.bookingId == null) continue;
       const list = out.get(it.bookingId) ?? [];
-      if (list.some((o) => o.id === it.order.id)) continue; // one entry per order, not per line
-      list.push({
-        id: it.order.id,
-        code: it.order.code ?? `ORD-${it.order.id}`,
-        orderDate: it.order.orderDate.toISOString(),
-        status: it.order.status,
-      });
+      // One entry per order, not per line — its lines add up into it.
+      let o = list.find((x) => x.id === it.order.id);
+      if (!o) {
+        o = { id: it.order.id, code: it.order.code ?? `ORD-${it.order.id}`, orderDate: it.order.orderDate.toISOString(), status: it.order.status, lines: 0, bags: 0, kgs: 0 };
+        list.push(o);
+      }
+      if (it.status !== 'CANCELLED') {
+        o.lines += 1;
+        o.bags = round2(o.bags + (it.bags ?? 0));
+        o.kgs = round2(o.kgs + (it.gram ?? 0));
+      }
       out.set(it.bookingId, list);
     }
     return out;

@@ -37,6 +37,10 @@ export interface BookingLinkedOrderDto {
   /** The date the customer asked for THIS list of items — not the booking date. */
   orderDate: string;
   status: string;
+  /** What this order drew from the booking: its live lines, and their bags / kgs. */
+  lines: number;
+  bags: number;
+  kgs: number;
 }
 
 export interface BookingDto {

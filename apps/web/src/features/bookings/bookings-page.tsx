@@ -20,6 +20,7 @@ import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip
 import { Sheet, SheetContent, SheetFooter, SheetHeader, SheetTitle } from '@/components/ui/sheet';
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuSeparator, DropdownMenuTrigger } from '@/components/ui/dropdown-menu';
 import { NativeSelect } from '@/components/common/combo';
+import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from '@/components/ui/dialog';
 import { PageSizeSelect } from '@/components/common/page-size-select';
 import { PrecloseBookingDialog, AssignOldOrderDialog } from './booking-action-dialogs';
 import { useBookings, useCancelBooking, useDeleteBooking } from './use-bookings';
@@ -55,14 +56,20 @@ const num = (v: number) => v.toLocaleString('en-IN');
  * (57 bags + 4,400 kgs) / (81 bags + 0 kgs) = 5,502%, clamped to a confident
  * "100%" on a booking with 24 bags still to draw.
  */
+/** Order chips shown in a row before the rest fold into "+N more". */
+const ORDERS_SHOWN = 5;
+
 /**
  * Every order this booking was drawn into, each with its own date — a booking
  * is filled by as many dated orders as the customer asks for, so showing only
- * the first one hid the rest.
+ * the first one hid the rest. The first few show as chips; tapping them opens
+ * the full list with what each order drew.
  */
-function LinkedOrders({ booking }: { booking: Pick<BookingDto, 'orders'> }) {
+function LinkedOrders({ booking }: { booking: Pick<BookingDto, 'orders' | 'code' | 'customerName'> }) {
+  const [open, setOpen] = useState(false);
   const orders = booking.orders ?? [];
   if (!orders.length) return <span className="text-muted-foreground">—</span>;
+  const more = orders.length - ORDERS_SHOWN;
   // Chips, not bare numbers. Two orders side by side read as one long number
   // ("1132 1282") when nothing separates them — which is exactly how many
   // orders a booking gets drawn into.
@@ -71,22 +78,102 @@ function LinkedOrders({ booking }: { booking: Pick<BookingDto, 'orders'> }) {
     // each order on its own line and made EVERY row in the table as tall as the
     // busiest one. The cell is already `whitespace-nowrap`, so letting the chips
     // sit in a row lets the column take the width it actually needs.
-    <span className="inline-flex flex-nowrap items-center gap-1 align-middle">
-      {orders.map((o) => (
-        <span
-          key={o.id}
-          className={cn(
-            'rounded-[3px] px-1.5 py-px font-mono text-[11px] font-semibold whitespace-nowrap ring-1 ring-inset',
-            o.status === 'CANCELLED'
-              ? 'text-muted-foreground line-through ring-border bg-muted'
-              : 'bg-sky-50 text-sky-700 ring-sky-200 dark:bg-sky-500/10 dark:text-sky-300 dark:ring-sky-400/30',
-          )}
-          title={`${o.code} · ${formatDate(o.orderDate)}`}
-        >
-          {shortOrderCode(o.code)}
-        </span>
-      ))}
-    </span>
+    <>
+      <button
+        type="button"
+        data-pill // not squared to icon size by the tables' row-button rule
+        // The row's own click opens New Order — this one opens the list instead.
+        onClick={(e) => {
+          e.stopPropagation();
+          setOpen(true);
+        }}
+        // Phones: the chips share the card's last line with the progress bar, so
+        // they wrap there; the desktop cell keeps them on one line (see above).
+        className="inline-flex min-w-0 cursor-pointer flex-wrap items-center justify-end gap-1 rounded-[4px] align-middle hover:opacity-80 focus-visible:ring-2 focus-visible:ring-sky-400 focus-visible:outline-none sm:flex-nowrap sm:justify-start"
+        title={`${orders.length} order${orders.length === 1 ? '' : 's'} — see them all`}
+      >
+        {orders.slice(0, ORDERS_SHOWN).map((o) => (
+          <span
+            key={o.id}
+            className={cn(
+              'rounded-[3px] px-1.5 py-px font-mono text-[11px] font-semibold whitespace-nowrap ring-1 ring-inset',
+              o.status === 'CANCELLED'
+                ? 'text-muted-foreground line-through ring-border bg-muted'
+                : 'bg-sky-50 text-sky-700 ring-sky-200 dark:bg-sky-500/10 dark:text-sky-300 dark:ring-sky-400/30',
+            )}
+            title={`${o.code} · ${formatDate(o.orderDate)}`}
+          >
+            {shortOrderCode(o.code)}
+          </span>
+        ))}
+        {more > 0 && (
+          <span className="rounded-[3px] bg-slate-100 px-1.5 py-px text-[11px] font-bold whitespace-nowrap text-slate-700 ring-1 ring-slate-300 ring-inset dark:bg-white/10 dark:text-slate-200 dark:ring-white/20">
+            +{more} more
+          </span>
+        )}
+      </button>
+      {open && <BookingOrdersDialog booking={booking} onClose={() => setOpen(false)} />}
+    </>
+  );
+}
+
+/** Every order a booking was drawn into, with what each one took from it. */
+function BookingOrdersDialog({ booking, onClose }: { booking: Pick<BookingDto, 'orders' | 'code' | 'customerName'>; onClose: () => void }) {
+  const navigate = useNavigate();
+  const { can } = usePermissions();
+  const orders = booking.orders ?? [];
+  const live = orders.filter((o) => o.status !== 'CANCELLED');
+  const bags = live.reduce((n, o) => n + o.bags, 0);
+  const kgs = live.reduce((n, o) => n + o.kgs, 0);
+  const qty = (n: number) => n.toLocaleString('en-IN', { maximumFractionDigits: 2 });
+  return (
+    <Dialog open onOpenChange={(o) => !o && onClose()}>
+      {/* Clicks inside travel up the React tree to the row, whose click opens
+          New Order — stopped here so the list can be used. */}
+      <DialogContent className="max-w-[min(96vw,42rem)] gap-3 font-sans sm:max-w-2xl" onClick={(e) => e.stopPropagation()}>
+        <DialogHeader>
+          <DialogTitle className="text-[16px]">Orders on {booking.code}</DialogTitle>
+          <DialogDescription className="text-[12.5px]">
+            {booking.customerName} · {orders.length} order{orders.length === 1 ? '' : 's'} · {qty(bags)} bags · {qty(kgs)} kgs drawn
+          </DialogDescription>
+        </DialogHeader>
+        <div className="max-h-[60vh] overflow-auto rounded-md border">
+          <table className="w-full text-[13px]">
+            <thead className="bg-muted sticky top-0 text-[11px] tracking-wide uppercase">
+              <tr>
+                <th className="px-3 py-2 text-left">Order</th>
+                <th className="px-3 py-2 text-left">Order date</th>
+                <th className="px-3 py-2 text-right">Lines</th>
+                <th className="px-3 py-2 text-right">Bags</th>
+                <th className="px-3 py-2 text-right">Kgs</th>
+                <th className="px-3 py-2 text-left">Status</th>
+              </tr>
+            </thead>
+            <tbody>
+              {orders.map((o) => {
+                const cancelled = o.status === 'CANCELLED';
+                const openable = can('order:view');
+                return (
+                  <tr
+                    key={o.id}
+                    className={cn('border-t', openable && 'hover:bg-muted/60 cursor-pointer', cancelled && 'text-muted-foreground line-through')}
+                    onClick={openable ? () => navigate(`/orders?q=${encodeURIComponent(o.code)}`) : undefined}
+                    title={openable ? `Open ${o.code} in View Orders` : undefined}
+                  >
+                    <td className="px-3 py-2 font-mono font-semibold whitespace-nowrap">{o.code}</td>
+                    <td className="px-3 py-2 whitespace-nowrap tabular-nums">{formatDate(o.orderDate)}</td>
+                    <td className="px-3 py-2 text-right tabular-nums">{o.lines}</td>
+                    <td className="px-3 py-2 text-right tabular-nums">{qty(o.bags)}</td>
+                    <td className="px-3 py-2 text-right tabular-nums">{qty(o.kgs)}</td>
+                    <td className="px-3 py-2 text-[12px] font-semibold whitespace-nowrap">{o.status}</td>
+                  </tr>
+                );
+              })}
+            </tbody>
+          </table>
+        </div>
+      </DialogContent>
+    </Dialog>
   );
 }
 
@@ -194,7 +281,8 @@ export function BookingsPage() {
   const totalPages = data?.totalPages ?? 1;
 
   /** Open the normal item editor with this specific booking selected. */
-  const goToNewOrder = (b: BookingDto) => navigate('/orders/new', { state: { customerName: b.customerName, bookingId: b.id, openBookingDraw: true } });
+  const goToNewOrder = (b: BookingDto) =>
+    navigate('/orders/new', { state: { customerName: b.customerName, bookingId: b.id, openBookingDraw: true, backTo: '/bookings' } });
 
   const handleCancel = async (b: BookingDto) => {
     const ok = await confirm({
@@ -517,7 +605,7 @@ export function BookingsPage() {
           '[&_thead_th_button]:cursor-pointer',
           '[&_thead_th:hover]:from-blue-900 [&_thead_th:hover]:to-indigo-900',
           '[&_td]:py-1 [&_td]:px-3 [&_th]:px-3',
-          '[&_tbody_button:not([role=switch]):not([role=checkbox])]:size-7',
+          '[&_tbody_button:not([role=switch]):not([role=checkbox]):not([data-pill])]:size-7',
           '[&_tbody_tr]:border-b [&_tbody_tr]:border-slate-200 dark:[&_tbody_tr]:border-white/10',
           '[&_td]:border-r [&_td]:border-slate-200 dark:[&_td]:border-white/10 [&_td:last-child]:border-r-0',
           '[&_tbody_tr:nth-child(even)_td]:bg-slate-100/80 dark:[&_tbody_tr:nth-child(even)_td]:bg-white/[0.04]',
