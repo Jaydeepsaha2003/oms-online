@@ -174,12 +174,24 @@ export function buildSalesVoucher(
   const box = billedAtSpecialRate ? 0 : r2(n(c.pouch));
   if (packing < 0 || box < 0) blocks.push('Packing, freight or box charge is negative — correct the invoice first.');
   const taxable = r2(goods + packing + box);
-  // Tax to the paisa, as Tally and the e-invoice compute it; OMS rounds its
-  // own tax to the rupee, and that difference is what ROUND OFF carries.
-  // Exactly Tally's arithmetic (value × rate%, then round) — r2's epsilon nudge
-  // rounded 6885.975 up where Tally rounds it down, a paisa off on some bills.
-  const half = Math.round(taxable * (rate / 200) * 100) / 100;
-  const tax = intra ? r2(half * 2) : Math.round(taxable * (rate / 100) * 100) / 100;
+  // Tax to the paisa exactly as Tally computes it (its e-invoice check refuses a
+  // paisa off — SSS-781): packing + box are spread over the item lines by value
+  // ("Based on Value"), each share rounded, the remainder on the last line; then
+  // each line's tax is rounded half-up and the lines added. Matched 1025 of 1027
+  // FY 26-27 tax entries; the other 2 were SSS-781's own, sent the old way.
+  // OMS rounds its own tax to the rupee; that difference is what ROUND OFF carries.
+  const paise = lines.map((l) => Math.round(l.amount * 100));
+  const goodsP = paise.reduce((a, b) => a + b, 0);
+  let chargesLeft = Math.round((packing + box) * 100);
+  const bases = paise.map((p, i) => {
+    const share = i === paise.length - 1 ? chargesLeft : Math.round((Math.round((packing + box) * 100) * p) / goodsP);
+    chargesLeft -= share;
+    return p + share;
+  });
+  // Integer paise maths: pct×10 is whole for every GST rate (2.5% → 25), so .5 cases round exactly.
+  const lineTax = (pct: number) => bases.reduce((s, b) => s + Math.round((b * Math.round(pct * 10)) / 1000), 0) / 100;
+  const half = lineTax(rate / 2);
+  const tax = intra ? r2(half * 2) : lineTax(rate);
   if (Math.abs(tax - n(c.tax)) > 1.01) blocks.push(`GST on the invoice (₹${n(c.tax)}) is not ${rate}% of ₹${taxable} — tax was typed by hand.`);
   const tcs = billedAtSpecialRate ? 0 : r2(n(c.tcs));
   const total = n(c.b);

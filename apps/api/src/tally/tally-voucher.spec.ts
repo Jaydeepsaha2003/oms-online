@@ -177,3 +177,18 @@ test('packing/box are marked for GST and IGST carries its rate, as on Tally-ente
   assert.match(x, /<RATEOFINVOICETAX\.LIST TYPE="Number"><RATEOFINVOICETAX>5<\/RATEOFINVOICETAX><\/RATEOFINVOICETAX\.LIST><ROUNDTYPE>Normal Rounding<\/ROUNDTYPE><LEDGERNAME>IGST 5%<\/LEDGERNAME>/);
   assert.match(x, /<LEDGERENTRIES\.LIST><LEDGERNAME>ROUND OFF<\/LEDGERNAME>/);
 });
+
+test('SSS-781: tax as Tally computes it - packing spread over lines by value, each line rounded (e-invoice refused 714.15)', () => {
+  const kg = (kgs: number, price: number) => ({ productName: 'X', unit: 'KGS', pCategory: 'GLASS', kgs, pcs: 0, price });
+  const { voucher, blocks } = buildSalesVoucher(
+    { ...base, code: 'SSS/26-27/781', gst: 5, tax: 1428, total: 29994, b: 29994, packing: 150, freight: 100, pouch: 0, items: [kg(21, 385), kg(27, 370), kg(26.6, 385)] },
+    { name: 'MUKTI KITCHENWARE PVT LTD.', state: 'Maharashtra' },
+    'Maharashtra',
+    'SSS-781/26-27',
+  );
+  assert.deepEqual(blocks, []);
+  const l = Object.fromEntries(voucher.ledgers.map((x: { name: string; amount: number }) => [x.name, x.amount]));
+  assert.equal(l['CGST'], 714.16);
+  assert.equal(l['SGST'], 714.16);
+  assert.equal(l['ROUND OFF'], -0.32);
+});
