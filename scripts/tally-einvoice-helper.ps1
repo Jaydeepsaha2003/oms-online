@@ -221,6 +221,8 @@ foreach ($v in $pending | Select-Object -First $Max) {
     if (-not (Is-ThisBill $t)) { Stop-Here "First copy printed; Tally is not on $no any more - print the second copy by hand." }
     if ($t -notmatch 'Party|ledger') { Key '~' }
     Key '%p' 'Party|ledger' "bill $no open"
+    # Alt+P only opens the top-bar Print menu (Current highlighted, seen on SSS-784); Enter picks Current = the Print box.
+    Key '~' 'Current' 'the Print menu'
     Print-Once 1 0
     Key '{ESC}'
   }

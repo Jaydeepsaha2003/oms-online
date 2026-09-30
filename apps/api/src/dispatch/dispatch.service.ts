@@ -1265,14 +1265,9 @@ export class DispatchService implements OnModuleInit {
    * action: the operator never sees an order, and the rest of the system never
    * sees anything unusual.
    *
-   * Quantities are entered in BOXES and everything else is derived HERE, from
-   * the product master and the party's bag weight:
-   *
-   *     boxes x pcs-per-box = pcs,  pcs x weight = kgs,  kgs / kgsPerBag = bags
-   *
-   * Deriving it client-side would let a tampered or merely stale form decide
-   * how much comes off the booking, which is the one number this screen exists
-   * to keep honest.
+   * Each line is entered in pcs (or boxes); kgs follow from the product master.
+   * The bags come off the booking as ONE figure for the whole dispatch — how
+   * many bags it actually went in — split equally across the lines.
    */
   async dispatchFromBooking(
     dto: DispatchFromBookingDto,
@@ -1295,17 +1290,6 @@ export class DispatchService implements OnModuleInit {
      */
     await this.assertNotOnHold(booking.customerId, booking.customerName);
 
-    const bagWeight = booking.customerId
-      ? await this.prisma.customerBagWeight.findFirst({ where: { customerId: booking.customerId, category } })
-      : null;
-    if (!bagWeight?.kgsPerBag) {
-      // Without this, bags cannot be derived — and bags are what the booking is
-      // reserved in, so every draw-down would silently record zero.
-      throw new BadRequestException(
-        `No bag weight is set for ${booking.customerName} in ${category}. Set it under Special Rates -> Bag Weight before dispatching against a booking.`,
-      );
-    }
-
     // Price and size every line up front, so a bad product name fails before
     // anything is created rather than half way down the list.
     const priced = await Promise.all(
@@ -1313,53 +1297,59 @@ export class DispatchService implements OnModuleInit {
         const subCategory = uc(line.subCategory) ?? '';
         const product = uc(line.product) ?? '';
         const box = toNum(line.box) ?? 0;
+        const typedPcs = toNum(line.pcs) ?? 0;
         if (!product || !subCategory) throw new BadRequestException('Every line needs an item and a size.');
-        if (box <= 0) throw new BadRequestException(`${product}: enter the number of boxes.`);
+        if (box <= 0 && typedPcs <= 0) throw new BadRequestException(`${product}: enter pcs or boxes.`);
 
         const row = await this.prisma.product.findFirst({ where: { category, subCategory, product } });
         if (!row) throw new BadRequestException(`${product} (${subCategory}) is not in the ${category} product list.`);
-        if (!row.pcs) throw new BadRequestException(`${product}: the product master has no pcs-per-box, so boxes cannot be converted.`);
+        const designType = uc(line.designType) || null;
+        if (designType && !(await this.prisma.design.count({ where: { category, subCategory, designType, active: true } }))) {
+          throw new BadRequestException(`${product}: design ${designType} is not in the ${category} ${subCategory} design list.`);
+        }
+        if (!row.pcs && typedPcs <= 0) throw new BadRequestException(`${product}: the product master has no pcs-per-box, so boxes cannot be converted.`);
         if (!row.weight) throw new BadRequestException(`${product}: the product master has no per-piece weight, so kgs cannot be worked out.`);
 
-        const pcs = round3(box * row.pcs);
-        const kgs = round3(pcs * row.weight);
-        /*
-         * 3dp, deliberately FINER than the 2dp the booking itself records.
-         *
-         * A cup bag is a weight equivalent, so a few boxes is a fraction of one
-         * bag — 10 boxes of 6.5s is 0.086. The booking rounds the SUM of its
-         * lines to 2dp, so keeping each line at 3dp lets those fractions add up
-         * before any rounding happens. Rounding here instead would push every
-         * line up to the next paisa of a bag (0.086 -> 0.09) and compound that
-         * against the party on every dispatch; kgs, which is exact, is the
-         * control either way.
-         *
-         * The consequence to expect: one line's `bags` will not always equal
-         * the booking's own delta for that line. The TOTAL is what agrees.
-         */
-        const bags = round3(kgs / bagWeight.kgsPerBag);
+        const pcs = round3(typedPcs > 0 ? typedPcs : box * (row.pcs ?? 0));
+        const kgs = round3((toNum(line.gram) ?? 0) > 0 ? toNum(line.gram)! : pcs * row.weight);
+        const bags = 0; // set from the dispatch's total below
         // The bill carries the booking's frozen booking-date rate; this is the same figure, for the result.
-        const frozen = await this.bookings.priceOrderLine(booking.id, { pCategory: category, subCategory, product, productName: product, psize: row.size });
+        const frozen = await this.bookings.priceOrderLine(booking.id, { pCategory: category, subCategory, product, productName: product, psize: row.size, designType });
         return {
           subCategory,
           product,
-          box,
+          box: box > 0 ? box : null,
           pcs,
           kgs,
           bags,
           size: row.size,
           rate: frozen?.rate ?? row.rate ?? 0,
+          designType,
+          design: uc(line.design) || 'NA',
+          photos: line.photos ?? [],
           comment: line.comment ?? null,
         };
       }),
     );
 
-    // Does the booking actually have this much left? Same gate the order form
-    // goes through, so the two routes cannot drift apart.
+    // The operator says how many bags the whole dispatch went in. It is split
+    // equally across the lines (1 bag / 5 items = 0.2 each; the last absorbs
+    // rounding), so the lines add up to exactly that many bags off the booking.
+    const totalBags = round3(dto.bags);
+    let bagsLeft = totalBags;
+    priced.forEach((l, i) => {
+      l.bags = i === priced.length - 1 ? round3(bagsLeft) : round3(totalBags / priced.length);
+      bagsLeft -= l.bags;
+    });
+
+    // Ownership and status only — what went out ships even past what is left
+    // on the booking (the booking then just reads fully drawn).
     await this.bookings.assertDrawable(
       dto.bookingId,
       booking.customerName,
       priced.map((l) => ({ pCategory: category, bags: l.bags, kgs: l.kgs })),
+      undefined,
+      true,
     );
 
     /*
@@ -1377,7 +1367,11 @@ export class DispatchService implements OnModuleInit {
           pCategory: category,
           subCategory: l.subCategory,
           product: l.product,
-          productName: l.product,
+          // Named like a New Order line: "{size} {product} {design}" — "8 BOROSIL CUP".
+          productName: [l.size, l.product, l.designType].filter((x) => x != null && x !== '').join(' '),
+          designType: l.designType,
+          design: l.design,
+          photos: l.photos,
           psize: l.size,
           calField: 'PCS',
           bags: l.bags,
@@ -1401,7 +1395,7 @@ export class DispatchService implements OnModuleInit {
             bags: l.bags,
             pcs: l.pcs,
             gram: l.kgs,
-            box: l.box,
+            box: l.box ?? undefined,
             dispatchStatus: 'FULLY DISPATCH',
             comment: l.comment ?? undefined,
             ...(dto.dispatchDate ? { dispatchDate: dto.dispatchDate } : {}),
@@ -1440,7 +1434,7 @@ export class DispatchService implements OnModuleInit {
       orderCode: after.orderCode,
       lines,
       totals: {
-        box: round3(priced.reduce((t, l) => t + l.box, 0)),
+        box: round3(priced.reduce((t, l) => t + (l.box ?? 0), 0)),
         pcs: round3(priced.reduce((t, l) => t + l.pcs, 0)),
         kgs: round3(priced.reduce((t, l) => t + l.kgs, 0)),
         bags: round3(priced.reduce((t, l) => t + l.bags, 0)),

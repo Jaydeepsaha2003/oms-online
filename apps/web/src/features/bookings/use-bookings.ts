@@ -56,6 +56,15 @@ export function useActiveCustomerBookings(customerName: string) {
  * The server decides that (see BookingsService.drawableFor) rather than the
  * screen filtering a list it would have to keep in step.
  */
+/** Every party's bookings still drawable in a category — Booking Dispatch's pick list. */
+export function useAllDrawableBookings(pCategory: string) {
+  return useQuery({
+    queryKey: [...KEY, 'drawable', '*', pCategory],
+    queryFn: () => http.get<BookingDrawOptionDto[]>('/bookings/drawable', { params: { pCategory } }),
+    staleTime: 5_000,
+  });
+}
+
 export function useDrawableBookings(customerName: string | null, pCategory: string | null, enabled: boolean) {
   return useQuery({
     queryKey: [...KEY, 'drawable', customerName, pCategory],

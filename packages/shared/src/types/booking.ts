@@ -10,6 +10,7 @@
  */
 
 import type { Paginated, PaginationQuery } from './common';
+import type { OrderItemPhotoInput } from './order';
 
 /**
  * Lifecycle of a booking as it is drawn down by conversions.
@@ -310,6 +311,10 @@ export interface BookingDrawOptionDto {
   pCategory: string;
   remainingBags: number;
   remainingKgs: number;
+  /** The party the booking is for. */
+  customerName?: string;
+  /** That party's bag weight in this category (1 bag = N kgs); null when not set. */
+  kgsPerBag?: number | null;
 }
 
 /**
@@ -356,8 +361,16 @@ export interface BookingDispatchLineInput {
   /** The size class — `4-PCS-CUP-FG` and friends. */
   subCategory: string;
   product: string;
-  /** Boxes going out. Pcs, kgs and bags are computed from this. */
-  box: number;
+  /** Boxes going out; may be left out when pcs is typed. */
+  box?: number | null;
+  /** Pcs going out. When given it wins; otherwise pcs = box × pcs-per-box. */
+  pcs?: number | null;
+  /** Typed kgs; falls back to pcs × per-piece weight. */
+  gram?: number | null;
+  designType?: string | null;
+  /** Design name ("NA" when the design has none). */
+  design?: string | null;
+  photos?: OrderItemPhotoInput[];
   comment?: string | null;
 }
 
@@ -365,6 +378,8 @@ export interface BookingDispatchInput {
   bookingId: number;
   /** Defaults to today. A past date routes through the usual approval path. */
   dispatchDate?: string | null;
+  /** How many bags the whole dispatch went in — this is what comes off the booking. */
+  bags: number;
   lines: BookingDispatchLineInput[];
 }
 
@@ -372,7 +387,7 @@ export interface BookingDispatchInput {
 export interface BookingDispatchLineResult {
   product: string;
   subCategory: string;
-  box: number;
+  box: number | null;
   pcs: number;
   kgs: number;
   bags: number;
@@ -403,7 +418,7 @@ export interface BookingDispatchOptions {
   bookings: BookingDrawOptionDto[];
   /** Each item's rate as frozen on each booking (booking-date chart + the
    *  party's special then) — what the bill will carry. */
-  frozenRates: { bookingId: number; subCategory: string; product: string; rate: number }[];
+  frozenRates: { bookingId: number; subCategory: string; product: string; designType: string | null; rate: number }[];
   /** The sellable items in this category, with the figures the arithmetic
    *  needs. */
   items: BookingDispatchItemOption[];

@@ -1737,12 +1737,9 @@ export class OrdersService {
     }
   }
 
-  /** Reject a save that would draw more than a booking has left — ownership,
-   *  status, total and per-category limits all come from the one gate in
-   *  {@link BookingsService.assertDrawable}, so this path and the standalone
-   *  convert route can't disagree. When updating, `excludeOrderId` drops this
-   *  order's own current draw from the tally so its kept lines aren't counted
-   *  against it. */
+  /** Ownership and status of every drawn booking, from the one gate in
+   *  {@link BookingsService.assertDrawable}. Quantity is not limited: a line may
+   *  draw past what the booking has left, which then just reads fully drawn. */
   private async assertBookingCapacity(
     items: Record<string, unknown>[],
     customerName: string | null,
@@ -1757,7 +1754,7 @@ export class OrdersService {
       byBooking.set(bookingId, lines);
     }
     for (const [bookingId, lines] of byBooking) {
-      await this.bookings.assertDrawable(bookingId, customerName, lines, excludeOrderId);
+      await this.bookings.assertDrawable(bookingId, customerName, lines, excludeOrderId, true);
     }
   }
 

@@ -17,7 +17,6 @@ import {
   ArrowRightLeft,
   BadgePercent,
   Brush,
-  Camera,
   Check,
   type LucideIcon,
   ChevronDown,
@@ -99,13 +98,14 @@ import {
   useUpdateQuotation,
 } from '../quotations/use-quotations';
 import { clearOrderDraft, loadOrderDraft, saveOrderDraft } from './order-draft';
-import { DraftLinePhotos, toPhotoInput, type LinePhoto } from './line-photos';
+import { DraftLinePhotos, LinePhotoButton, PhotoLightbox, toPhotoInput, type LinePhoto } from './line-photos';
 import { DRAWABLE_BOOKING_STATUSES } from '@oms/shared';
 import { useActiveCustomerBookings } from '@/features/bookings/use-bookings';
 import { OrderBookingSource } from './order-booking-source';
 import { bookingCapacityError, type BookingOrderLine } from './order-booking-balance';
 import { useOrderBookingEntry } from './use-order-booking-entry';
 import { DesignNamePicker, resolveDesignNameChoices } from './design-name-picker';
+import { buildItemOptions } from './item-options';
 
 /**
  * State a caller can navigate in with to pre-fill the form — mirrors the same
@@ -1085,42 +1085,12 @@ export function OrderFormPage() {
             norm(l.category) === norm(category) &&
             norm(l.subCategory) === norm(subCategory)),
       );
-    // A leading number in the query — e.g. the "8" in "8 borosil". When present,
-    // each row is labelled by whichever of its measures that number matches, so a
-    // number that is a SIZE for one item and a PCS for another still lists both
-    // under it: "8" → "8 BOROSIL CUP" (size 8) AND "8 BOROSIL SPECIAL" (pcs 8),
-    // and never a 7.5. With no leading number, rows read in the current Size/Pcs
-    // view exactly as before.
-    const lead = itemQuery.trim().match(/^(\d+(?:\.\d+)?)/)?.[1] ?? '';
-    const map = new Map<string, (typeof list)[number]>();
-    const options: { value: string; label: string; keywords: string }[] = [];
-    for (const it of list) {
-      if (isLogoDesign(it.designType) && logoBlocked(it.category, it.subCategory)) continue;
-      const sizeStr = fmtNum(it.size);
-      const pcsStr = fmtNum(it.pcs);
-      let prefix = showBy === 'PCS' ? pcsStr : sizeStr;
-      if (lead) {
-        // Prefer an exact hit; while still mid-number, a prefix hit. Size wins a
-        // tie so a plain "8" on an 8-size / 8-pcs item reads as its size.
-        if (sizeStr === lead) prefix = sizeStr;
-        else if (pcsStr === lead) prefix = pcsStr;
-        else if (sizeStr.startsWith(lead)) prefix = sizeStr;
-        else if (pcsStr.startsWith(lead)) prefix = pcsStr;
-      }
-      const label = [prefix, it.product, it.designType ?? ''].filter(Boolean).join(' ');
-      if (!label || map.has(label)) continue; // first wins on duplicate labels
-      map.set(label, it);
-      // Search-only tokens: BOTH size and pcs (whichever isn't the visible
-      // prefix) plus the sub-category — so a Size-view row like "5.5 RAJWADI" is
-      // still found by typing "15" (its pcs / "15-PCS" sub-category), and a
-      // Pcs-view row is found by its size. Matches the user's Size/Pcs setting
-      // for display while staying findable either way.
-      const keywords = [fmtNum(it.size), fmtNum(it.pcs), it.subCategory ?? '']
-        .filter(Boolean)
-        .join(' ');
-      options.push({ value: label, label, keywords });
-    }
-    return { options, map };
+    return buildItemOptions(
+      lookups?.items ?? [],
+      showBy,
+      itemQuery,
+      (it) => isLogoDesign(it.designType) && logoBlocked(it.category, it.subCategory),
+    );
   }, [lookups, showBy, special, itemQuery]);
 
   /**
@@ -1644,18 +1614,36 @@ export function OrderFormPage() {
       })
       .filter((p) => (p.name || p.photos.length) && !seen.has(`${p.name}|${p.photos.length > 0}`) && !!seen.add(`${p.name}|${p.photos.length > 0}`));
   }, [pastRaw, designNameOf]);
+  /** An earlier line's photos open for a look before choosing to use them. */
+  const [pastView, setPastView] = useState<{ photos: LinePhoto[]; index: number } | null>(null);
   /** Take an earlier line's design name (when it is still a valid choice for
    *  this item) and its photos (the same files — nothing is copied). */
+  /** The design name for an earlier line that had none: this item's own "NA" /
+   *  "N/A" choice, one per design type when it takes several. */
+  const naDesignName = () => {
+    const seenTypes = new Set<string>();
+    return designNameOptions.choices
+      .filter((c) => ['NA', 'N/A'].includes(c.designName.trim().toUpperCase()) && !seenTypes.has(c.designType) && !!seenTypes.add(c.designType))
+      .map((c) => c.designName)
+      .join('+');
+  };
+  /** Already applied to the line being entered: its design name and every photo are there. */
+  const pastUsed = (p: (typeof pastLines)[number]) => {
+    const urls = new Set((entry.photos ?? []).map((ph) => ph.url));
+    const want = p.name || naDesignName();
+    return p.photos.every((ph) => urls.has(ph.url)) && (!want || entry.designName.trim().toUpperCase() === want.toUpperCase());
+  };
   const applyPastLine = (p: (typeof pastLines)[number]) => {
     const valid = new Set(designNameOptions.choices.map((c) => c.designName.trim().toUpperCase()));
     const nameOk = !!p.name && p.name.split('+').every((part) => valid.has(part.trim().toUpperCase()));
+    const na = p.name ? '' : naDesignName();
     setEntry((e) => {
       const have = new Set((e.photos ?? []).map((ph) => ph.url));
       const photos = [
         ...(e.photos ?? []),
         ...p.photos.filter((ph) => !have.has(ph.url)).map((ph) => ({ url: ph.url, path: ph.path, filename: ph.filename, mimeType: ph.mimeType, size: ph.size, title: `${p.orderCode ?? 'Earlier order'} · ${e.itemName}` })),
       ];
-      return { ...e, ...(nameOk ? { designName: p.name } : {}), photos };
+      return { ...e, ...(nameOk ? { designName: p.name } : na ? { designName: na } : {}), photos };
     });
     if (!nameOk && p.name) toast.info(`"${p.name}" is not a design name for this item any more — pick one; the photos were added.`);
   };
@@ -3291,22 +3279,48 @@ export function OrderFormPage() {
             <div className="flex flex-wrap items-center gap-2 rounded-md border border-sky-200 bg-sky-50/70 px-3 py-2 text-xs dark:border-sky-400/30 dark:bg-sky-400/10">
               <span className="font-semibold text-sky-900 dark:text-sky-200">Ordered before:</span>
               {pastLines.map((p) => (
-                <button
+                <div
                   key={`${p.orderCode}-${p.name}`}
-                  type="button"
-                  onClick={() => applyPastLine(p)}
-                  title="Use this design name and its photos"
-                  className="bg-card inline-flex items-center gap-1.5 rounded-md border border-sky-300 px-2 py-1 hover:bg-sky-100 dark:border-sky-400/40 dark:hover:bg-sky-400/15"
+                  className="bg-card inline-flex items-center gap-2 rounded-md border border-sky-300 py-1 pr-1 pl-1.5 dark:border-sky-400/40"
                 >
-                  {p.photos[0] && <img src={p.photos[0].url} alt="" className="size-6 rounded object-cover" />}
-                  <span className="font-semibold">{p.name || 'No design'}</span>
-                  <span className="text-muted-foreground">
-                    {p.orderCode ?? ''} · {formatDate(p.orderDate)}
-                    {p.photos.length ? ` · ${p.photos.length} photo${p.photos.length === 1 ? '' : 's'}` : ''}
+                  {/* Each photo opens large, to check it before using it. */}
+                  {p.photos.map((ph, i) => (
+                    <button
+                      key={ph.id}
+                      type="button"
+                      onClick={() => setPastView({ photos: p.photos.map((x) => ({ ...x, title: `${p.orderCode ?? 'Earlier order'} · ${entry.itemName}` })), index: i })}
+                      title="View photo"
+                      className="size-10 shrink-0 overflow-hidden rounded ring-1 ring-sky-300 hover:ring-2 hover:ring-sky-500"
+                    >
+                      <img src={ph.url} alt={`Photo ${i + 1} from ${p.orderCode ?? 'an earlier order'}`} className="size-full object-cover" />
+                    </button>
+                  ))}
+                  <span className="leading-tight">
+                    <span className="block font-semibold">{p.name || 'No design'}</span>
+                    <span className="text-muted-foreground">
+                      {p.orderCode ?? ''} · {formatDate(p.orderDate)}
+                      {p.photos.length ? ` · ${p.photos.length} photo${p.photos.length === 1 ? '' : 's'}` : ''}
+                    </span>
                   </span>
-                  <span className="font-bold text-sky-700 dark:text-sky-300">Use</span>
-                </button>
+                  {pastUsed(p) ? (
+                    <span className="inline-flex h-7 items-center gap-1 rounded-md bg-emerald-50 px-2.5 text-xs font-bold text-emerald-700 ring-1 ring-emerald-300 ring-inset dark:bg-emerald-500/10 dark:text-emerald-300">
+                      <Check className="size-3.5" /> Used
+                    </span>
+                  ) : (
+                    <Button type="button" size="sm" className="h-7 px-2.5 text-xs" onClick={() => applyPastLine(p)} title="Use this design name and its photos">
+                      Use
+                    </Button>
+                  )}
+                </div>
               ))}
+              {pastView && (
+                <PhotoLightbox
+                  photos={pastView.photos}
+                  index={pastView.index}
+                  onIndex={(index) => setPastView((v) => (v ? { ...v, index } : v))}
+                  onClose={() => setPastView(null)}
+                />
+              )}
             </div>
           )}
 
@@ -3800,97 +3814,6 @@ export function OrderFormPage() {
       </div>
 
     </div>
-  );
-}
-
-/** Per-row camera button → popover with the line's draft photo manager. */
-/**
- * @param status the line's reference-photo standing when the form can dispatch
- *   (see `photoLines`). `required` turns the camera red — the line would be
- *   shipped with nothing on file. `onFile` is a photo from an earlier dispatch
- *   of the same party + item + design: nothing to do, but shown so the user can
- *   see WHAT is on file rather than just being told there is something.
- */
-function LinePhotoButton({
-  photos,
-  onChange,
-  status,
-}: {
-  photos: LinePhoto[];
-  onChange: (photos: LinePhoto[]) => void;
-  status?: { required: boolean; onFile: string | null };
-}) {
-  const count = photos.length;
-  const required = !!status?.required;
-  const onFile = status?.onFile ?? null;
-  return (
-    <Popover>
-      <PopoverTrigger asChild>
-        <Button
-          type="button"
-          variant="ghost"
-          size="icon"
-          className={cn(
-            'relative size-8',
-            required
-              ? 'text-rose-600 hover:text-rose-700 ring-1 ring-rose-300 ring-inset'
-              : 'text-indigo-600 hover:text-indigo-800',
-          )}
-          aria-label={required ? 'Line photos — required before dispatch' : 'Line photos'}
-          title={
-            required
-              ? 'No reference photo on file for this party + item + design — required before Create & Dispatch'
-              : count
-                ? `${count} photo${count === 1 ? '' : 's'}`
-                : onFile
-                  ? 'A reference photo is already on file for this party + item + design'
-                  : 'Add photos'
-          }
-        >
-          <Camera className="size-5" />
-          {count > 0 && (
-            <span className="absolute -top-0.5 -right-0.5 flex h-3.5 min-w-3.5 items-center justify-center rounded-full bg-indigo-600 px-0.5 text-[9px] font-bold text-white tabular-nums">
-              {count}
-            </span>
-          )}
-          {/* No count to show, but there IS one on file — a quiet dot, so the
-              line reads as "documented" without pretending it has attachments. */}
-          {count === 0 && !required && onFile && (
-            <span className="absolute -top-0.5 -right-0.5 size-2 rounded-full bg-emerald-500" />
-          )}
-        </Button>
-      </PopoverTrigger>
-      {/* Wider than the usual popover, with 3 columns instead of 4/5: these are
-          REFERENCE photos — the point is to recognise the design at a glance,
-          which a ~50px tile in a 320px popover didn't allow. Capped to the
-          viewport so it still fits a phone, and scrolled rather than grown
-          past the screen — tiles this size stack up fast on a line with many
-          photos, where the old small ones stayed comfortably short. */}
-      <PopoverContent
-        align="end"
-        className="max-h-[70vh] w-[min(34rem,calc(100vw-2rem))] overflow-y-auto"
-      >
-        {required && (
-          <p className="mb-3 rounded-md border border-rose-200 bg-rose-50 px-3 py-2 text-xs text-rose-700 dark:border-rose-400/25 dark:bg-rose-500/10 dark:text-rose-300">
-            This party has never been sent this item and design with a photo on record. Add one
-            before using Create &amp; Dispatch — saving the order on its own is fine without it.
-          </p>
-        )}
-        {onFile && (
-          <div className="mb-3 rounded-md border p-2">
-            <p className="text-muted-foreground mb-2 text-xs font-medium">
-              Already on file from an earlier dispatch
-            </p>
-            <img
-              src={onFile}
-              alt="Reference photo on file"
-              className="max-h-40 w-full rounded object-contain"
-            />
-          </div>
-        )}
-        <DraftLinePhotos value={photos} onChange={onChange} gridClassName="grid-cols-2 gap-3" />
-      </PopoverContent>
-    </Popover>
   );
 }
 

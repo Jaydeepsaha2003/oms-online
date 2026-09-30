@@ -46,6 +46,9 @@ export class ConvertBookingLineDto {
   @IsOptional() @IsNumber() box?: number | null;
   @IsOptional() @IsString() @MaxLength(16) calField?: string | null;
   @IsOptional() @IsString() @MaxLength(500) comment?: string | null;
+  /** Freshly uploaded line photos (POST /files/upload results). */
+  @IsOptional() @IsArray() @ArrayMaxSize(20)
+  photos?: { path?: string; url?: string; filename?: string | null; mimeType?: string | null; size?: number | null }[];
 }
 
 export class ConvertBookingDto {

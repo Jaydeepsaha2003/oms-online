@@ -82,6 +82,12 @@ export class TransportersService {
         },
         include: INCLUDE,
       });
+      // Customers and transport rates keep a copy of the name (it prints on
+      // challans and fills new ones); a rename has to reach those copies too.
+      if (dto.name !== undefined) {
+        await this.prisma.customer.updateMany({ where: { transporterId: id }, data: { transportName: row.name } });
+        await this.prisma.transRate.updateMany({ where: { transporterId: id }, data: { transportName: row.name } });
+      }
       return this.toDto(row);
     } catch (err) {
       if (err instanceof Prisma.PrismaClientKnownRequestError && err.code === 'P2002') {

@@ -29,6 +29,7 @@ import { cn } from '@/lib/utils';
 import { useConfirm } from '@/components/common/confirm';
 import { looksLikeImage, prepareImageForUpload } from '@/lib/image-prep';
 import { Button } from '@/components/ui/button';
+import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover';
 import { useAddOrderItemPhoto, useDeleteOrderItemPhoto, useOrderItemPhotos } from './use-orders';
 
 /** A photo in the manager — existing ones carry `id`, new uploads carry `path`. */
@@ -574,5 +575,96 @@ export function LiveLinePhotos({
       hideHeader={hideHeader}
       gridClassName={gridClassName}
     />
+  );
+}
+
+/** Per-row camera button → popover with the line's draft photo manager. */
+/**
+ * @param status the line's reference-photo standing when the form can dispatch
+ *   (see `photoLines`). `required` turns the camera red — the line would be
+ *   shipped with nothing on file. `onFile` is a photo from an earlier dispatch
+ *   of the same party + item + design: nothing to do, but shown so the user can
+ *   see WHAT is on file rather than just being told there is something.
+ */
+export function LinePhotoButton({
+  photos,
+  onChange,
+  status,
+}: {
+  photos: LinePhoto[];
+  onChange: (photos: LinePhoto[]) => void;
+  status?: { required: boolean; onFile: string | null };
+}) {
+  const count = photos.length;
+  const required = !!status?.required;
+  const onFile = status?.onFile ?? null;
+  return (
+    <Popover>
+      <PopoverTrigger asChild>
+        <Button
+          type="button"
+          variant="ghost"
+          size="icon"
+          className={cn(
+            'relative size-8',
+            required
+              ? 'text-rose-600 hover:text-rose-700 ring-1 ring-rose-300 ring-inset'
+              : 'text-indigo-600 hover:text-indigo-800',
+          )}
+          aria-label={required ? 'Line photos — required before dispatch' : 'Line photos'}
+          title={
+            required
+              ? 'No reference photo on file for this party + item + design — required before Create & Dispatch'
+              : count
+                ? `${count} photo${count === 1 ? '' : 's'}`
+                : onFile
+                  ? 'A reference photo is already on file for this party + item + design'
+                  : 'Add photos'
+          }
+        >
+          <Camera className="size-5" />
+          {count > 0 && (
+            <span className="absolute -top-0.5 -right-0.5 flex h-3.5 min-w-3.5 items-center justify-center rounded-full bg-indigo-600 px-0.5 text-[9px] font-bold text-white tabular-nums">
+              {count}
+            </span>
+          )}
+          {/* No count to show, but there IS one on file — a quiet dot, so the
+              line reads as "documented" without pretending it has attachments. */}
+          {count === 0 && !required && onFile && (
+            <span className="absolute -top-0.5 -right-0.5 size-2 rounded-full bg-emerald-500" />
+          )}
+        </Button>
+      </PopoverTrigger>
+      {/* Wider than the usual popover, with 3 columns instead of 4/5: these are
+          REFERENCE photos — the point is to recognise the design at a glance,
+          which a ~50px tile in a 320px popover didn't allow. Capped to the
+          viewport so it still fits a phone, and scrolled rather than grown
+          past the screen — tiles this size stack up fast on a line with many
+          photos, where the old small ones stayed comfortably short. */}
+      <PopoverContent
+        align="end"
+        className="max-h-[70vh] w-[min(34rem,calc(100vw-2rem))] overflow-y-auto"
+      >
+        {required && (
+          <p className="mb-3 rounded-md border border-rose-200 bg-rose-50 px-3 py-2 text-xs text-rose-700 dark:border-rose-400/25 dark:bg-rose-500/10 dark:text-rose-300">
+            This party has never been sent this item and design with a photo on record. Add one
+            before using Create &amp; Dispatch — saving the order on its own is fine without it.
+          </p>
+        )}
+        {onFile && (
+          <div className="mb-3 rounded-md border p-2">
+            <p className="text-muted-foreground mb-2 text-xs font-medium">
+              Already on file from an earlier dispatch
+            </p>
+            <img
+              src={onFile}
+              alt="Reference photo on file"
+              className="max-h-40 w-full rounded object-contain"
+            />
+          </div>
+        )}
+        <DraftLinePhotos value={photos} onChange={onChange} gridClassName="grid-cols-2 gap-3" />
+      </PopoverContent>
+    </Popover>
   );
 }

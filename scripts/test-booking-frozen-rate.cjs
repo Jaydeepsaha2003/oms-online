@@ -50,6 +50,25 @@ const bookings = new BookingsService(prisma, {}, {}, {}, {}, {});
     assert.equal(line.rate, 60, 'the bill is priced the same');
     assert.equal('rates' in opts, false, 'no agreed rates any more');
     console.log('PASS Booking Dispatch prices at the booking-date rate');
+
+    // A design on the size is priced too, like the New Order item list.
+    await prisma.design.create({ data: { code: 'D1', category: 'CUP', subCategory: '4-PCS-CUP-FG', designType: 'GUNGROO', rate: 3, active: true } });
+    const withDesign = (await bookings.dispatchOptions(c.partyName, 'CUP')).frozenRates.find((r) => r.product === 'JET CUP' && r.designType === 'GUNGROO');
+    assert.equal(withDesign?.rate, 63, 'product 60 + design 3');
+    console.log('PASS the item + design rate is frozen too');
+
+    // Booking Dispatch may draw past what is left (10 bags booked, 12 drawn),
+    // and the line keeps its design, remark and photos.
+    const cup = { pCategory: 'CUP', subCategory: '4-PCS-CUP-FG', product: 'JET CUP', productName: 'JET CUP GUNGROO', designType: 'GUNGROO', design: 'NA', calField: 'PCS', pcs: 4800, gram: 240, bags: 12, comment: 'rush', photos: [{ path: 'uploads/x.jpg', url: '/files/x.jpg', filename: 'x.jpg' }] };
+    await assert.rejects(bookings.convertReturningItems(b.id, { lines: [cup] }), /exceeds|left/, 'the plain convert still holds the limit');
+    const [itemId] = await bookings.convertReturningItems(b.id, { lines: [cup] }, 'tester', true);
+    const it = await prisma.orderItem.findUnique({ where: { id: itemId }, include: { photos: true } });
+    assert.equal(it.designType, 'GUNGROO');
+    assert.equal(it.comment, 'rush');
+    assert.equal(it.photos.length, 1);
+    assert.equal(it.rate, 63);
+    assert.equal((await prisma.booking.findUnique({ where: { id: b.id } })).status, 'CONVERTED', 'overdrawn booking reads fully drawn');
+    console.log('PASS overdraw allowed, design/remark/photos kept');
   } catch (e) {
     failed = true;
     console.error(`FAIL ${e.message}`);

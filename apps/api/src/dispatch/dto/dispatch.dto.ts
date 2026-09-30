@@ -106,15 +106,23 @@ export class BulkSetPendingPriorityDto {
 export class BookingDispatchLineDto {
   @IsString() @MaxLength(64) subCategory!: string;
   @IsString() @MaxLength(255) product!: string;
-  /** Boxes. Everything else is derived server-side from the product master and
-   *  the party's bag weight, so the client cannot decide the draw-down. */
-  @IsNumber() @Min(0.0001) box!: number;
+  /** Boxes and/or pcs (pcs wins). Kgs and bags are derived server-side from the
+   *  product master and the party's bag weight, so the client cannot decide the draw-down. */
+  @IsOptional() @IsNumber() @Min(0) box?: number | null;
+  @IsOptional() @IsNumber() @Min(0) pcs?: number | null;
+  @IsOptional() @IsNumber() @Min(0) gram?: number | null;
+  @IsOptional() @IsString() @MaxLength(128) designType?: string | null;
+  @IsOptional() @IsString() @MaxLength(128) design?: string | null;
+  @IsOptional() @IsArray() @ArrayMaxSize(20)
+  photos?: { path?: string; url?: string; filename?: string | null; mimeType?: string | null; size?: number | null }[];
   @IsOptional() @IsString() @MaxLength(255) comment?: string | null;
 }
 
 export class DispatchFromBookingDto {
   @IsInt() bookingId!: number;
   @IsOptional() @IsString() dispatchDate?: string | null;
+  /** Bags the whole dispatch went in — drawn off the booking. */
+  @IsNumber() @Min(0.001) bags!: number;
   @IsArray() @ArrayMinSize(1) @ArrayMaxSize(100) @ValidateNested({ each: true }) @Type(() => BookingDispatchLineDto)
   lines!: BookingDispatchLineDto[];
 }

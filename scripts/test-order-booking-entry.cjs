@@ -19,7 +19,7 @@ assert.equal(bookingOrderBalance(b, [added[1]]).after.bags, 297);
 assert.equal(bookingOrderBalance(b, [...added, line('old', 10, 700, { status: 'CANCELLED' }), line('regular', 5, 350, { bookingId: null })]).used.bags, 5);
 const saved = [line('saved', 1, 70)];
 assert.equal(bookingOrderBalance(b, [...saved, ...added], saved).after.bags, 294, 'saved own allocation is not deducted twice');
-assert.equal(bookingCapacityError(b, [line('large', 300, 21000)]).includes('299'), true);
+assert.equal(bookingCapacityError(b, [line('large', 300, 21000)]), null, 'drawing past what is left is allowed');
 assert.equal(bookingCapacityError({ ...b, kgs: 0, remainingKgs: 0, items: [{...b.items[0], kgs: 0, remainingKgs: 0}] }, added), null, 'bags-only reservations allow derived kg');
 assert.equal(bookingCapacityError(b, [line('cup', 1, 70, { category: 'CUP' })]) !== null, true, 'a GLASS booking cannot supply CUP');
 assert.equal(bookingCapacityError({ ...b, items: [{ ...b.items[0], pCategory: '' }] }, added), null, 'unspecified reservation allows a later category');

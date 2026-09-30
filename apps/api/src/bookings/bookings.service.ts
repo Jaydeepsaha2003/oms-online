@@ -640,9 +640,9 @@ export class BookingsService {
    * them: a booking may already hold lines for the same product from an earlier
    * draw, so matching by product afterwards would pick the wrong row.
    */
-  async convertReturningItems(id: number, dto: ConvertBookingDto, userName?: string | null): Promise<number[]> {
+  async convertReturningItems(id: number, dto: ConvertBookingDto, userName?: string | null, allowOver = false): Promise<number[]> {
     const created: number[] = [];
-    await serializeBookingDraw(true, () => this.convertWithinDraw(id, dto, userName, created));
+    await serializeBookingDraw(true, () => this.convertWithinDraw(id, dto, userName, created, allowOver));
     return created;
   }
 
@@ -691,11 +691,14 @@ export class BookingsService {
     // party's special then) — what the bill will carry, not today's chart.
     // ponytail: one pricing per booking x item (a party has a booking or two, a
     // category tens of items); cache per booking date if that ever grows.
+    const designs = await this.prisma.design.findMany({ where: { category, active: true }, select: { subCategory: true, designType: true } });
     const frozenRates: BookingDispatchOptions['frozenRates'] = [];
     for (const b of bookings) {
       for (const p of products) {
-        const priced = await this.priceOrderLine(b.id, { pCategory: category, subCategory: p.subCategory, product: p.product, productName: p.product, psize: p.size } as ConvertBookingLineDto);
-        if (priced) frozenRates.push({ bookingId: b.id, subCategory: p.subCategory, product: p.product, rate: priced.rate });
+        for (const designType of [null, ...designs.filter((d) => d.subCategory === p.subCategory).map((d) => d.designType)]) {
+          const priced = await this.priceOrderLine(b.id, { pCategory: category, subCategory: p.subCategory, product: p.product, productName: p.product, psize: p.size, designType } as ConvertBookingLineDto);
+          if (priced) frozenRates.push({ bookingId: b.id, subCategory: p.subCategory, product: p.product, designType, rate: priced.rate });
+        }
       }
     }
 
@@ -721,6 +724,7 @@ export class BookingsService {
     /** Filled with every OrderItem id created, for callers that must be able to
      *  address exactly these lines afterwards. */
     createdInto?: number[],
+    allowOver = false,
   ): Promise<BookingDto> {
     const booking = await this.prisma.booking.findUnique({ where: { id }, include: { items: true } });
     if (!booking) throw new NotFoundException('Booking not found.');
@@ -736,6 +740,8 @@ export class BookingsService {
       id,
       booking.customerName,
       lines.map((l) => ({ pCategory: l.pCategory, bags: toNum(l.bags), kgs: toNum(l.gram) })),
+      undefined,
+      allowOver,
     );
 
     const snapshot = this.parseSnapshot(booking.rateSnapshot);
@@ -770,6 +776,15 @@ export class BookingsService {
           priority: 'NORMAL',
           status: 'CONFIRMED',
           comment: toStr(line.comment),
+          ...(line.photos?.some((p) => p.path && p.url)
+            ? {
+                photos: {
+                  create: line.photos
+                    .filter((p) => p.path && p.url)
+                    .map((p) => ({ path: p.path!, url: p.url!, filename: p.filename ?? null, mimeType: p.mimeType ?? null, size: p.size ?? null })),
+                },
+              }
+            : {}),
         },
       });
       createdInto?.push(createdItem.id);
@@ -969,13 +984,18 @@ export class BookingsService {
   async drawableFor(customerName: string | null, pCategory: string | null): Promise<BookingDrawOptionDto[]> {
     const party = uc(customerName);
     const category = uc(pCategory);
-    if (!party || !category) return [];
+    if (!category) return [];
 
+    // No party: every party's drawable bookings — Booking Dispatch lists them
+    // all to pick from.
     const rows = await this.prisma.booking.findMany({
-      where: { customerName: party, status: { in: [...DRAWABLE_STATUSES] } },
+      where: { ...(party ? { customerName: party } : {}), status: { in: [...DRAWABLE_STATUSES] } },
       include: INCLUDE,
       orderBy: [{ bookingDate: 'desc' }, { id: 'desc' }],
     });
+    const bagWeights = new Map(
+      (await this.prisma.customerBagWeight.findMany({ where: { category } })).map((w) => [w.customerId, w.kgsPerBag]),
+    );
 
     const out: BookingDrawOptionDto[] = [];
     for (const b of rows) {
@@ -991,6 +1011,8 @@ export class BookingsService {
         pCategory: item.pCategory,
         remainingBags: Math.max(0, catBags),
         remainingKgs: Math.max(0, catKgs),
+        customerName: b.customerName,
+        kgsPerBag: b.customerId != null ? (bagWeights.get(b.customerId) ?? null) : null,
       });
     }
     return out;
@@ -1217,6 +1239,8 @@ export class BookingsService {
     customerName: string | null,
     lines: readonly { pCategory?: string | null; bags?: number | null; kgs?: number | null }[],
     excludeOrderId?: number,
+    /** Booking Dispatch: ship what went out even past what is left on the booking. */
+    allowOver = false,
   ): Promise<void> {
     const info = await this.remainingFor(bookingId, excludeOrderId);
     if (!info) throw new BadRequestException('A drawn booking no longer exists.');
@@ -1250,10 +1274,10 @@ export class BookingsService {
 
     const addBags = round2(lines.reduce((s, l) => s + (l.bags ?? 0), 0));
     const addKgs = round2(lines.reduce((s, l) => s + (l.kgs ?? 0), 0));
-    if (!withinBooked(addBags, info.remBags, booking.bags)) {
+    if (!allowOver && !withinBooked(addBags, info.remBags, booking.bags)) {
       throw new BadRequestException(`Drawing ${addBags} bags exceeds the ${info.remBags} left on booking ${label}.`);
     }
-    if (!withinBooked(addKgs, info.remKgs, booking.kgs)) {
+    if (!allowOver && !withinBooked(addKgs, info.remKgs, booking.kgs)) {
       throw new BadRequestException(`Drawing ${addKgs} kgs exceeds the ${info.remKgs} left on booking ${label}.`);
     }
     if (!booking.items.length) return; // Legacy reservation with no category lines.
@@ -1264,6 +1288,7 @@ export class BookingsService {
     if (orphan) {
       throw new BadRequestException(`Booking ${label} has no reserved quantity for ${uc(orphan.pCategory) || 'this item category'}.`);
     }
+    if (allowOver) return; // quantity is not limited — only what was never reserved
     for (const bucket of info.buckets) {
       const mine = lines.filter((l) => info.bucketOf(l.pCategory ?? null) === bucket.item);
       if (!mine.length) continue;
