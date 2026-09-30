@@ -1,7 +1,7 @@
 import { useMemo, useState } from 'react';
 import { useQuery } from '@tanstack/react-query';
 import { Filter, RotateCcw } from 'lucide-react';
-import type { ReportFilterOptions, ReportFilters } from '@oms/shared';
+import type { ReportBook, ReportFilterOptions, ReportFilters } from '@oms/shared';
 import { http } from '@/lib/api';
 import { cn } from '@/lib/utils';
 import { NativeSelect } from '@/components/common/combo';
@@ -26,7 +26,17 @@ export interface FilterState {
   customerId: string;
   agent: string;
   region: string;
+  /** Bank / Cash part of each bill only; '' = both. Offered where a report
+   *  passes `books` to the bar (Sales & Revenue). */
+  book: '' | ReportBook;
 }
+
+/** The Bank / Cash / Both choice, in the order it is offered. */
+const BOOKS: { value: '' | ReportBook; label: string }[] = [
+  { value: '', label: 'Both' },
+  { value: 'BANK', label: 'Bank' },
+  { value: 'CASH', label: 'Cash' },
+];
 const ymd = (d: Date) => `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
 
 /** The default period every report opens on: the current financial year to date
@@ -34,7 +44,7 @@ const ymd = (d: Date) => `${d.getFullYear()}-${String(d.getMonth() + 1).padStart
 function fyDefault(): FilterState {
   const now = new Date();
   const y = now.getMonth() >= 3 ? now.getFullYear() : now.getFullYear() - 1;
-  return { from: `${y}-04-01`, to: ymd(now), customerId: '', agent: '', region: '' };
+  return { from: `${y}-04-01`, to: ymd(now), customerId: '', agent: '', region: '', book: '' };
 }
 
 /** Filter state + the query object every report hook consumes. */
@@ -48,11 +58,12 @@ export function useReportFilters() {
       customerId: f.customerId ? Number(f.customerId) : undefined,
       agent: f.agent || undefined,
       region: f.region || undefined,
+      book: f.book || undefined,
     }),
     [f],
   );
   // "Active" = narrowed beyond the FY-to-date default (so Reset is meaningful).
-  const active = !!(f.customerId || f.agent || f.region) || f.from !== def.from || f.to !== def.to;
+  const active = !!(f.customerId || f.agent || f.region || f.book) || f.from !== def.from || f.to !== def.to;
   return { f, setF, query, active, reset: () => setF(def) };
 }
 function presetRange(preset: string): { from: string; to: string } {
@@ -74,7 +85,7 @@ const PRESETS = ['All time', 'This FY', 'Last 90 days', 'Last 30 days', 'This mo
 /** The controls shared by the desktop bar and the mobile sheet — period preset,
  *  from/to, customer, agent, region. `stacked` lays each field full-width for
  *  the sheet instead of the bar's inline row. */
-function FilterFields({ f, setF, stacked }: { f: FilterState; setF: (u: (p: FilterState) => FilterState) => void; stacked?: boolean }) {
+function FilterFields({ f, setF, stacked, books }: { f: FilterState; setF: (u: (p: FilterState) => FilterState) => void; stacked?: boolean; books?: boolean }) {
   const { data } = useReportFilterOptions();
   const customers = data?.customers ?? [];
   const custName = f.customerId ? customers.find((c) => String(c.id) === f.customerId)?.name ?? '' : '';
@@ -82,6 +93,24 @@ function FilterFields({ f, setF, stacked }: { f: FilterState; setF: (u: (p: Filt
 
   return (
     <>
+      {books && (
+        <div className={cn('min-w-0', stacked && 'space-y-1.5')}>
+          <Label className="text-muted-foreground mb-1 block text-xs">Bills</Label>
+          <div className="grid grid-cols-3 gap-1 rounded-lg border p-1" role="group" aria-label="Bank or cash">
+            {BOOKS.map((b) => (
+              <button
+                key={b.label}
+                type="button"
+                aria-pressed={f.book === b.value}
+                onClick={() => setF((p) => ({ ...p, book: b.value }))}
+                className={cn('h-9 rounded-md text-[13px] font-bold', f.book === b.value ? 'bg-primary text-primary-foreground' : 'text-muted-foreground')}
+              >
+                {b.label}
+              </button>
+            ))}
+          </div>
+        </div>
+      )}
       <div className={cn('min-w-0', stacked && 'space-y-1.5')}>
         <Label className="text-muted-foreground mb-1 block text-xs">Period</Label>
         <NativeSelect value="" onChange={applyPreset} options={['', ...PRESETS]} placeholder="Quick range" className={stacked ? undefined : 'w-44'} />
@@ -121,7 +150,7 @@ function FilterFields({ f, setF, stacked }: { f: FilterState; setF: (u: (p: Filt
  *  button's badge count. */
 function activeCount(f: FilterState): number {
   const def = fyDefault();
-  return (f.customerId ? 1 : 0) + (f.agent ? 1 : 0) + (f.region ? 1 : 0) + (f.from !== def.from || f.to !== def.to ? 1 : 0);
+  return (f.customerId ? 1 : 0) + (f.agent ? 1 : 0) + (f.region ? 1 : 0) + (f.book ? 1 : 0) + (f.from !== def.from || f.to !== def.to ? 1 : 0);
 }
 
 /**
@@ -142,7 +171,14 @@ function activeCount(f: FilterState): number {
  * It relies on being rendered immediately after `ReportHeader`, which is true
  * on all nine reports.
  */
-export function ReportFilterBar({ f, setF, active, onReset }: { f: FilterState; setF: (u: (p: FilterState) => FilterState) => void; active: boolean; onReset: () => void }) {
+export function ReportFilterBar({ f, setF, active, onReset, books }: {
+  f: FilterState;
+  setF: (u: (p: FilterState) => FilterState) => void;
+  active: boolean;
+  onReset: () => void;
+  /** Offer Bank / Cash / Both (a report that honours `book`). */
+  books?: boolean;
+}) {
   const [sheetOpen, setSheetOpen] = useState(false);
   const { data } = useReportFilterOptions();
   const count = activeCount(f);
@@ -193,6 +229,15 @@ export function ReportFilterBar({ f, setF, active, onReset }: { f: FilterState; 
               </div>
             </PopoverContent>
           </Popover>
+          {books && (
+            <div className="rd-seg" role="group" aria-label="Bank or cash">
+              {BOOKS.map((b) => (
+                <button key={b.label} type="button" className="rd-seg-btn" data-on={f.book === b.value} onClick={() => setF((p) => ({ ...p, book: b.value }))}>
+                  {b.label}
+                </button>
+              ))}
+            </div>
+          )}
           <div className="rd-field flex-[1_1_128px] max-w-[220px]">
             <span className="rd-field-label">Customer</span>
             <NativeSelect
@@ -244,7 +289,8 @@ export function ReportFilterBar({ f, setF, active, onReset }: { f: FilterState; 
       <div className="rp-filterline sm:hidden">
         <span className="rp-filterline-icon"><Filter className="size-3" /></span>
         <div className="min-w-0 flex-1 truncate">
-          {fmtD(f.from)} → {fmtD(f.to)} · {custName} · {f.agent || 'All agents'} · {f.region || 'All regions'}
+          {fmtD(f.from)} → {fmtD(f.to)}
+          {f.book && ` · ${f.book === 'BANK' ? 'Bank' : 'Cash'} bills`} · {custName} · {f.agent || 'All agents'} · {f.region || 'All regions'}
         </div>
         {active && <button type="button" className="rp-reset" onClick={onReset}>Reset</button>}
       </div>
@@ -252,7 +298,8 @@ export function ReportFilterBar({ f, setF, active, onReset }: { f: FilterState; 
       <Sheet open={sheetOpen} onOpenChange={setSheetOpen}>
         <SheetContent side="bottom" className="sm:hidden">
           <SheetHeader>
-            <div className="flex items-center justify-between">
+            {/* pr clears the sheet's own close button, which sat on Reset. */}
+            <div className="flex items-center justify-between pr-12">
               <SheetTitle>Filters</SheetTitle>
               <Button variant="ghost" size="sm" className="text-muted-foreground -mr-2 gap-1.5" onClick={onReset} disabled={!active}>
                 <RotateCcw className="size-3.5" /> Reset
@@ -260,7 +307,7 @@ export function ReportFilterBar({ f, setF, active, onReset }: { f: FilterState; 
             </div>
           </SheetHeader>
           <div className="space-y-4">
-            <FilterFields f={f} setF={setF} stacked />
+            <FilterFields f={f} setF={setF} stacked books={books} />
           </div>
           <SheetFooter>
             <Button className="w-full" onClick={() => setSheetOpen(false)}>Apply filters</Button>

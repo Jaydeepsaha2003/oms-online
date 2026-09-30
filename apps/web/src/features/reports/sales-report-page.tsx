@@ -32,7 +32,7 @@ const pct = (a: number, b: number) => (b > 0 ? ((a - b) / b) * 100 : null);
 const pctText = (p: number | null) => (p == null ? '—' : `${p > 0 ? '+' : ''}${p.toFixed(1)}%`);
 
 /** One month, both years, in dark text — the series colours are only the dots. */
-function YoyTooltip({ active, payload, label, fy }: TooltipProps<number, string> & { fy: SalesReport['fy'] }) {
+function YoyTooltip({ active, payload, label, fy, book }: TooltipProps<number, string> & { fy: SalesReport['fy']; book: string }) {
   if (!active || !payload?.length) return null;
   const r = payload[0].payload as YoyRow;
   const g = r.thisYear > 0 ? pct(r.thisYear, r.lastYear) : null;
@@ -47,7 +47,7 @@ function YoyTooltip({ active, payload, label, fy }: TooltipProps<number, string>
           ['Bank', bank, dots[0]],
           ['Cash', cash, dots[1]],
         ] as const
-      ).map(([k, v, dot]) => (
+      ).filter(() => !book).map(([k, v, dot]) => (
         <div key={k} className="text-muted-foreground flex items-center justify-between gap-4">
           <span className="flex items-center gap-1.5">
             <span className="size-2 rounded-full" style={{ background: dot }} />
@@ -106,13 +106,19 @@ export function SalesReportPage() {
     return i < yoy.length ? `${yoy[i].label} → ${yoy[yoy.length - 1].label} still to come` : undefined;
   }, [yoy]);
   const fy = data?.fy;
+  // Bank / Cash / Both: the server already counts only that part; the charts
+  // then draw only its series.
+  const book = filters.f.book;
+  const showBank = book !== 'CASH';
+  const showCash = book !== 'BANK';
+  const bookLabel = book === 'BANK' ? 'Bank' : book === 'CASH' ? 'Cash' : null;
   const thisTotals = useMemo(
     () => yoy.reduce((t, m) => ({ total: t.total + m.thisYear, bank: t.bank + m.thisYearBank, cash: t.cash + m.thisYearCash }), { total: 0, bank: 0, cash: 0 }),
     [yoy],
   );
 
   const hero: ReportHero = {
-    label: 'Billed this period',
+    label: `Billed this period${bookLabel ? ` · ${bookLabel}` : ''}`,
     value: inrCompact(total12),
     hint: 'FY-to-date vs the same months last FY',
     delta: growth != null ? { dir: growth >= 0 ? 'up' : 'down', text: `${Math.abs(growth).toFixed(1)}%` } : undefined,
@@ -135,7 +141,7 @@ export function SalesReportPage() {
         hero={{ label: hero.label, value: hero.value, hint: 'FY-to-date vs last FY', delta: hero.delta }}
       />
 
-      <ReportFilterBar f={filters.f} setF={filters.setF} active={filters.active} onReset={filters.reset} />
+      <ReportFilterBar f={filters.f} setF={filters.setF} active={filters.active} onReset={filters.reset} books />
 
       <ReportDeskHero hero={data ? hero : undefined} />
 
@@ -180,7 +186,7 @@ export function SalesReportPage() {
               <FyTile
                 label={`${fy.this}${toCome ? ' so far' : ''}`}
                 value={inrCompact(thisTotals.total)}
-                sub={`Bank ${inrCompact(thisTotals.bank)} · Cash ${inrCompact(thisTotals.cash)}`}
+                sub={bookLabel ? `${bookLabel} bills only` : `Bank ${inrCompact(thisTotals.bank)} · Cash ${inrCompact(thisTotals.cash)}`}
                 bar={DESK_BANK}
               />
               <FyTile
@@ -193,10 +199,10 @@ export function SalesReportPage() {
             </div>
             <ChartLegend
               items={[
-                { label: `${fy.this} · bank`, color: DESK_BANK },
-                { label: `${fy.this} · cash`, color: DESK_CASH },
-                { label: `${fy.last} · bank`, color: LAST_BANK },
-                { label: `${fy.last} · cash`, color: LAST_CASH },
+                ...(showBank ? [{ label: `${fy.this} · bank`, color: DESK_BANK }] : []),
+                ...(showCash ? [{ label: `${fy.this} · cash`, color: DESK_CASH }] : []),
+                ...(showBank ? [{ label: `${fy.last} · bank`, color: LAST_BANK }] : []),
+                ...(showCash ? [{ label: `${fy.last} · cash`, color: LAST_CASH }] : []),
               ]}
             />
             <div className="h-[260px] w-full">
@@ -205,11 +211,11 @@ export function SalesReportPage() {
                   <CartesianGrid {...CHART_GRID} />
                   <XAxis dataKey="label" tick={CHART_TICK} tickLine={false} axisLine={{ stroke: '#dfe4ee' }} />
                   <YAxis tick={CHART_TICK} tickLine={false} axisLine={false} width={48} tickFormatter={(v: number) => inrCompact(v)} />
-                  <Tooltip content={<YoyTooltip fy={fy} />} cursor={{ fill: 'rgba(79,110,247,0.07)' }} />
-                  <Bar name={`${fy.last} (Bank)`} dataKey="lastYearBank" stackId="last" fill={LAST_BANK} maxBarSize={20} />
-                  <Bar name={`${fy.last} (Cash)`} dataKey="lastYearCash" stackId="last" fill={LAST_CASH} radius={BAR_RADIUS} maxBarSize={20} />
-                  <Bar name={`${fy.this} (Bank)`} dataKey="thisYearBank" stackId="this" fill={DESK_BANK} maxBarSize={20} />
-                  <Bar name={`${fy.this} (Cash)`} dataKey="thisYearCash" stackId="this" fill={DESK_CASH} radius={BAR_RADIUS} maxBarSize={20} />
+                  <Tooltip content={<YoyTooltip fy={fy} book={book} />} cursor={{ fill: 'rgba(79,110,247,0.07)' }} />
+                  {showBank && <Bar name={`${fy.last} (Bank)`} dataKey="lastYearBank" stackId="last" fill={LAST_BANK} radius={showCash ? undefined : BAR_RADIUS} maxBarSize={20} />}
+                  {showCash && <Bar name={`${fy.last} (Cash)`} dataKey="lastYearCash" stackId="last" fill={LAST_CASH} radius={BAR_RADIUS} maxBarSize={20} />}
+                  {showBank && <Bar name={`${fy.this} (Bank)`} dataKey="thisYearBank" stackId="this" fill={DESK_BANK} radius={showCash ? undefined : BAR_RADIUS} maxBarSize={20} />}
+                  {showCash && <Bar name={`${fy.this} (Cash)`} dataKey="thisYearCash" stackId="this" fill={DESK_CASH} radius={BAR_RADIUS} maxBarSize={20} />}
                 </BarChart>
               </ResponsiveContainer>
             </div>
@@ -221,7 +227,7 @@ export function SalesReportPage() {
         <ReportCard title="Monthly billed revenue, selected period">
           {isLoading ? <div className="bg-muted h-[240px] animate-pulse rounded-lg" /> : (
             <>
-              <ChartLegend items={[{ label: 'Bank', color: DESK_BANK }, { label: 'Cash', color: DESK_CASH }]} />
+              <ChartLegend items={[...(showBank ? [{ label: 'Bank', color: DESK_BANK }] : []), ...(showCash ? [{ label: 'Cash', color: DESK_CASH }] : [])]} />
               <div className="h-[220px] w-full">
                 <ResponsiveContainer width="100%" height="100%">
                   <BarChart data={monthly} margin={{ top: 6, right: 4, bottom: 0, left: 0 }} barCategoryGap="28%">
@@ -229,8 +235,8 @@ export function SalesReportPage() {
                     <XAxis dataKey="label" tick={CHART_TICK} tickLine={false} axisLine={{ stroke: '#dfe4ee' }} />
                     <YAxis tick={CHART_TICK} tickLine={false} axisLine={false} width={48} tickFormatter={(v: number) => inrCompact(v)} />
                     <Tooltip formatter={(v: number) => inrFull(v)} cursor={{ fill: 'rgba(79,110,247,0.06)' }} />
-                    <Bar name="Bank" dataKey="billedBank" stackId="billed" fill={DESK_BANK} maxBarSize={28} />
-                    <Bar name="Cash" dataKey="billedCash" stackId="billed" fill={DESK_CASH} radius={BAR_RADIUS} maxBarSize={28} />
+                    {showBank && <Bar name="Bank" dataKey="billedBank" stackId="billed" fill={DESK_BANK} radius={showCash ? undefined : BAR_RADIUS} maxBarSize={28} />}
+                    {showCash && <Bar name="Cash" dataKey="billedCash" stackId="billed" fill={DESK_CASH} radius={BAR_RADIUS} maxBarSize={28} />}
                   </BarChart>
                 </ResponsiveContainer>
               </div>

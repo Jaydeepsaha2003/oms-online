@@ -26,7 +26,13 @@ export interface ReportFilters {
    * left to dispatch. Other reports ignore it.
    */
   activeOnly?: boolean | null;
+  /** Sales & Revenue: only the bank-billed or only the cash-billed part of each
+   *  bill (absent = both). Other reports ignore it. */
+  book?: ReportBook | null;
 }
+
+export const REPORT_BOOKS = ['BANK', 'CASH'] as const;
+export type ReportBook = (typeof REPORT_BOOKS)[number];
 
 /** Options for the report filter bar. */
 export interface ReportFilterOptions {

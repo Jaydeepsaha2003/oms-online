@@ -356,7 +356,17 @@ export class ReportsService {
       this.prisma.customer.findMany({ select: { id: true, region: true, agentName: true, state: true } }),
     ]);
     const custMap = new Map(custRows.map((c) => [c.id, c]));
-    const partySales = challans.filter((c) => SALES_TX.has((c.transaction ?? '').trim().toUpperCase()) && fx.custOk(c.customerId));
+    /*
+     * Bank / Cash / Both: which part of each bill counts. A bill's bank part is
+     * `b`; its cash part is the rest of the total, as everywhere else here (see
+     * topSlices). A bill with nothing in the chosen part is left out entirely,
+     * so it adds no zero rows and no party to the counts.
+     */
+    const amt = (c: { total: number | null; b: number | null }) => (f.book === 'BANK' ? n(c.b) : f.book === 'CASH' ? n(c.total) - n(c.b) : n(c.total));
+    const bankOf = (c: { b: number | null }) => (f.book === 'CASH' ? 0 : n(c.b));
+    const partySales = challans.filter(
+      (c) => SALES_TX.has((c.transaction ?? '').trim().toUpperCase()) && fx.custOk(c.customerId) && (!f.book || amt(c) > 0.5),
+    );
     const sales = partySales.filter((c) => fx.dateOk(c.invDate));
 
     const buckets = new Map<string, ReportMonthPoint>();
@@ -374,8 +384,8 @@ export class ReportsService {
       if (cur) { cur.value += v; cur.count += 1; cur.bank += bank; } else m.set(k, { value: v, count: 1, bank });
     };
     for (const c of sales) {
-      const v = n(c.total);
-      const bank = n(c.b);
+      const v = amt(c);
+      const bank = bankOf(c);
       const b = buckets.get(this.monthKey(c.invDate));
       if (b) { b.billed += v; b.billedBank += bank; }
       const cu = c.customerId != null ? custMap.get(c.customerId) : undefined;
@@ -402,8 +412,8 @@ export class ReportsService {
     for (const c of partySales) {
       const t = c.invDate;
       const idx = (t.getMonth() - 3 + 12) % 12; // Apr=0 … Mar=11
-      if (t >= fyStart && t < fyEnd && t <= now) { yoyThis[idx] += n(c.total); yoyThisBank[idx] += n(c.b); }
-      else if (t >= lastFyStart && t < fyStart) { yoyLast[idx] += n(c.total); yoyLastBank[idx] += n(c.b); }
+      if (t >= fyStart && t < fyEnd && t <= now) { yoyThis[idx] += amt(c); yoyThisBank[idx] += bankOf(c); }
+      else if (t >= lastFyStart && t < fyStart) { yoyLast[idx] += amt(c); yoyLastBank[idx] += bankOf(c); }
     }
     const FYMON = ['Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec', 'Jan', 'Feb', 'Mar'];
     // Seasonality of that same FY, Apr → Mar: each month against the FY's own
@@ -428,7 +438,7 @@ export class ReportsService {
     // (comparing 4 months against a full 12 would be misleading).
     const tThis = yoyThis.reduce((s, v) => s + v, 0);
     const lastCutoff = new Date(lastFyStart.getTime() + (Math.min(now.getTime(), fyEnd.getTime()) - fyStart.getTime()));
-    const tLast = partySales.filter((c) => c.invDate >= lastFyStart && c.invDate <= lastCutoff).reduce((s, c) => s + n(c.total), 0);
+    const tLast = partySales.filter((c) => c.invDate >= lastFyStart && c.invDate <= lastCutoff).reduce((s, c) => s + amt(c), 0);
 
     return {
       monthly: [...buckets.values()].map((p) => ({ ...p, billed: r0(p.billed), billedBank: r0(p.billedBank), billedCash: r0(p.billed - p.billedBank) })),
