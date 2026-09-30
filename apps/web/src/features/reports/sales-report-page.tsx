@@ -1,6 +1,8 @@
 import { useMemo } from 'react';
-import { Bar, BarChart, CartesianGrid, Cell, ReferenceLine, ResponsiveContainer, Tooltip, XAxis, YAxis } from 'recharts';
+import { Bar, BarChart, CartesianGrid, Cell, ReferenceLine, ResponsiveContainer, Tooltip, XAxis, YAxis, type TooltipProps } from 'recharts';
 import { TrendingUp } from 'lucide-react';
+import type { SalesReport } from '@oms/shared';
+import { cn } from '@/lib/utils';
 import { inrCompact, inrFull } from '@/features/dashboard/format';
 import {
   BAR_RADIUS,
@@ -21,9 +23,71 @@ import {
 import { ReportFilterBar, useReportFilters } from './report-filters';
 import { useSalesReport } from './use-reports';
 
-/** Last FY in the lighter half of each pair, this FY in the full colours. */
-const LAST_BANK = '#9fb0f2';
-const LAST_CASH = '#b7f0d6';
+/** Last FY in slate — readable, but clearly the year before — this FY in the full colours. */
+const LAST_BANK = '#475569';
+const LAST_CASH = '#94a3b8';
+
+type YoyRow = SalesReport['yoy'][number];
+const pct = (a: number, b: number) => (b > 0 ? ((a - b) / b) * 100 : null);
+const pctText = (p: number | null) => (p == null ? '—' : `${p > 0 ? '+' : ''}${p.toFixed(1)}%`);
+
+/** One month, both years, in dark text — the series colours are only the dots. */
+function YoyTooltip({ active, payload, label, fy }: TooltipProps<number, string> & { fy: SalesReport['fy'] }) {
+  if (!active || !payload?.length) return null;
+  const r = payload[0].payload as YoyRow;
+  const g = r.thisYear > 0 ? pct(r.thisYear, r.lastYear) : null;
+  const year = (name: string, bank: number, cash: number, total: number, dots: [string, string]) => (
+    <div className="space-y-0.5">
+      <div className="flex items-baseline justify-between gap-4">
+        <span className="font-extrabold">{name}</span>
+        <span className="font-extrabold tabular-nums">{inrFull(total)}</span>
+      </div>
+      {(
+        [
+          ['Bank', bank, dots[0]],
+          ['Cash', cash, dots[1]],
+        ] as const
+      ).map(([k, v, dot]) => (
+        <div key={k} className="text-muted-foreground flex items-center justify-between gap-4">
+          <span className="flex items-center gap-1.5">
+            <span className="size-2 rounded-full" style={{ background: dot }} />
+            {k}
+          </span>
+          <span className="tabular-nums">{inrFull(v)}</span>
+        </div>
+      ))}
+    </div>
+  );
+  return (
+    <div className="bg-popover text-popover-foreground min-w-[230px] space-y-2 rounded-xl border p-3 text-[12px] shadow-lg">
+      <div className="flex items-center justify-between gap-3">
+        <span className="text-[13px] font-extrabold">{label}</span>
+        {g != null && (
+          <span className={cn('rounded-full px-2 py-0.5 text-[11px] font-bold', g >= 0 ? 'bg-emerald-50 text-emerald-700 dark:bg-emerald-500/15 dark:text-emerald-300' : 'bg-rose-50 text-rose-700 dark:bg-rose-500/15 dark:text-rose-300')}>
+            {pctText(g)}
+          </span>
+        )}
+      </div>
+      {year(fy.this, r.thisYearBank, r.thisYearCash, r.thisYear, [DESK_BANK, DESK_CASH])}
+      <div className="border-t" />
+      {year(fy.last, r.lastYearBank, r.lastYearCash, r.lastYear, [LAST_BANK, LAST_CASH])}
+    </div>
+  );
+}
+
+/** A figure at the top of the FY card. */
+function FyTile({ label, value, sub, bar, tone }: { label: string; value: string; sub?: string; bar: string; tone?: 'good' | 'bad' }) {
+  return (
+    <div className="bg-card relative overflow-hidden rounded-xl border px-3.5 py-2.5 shadow-sm">
+      <span className="absolute inset-y-0 left-0 w-1" style={{ background: bar }} />
+      <div className="text-muted-foreground text-[11px] font-bold tracking-wide uppercase">{label}</div>
+      <div className={cn('mt-0.5 text-[18px] leading-tight font-extrabold tabular-nums', tone === 'good' && 'text-emerald-600 dark:text-emerald-400', tone === 'bad' && 'text-rose-600 dark:text-rose-400')}>
+        {value}
+      </div>
+      {sub && <div className="text-muted-foreground truncate text-[11.5px]">{sub}</div>}
+    </div>
+  );
+}
 
 export function SalesReportPage() {
   const filters = useReportFilters();
@@ -41,6 +105,11 @@ export function SalesReportPage() {
     while (i > 0 && !((yoy[i - 1].thisYearBank ?? 0) + (yoy[i - 1].thisYearCash ?? 0))) i -= 1;
     return i < yoy.length ? `${yoy[i].label} → ${yoy[yoy.length - 1].label} still to come` : undefined;
   }, [yoy]);
+  const fy = data?.fy;
+  const thisTotals = useMemo(
+    () => yoy.reduce((t, m) => ({ total: t.total + m.thisYear, bank: t.bank + m.thisYearBank, cash: t.cash + m.thisYearCash }), { total: 0, bank: 0, cash: 0 }),
+    [yoy],
+  );
 
   const hero: ReportHero = {
     label: 'Billed this period',
@@ -104,21 +173,43 @@ export function SalesReportPage() {
         <Kpi label="Regions" value={data ? String(data.byRegion.length) : '—'} hint="with revenue" loading={isLoading} tone="amber" />
       </KpiGrid>
 
-      <ReportCard title="This financial year vs last (Apr → Mar)" right={toCome}>
-        {isLoading ? <div className="bg-muted h-[260px] animate-pulse rounded-lg" /> : (
+      <ReportCard title={fy ? `${fy.this} vs ${fy.last} · Apr → Mar` : 'This financial year vs last (Apr → Mar)'} right={toCome}>
+        {isLoading || !fy ? <div className="bg-muted h-[320px] animate-pulse rounded-lg" /> : (
           <>
-            <ChartLegend items={[{ label: 'Last FY · bank', color: LAST_BANK }, { label: 'Last FY · cash', color: LAST_CASH }, { label: 'This FY · bank', color: DESK_BANK }, { label: 'This FY · cash', color: DESK_CASH }]} />
-            <div className="h-[240px] w-full">
+            <div className="mb-3 grid grid-cols-3 gap-2 sm:gap-3">
+              <FyTile
+                label={`${fy.this}${toCome ? ' so far' : ''}`}
+                value={inrCompact(thisTotals.total)}
+                sub={`Bank ${inrCompact(thisTotals.bank)} · Cash ${inrCompact(thisTotals.cash)}`}
+                bar={DESK_BANK}
+              />
+              <FyTile
+                label={`${fy.last}${toCome ? ' same months' : ''}`}
+                value={inrCompact(data?.yoyTotals.lastYear ?? 0)}
+                sub={toCome ? `Full year ${inrCompact(data?.yoyTotals.lastYearFull ?? 0)}` : undefined}
+                bar={LAST_BANK}
+              />
+              <FyTile label="Growth" value={growthText} sub={toCome ? 'same months' : 'full year'} bar={(growth ?? 0) >= 0 ? '#10b981' : '#e11d48'} tone={growth == null ? undefined : growth >= 0 ? 'good' : 'bad'} />
+            </div>
+            <ChartLegend
+              items={[
+                { label: `${fy.this} · bank`, color: DESK_BANK },
+                { label: `${fy.this} · cash`, color: DESK_CASH },
+                { label: `${fy.last} · bank`, color: LAST_BANK },
+                { label: `${fy.last} · cash`, color: LAST_CASH },
+              ]}
+            />
+            <div className="h-[260px] w-full">
               <ResponsiveContainer width="100%" height="100%">
-                <BarChart data={yoy} margin={{ top: 6, right: 4, bottom: 0, left: 0 }} barGap={3} barCategoryGap="24%">
+                <BarChart data={yoy} margin={{ top: 6, right: 4, bottom: 0, left: 0 }} barGap={3} barCategoryGap="22%">
                   <CartesianGrid {...CHART_GRID} />
                   <XAxis dataKey="label" tick={CHART_TICK} tickLine={false} axisLine={{ stroke: '#dfe4ee' }} />
                   <YAxis tick={CHART_TICK} tickLine={false} axisLine={false} width={48} tickFormatter={(v: number) => inrCompact(v)} />
-                  <Tooltip formatter={(v: number) => inrFull(v)} cursor={{ fill: 'rgba(79,110,247,0.06)' }} />
-                  <Bar name="Last FY (Bank)" dataKey="lastYearBank" stackId="last" fill={LAST_BANK} maxBarSize={18} />
-                  <Bar name="Last FY (Cash)" dataKey="lastYearCash" stackId="last" fill={LAST_CASH} radius={BAR_RADIUS} maxBarSize={18} />
-                  <Bar name="This FY (Bank)" dataKey="thisYearBank" stackId="this" fill={DESK_BANK} maxBarSize={18} />
-                  <Bar name="This FY (Cash)" dataKey="thisYearCash" stackId="this" fill={DESK_CASH} radius={BAR_RADIUS} maxBarSize={18} />
+                  <Tooltip content={<YoyTooltip fy={fy} />} cursor={{ fill: 'rgba(79,110,247,0.07)' }} />
+                  <Bar name={`${fy.last} (Bank)`} dataKey="lastYearBank" stackId="last" fill={LAST_BANK} maxBarSize={20} />
+                  <Bar name={`${fy.last} (Cash)`} dataKey="lastYearCash" stackId="last" fill={LAST_CASH} radius={BAR_RADIUS} maxBarSize={20} />
+                  <Bar name={`${fy.this} (Bank)`} dataKey="thisYearBank" stackId="this" fill={DESK_BANK} maxBarSize={20} />
+                  <Bar name={`${fy.this} (Cash)`} dataKey="thisYearCash" stackId="this" fill={DESK_CASH} radius={BAR_RADIUS} maxBarSize={20} />
                 </BarChart>
               </ResponsiveContainer>
             </div>
@@ -147,7 +238,10 @@ export function SalesReportPage() {
           )}
         </ReportCard>
 
-        <ReportCard title="Historical seasonality" note="1× = an average month. Green months beat the average; amber months trail it.">
+        <ReportCard
+          title={fy ? `Seasonality · ${fy.this} (Apr → Mar)` : 'Seasonality (Apr → Mar)'}
+          note={`1× = ${fy?.this ?? 'the FY'}'s average ${toCome ? 'completed ' : ''}month. Green months beat it; amber months trail it${toCome ? '; this month counts so far, and months still to come have no bar' : ''}.`}
+        >
           {isLoading ? <div className="bg-muted h-[240px] animate-pulse rounded-lg" /> : (
             <div className="h-[240px] w-full">
               <ResponsiveContainer width="100%" height="100%">
@@ -159,10 +253,10 @@ export function SalesReportPage() {
                   <CartesianGrid {...CHART_GRID} />
                   <XAxis dataKey="label" tick={CHART_TICK} tickLine={false} axisLine={{ stroke: '#dfe4ee' }} />
                   <YAxis tick={CHART_TICK} tickLine={false} axisLine={false} width={34} tickFormatter={(v: number) => `${v}×`} />
-                  <Tooltip formatter={(v: number) => `${v}× average`} cursor={{ fill: 'rgba(79,110,247,0.06)' }} />
+                  <Tooltip formatter={(v: number) => `${v}× the average month`} cursor={{ fill: 'rgba(79,110,247,0.06)' }} />
                   <ReferenceLine y={1} stroke="#7a849c" strokeDasharray="4 4" label={{ value: '1× average', position: 'insideTopRight', fill: '#7a849c', fontSize: 10.5, fontWeight: 700 }} />
                   <Bar dataKey="index" radius={BAR_RADIUS} maxBarSize={28}>
-                    {(data?.seasonality ?? []).map((s, i) => <Cell key={i} fill={s.index >= 1 ? 'url(#season-up)' : 'url(#season-down)'} />)}
+                    {(data?.seasonality ?? []).map((s, i) => <Cell key={i} fill={(s.index ?? 0) >= 1 ? 'url(#season-up)' : 'url(#season-down)'} />)}
                   </Bar>
                 </BarChart>
               </ResponsiveContainer>

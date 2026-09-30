@@ -108,12 +108,14 @@ export interface BusinessOverview {
 export interface SalesReport {
   /** Monthly billed revenue for the last `months` months. */
   monthly: ReportMonthPoint[];
-  /** This financial year vs last, aligned by calendar month (Apr→Mar), each split by mode. */
+  /** The FY the report is about (the one the selected dates end in) and the one before, e.g. "FY 2026-27". */
+  fy: { this: string; last: string };
+  /** That FY vs the one before, aligned by month (Apr→Mar), each split by mode. */
   yoy: { label: string; thisYear: number; thisYearBank: number; thisYearCash: number; lastYear: number; lastYearBank: number; lastYearCash: number }[];
-  /** This-FY total vs last-FY total, and growth %. */
-  yoyTotals: { thisYear: number; lastYear: number; growthPct: number | null };
-  /** Seasonality index per calendar month (month avg ÷ overall month avg; 1 = average). */
-  seasonality: { month: string; label: string; index: number }[];
+  /** That FY so far vs the same months of the one before, and growth %; `lastYearFull` is the whole prior FY. */
+  yoyTotals: { thisYear: number; lastYear: number; lastYearFull: number; growthPct: number | null };
+  /** That FY's months (Apr→Mar), each against the FY's own average month (1 = average); null for a month still to come. */
+  seasonality: { month: string; label: string; index: number | null }[];
   byAgent: ReportSlice[];
   byRegion: ReportSlice[];
   byState: ReportSlice[];

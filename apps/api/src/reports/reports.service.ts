@@ -385,21 +385,16 @@ export class ReportsService {
       add(party, c.customerName || '—', v, bank);
       add(cat, (c.category ?? '').trim() || 'Uncategorised', v, bank);
     }
-    const historyByMonth = new Array(12).fill(0);
-    const historyPeriods = new Array(12).fill(0).map(() => new Set<string>());
-    for (const c of partySales) {
-      const month = c.invDate.getMonth();
-      historyByMonth[month] += n(c.total);
-      historyPeriods[month].add(this.monthKey(c.invDate));
-    }
-    const monthAverages = historyByMonth.map((v, i) => v / Math.max(1, historyPeriods[i].size));
-    const meanMonth = monthAverages.reduce((s, v) => s + v, 0) / 12 || 1;
-    const seasonality = monthAverages.map((v, i) => ({ month: String(i + 1).padStart(2, '0'), label: MON[i], index: Math.round((v / meanMonth) * 100) / 100 }));
-
-    // Year-over-year, aligned to the Indian FY (Apr→Mar), each split by mode.
-    const fyStart = this.startOfFinYear(now);
+    // Year-over-year, aligned to the Indian FY (Apr→Mar), each split by mode —
+    // for the FY the selected dates end in (FY-to-date by default), not always
+    // today's: picking last year's dates compares last year with the one before.
+    const anchor = fx.to && fx.to < now ? fx.to : now;
+    const fyStart = this.startOfFinYear(anchor);
     const lastFyStart = new Date(fyStart.getFullYear() - 1, 3, 1);
     const fyEnd = new Date(fyStart.getFullYear() + 1, 3, 1);
+    const fyName = (start: Date) => `FY ${start.getFullYear()}-${String((start.getFullYear() + 1) % 100).padStart(2, '0')}`;
+    /** The FY's months already reached — all 12 for a past FY. */
+    const reached = now >= fyEnd ? 12 : ((now.getMonth() - 3 + 12) % 12) + 1;
     const yoyThis = new Array(12).fill(0);
     const yoyThisBank = new Array(12).fill(0);
     const yoyLast = new Array(12).fill(0);
@@ -411,6 +406,18 @@ export class ReportsService {
       else if (t >= lastFyStart && t < fyStart) { yoyLast[idx] += n(c.total); yoyLastBank[idx] += n(c.b); }
     }
     const FYMON = ['Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec', 'Jan', 'Feb', 'Mar'];
+    // Seasonality of that same FY, Apr → Mar: each month against the FY's own
+    // average month. A month still to come is not a slow month, so it gets no
+    // bar rather than a zero; and the average is taken over the COMPLETED
+    // months, so this month's part-billed total does not drag it down.
+    const complete = now >= fyEnd ? 12 : reached - 1;
+    const base = complete > 0 ? complete : reached;
+    const meanMonth = yoyThis.slice(0, base).reduce((s, v) => s + v, 0) / base || 1;
+    const seasonality = FYMON.map((label, i) => ({
+      month: String(((i + 3) % 12) + 1).padStart(2, '0'),
+      label,
+      index: i < reached ? Math.round((yoyThis[i] / meanMonth) * 100) / 100 : null,
+    }));
     // Cash derives from the year total minus bank — see topSlices()'s comment.
     const yoy = FYMON.map((label, i) => ({
       label,
@@ -420,13 +427,19 @@ export class ReportsService {
     // Like-for-like growth: this FY-to-date vs last FY over the SAME elapsed months
     // (comparing 4 months against a full 12 would be misleading).
     const tThis = yoyThis.reduce((s, v) => s + v, 0);
-    const lastCutoff = new Date(lastFyStart.getTime() + (now.getTime() - fyStart.getTime()));
+    const lastCutoff = new Date(lastFyStart.getTime() + (Math.min(now.getTime(), fyEnd.getTime()) - fyStart.getTime()));
     const tLast = partySales.filter((c) => c.invDate >= lastFyStart && c.invDate <= lastCutoff).reduce((s, c) => s + n(c.total), 0);
 
     return {
       monthly: [...buckets.values()].map((p) => ({ ...p, billed: r0(p.billed), billedBank: r0(p.billedBank), billedCash: r0(p.billed - p.billedBank) })),
+      fy: { this: fyName(fyStart), last: fyName(lastFyStart) },
       yoy,
-      yoyTotals: { thisYear: r0(tThis), lastYear: r0(tLast), growthPct: tLast > 0 ? ((tThis - tLast) / tLast) * 100 : null },
+      yoyTotals: {
+        thisYear: r0(tThis),
+        lastYear: r0(tLast),
+        lastYearFull: r0(yoyLast.reduce((s, v) => s + v, 0)),
+        growthPct: tLast > 0 ? ((tThis - tLast) / tLast) * 100 : null,
+      },
       seasonality,
       byAgent: this.topSlices(agent, 12),
       byRegion: this.topSlices(region, 12),
