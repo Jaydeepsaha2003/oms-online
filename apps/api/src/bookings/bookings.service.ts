@@ -447,6 +447,17 @@ export class BookingsService {
         ]
       : [];
 
+    /*
+     * What has actually left against this booking: every dispatch on its lines
+     * (returns are negative rows, so this is net) plus overage draws made on
+     * other orders' lines. An overage on one of its own lines is already inside
+     * that line's dispatch, so it is not counted twice.
+     */
+    const onOwnLines = new Set(dispatches.map((d) => d.id));
+    const offLineOverage = overageDraws.filter((c) => c.removedAt == null && (c.dispatchId == null || !onOwnLines.has(c.dispatchId)));
+    const dispatchedBags = round2(dispatches.reduce((s, d) => s + (d.bags ?? 0), 0) + offLineOverage.reduce((s, c) => s + (c.bags ?? 0), 0));
+    const dispatchedKgs = round2(dispatches.reduce((s, d) => s + (d.gram ?? 0), 0) + offLineOverage.reduce((s, c) => s + (c.kgs ?? 0), 0));
+
     const buffer = await this.pdf.render(
       buildBookingPdfDoc({
         code: booking.code ?? this.codeFor(booking.id),
@@ -458,6 +469,8 @@ export class BookingsService {
         kgs: booking.kgs,
         convertedBags: booking.convertedBags,
         convertedKgs: booking.convertedKgs,
+        dispatchedBags,
+        dispatchedKgs,
         remainingBags: Math.max(0, round2(booking.bags - booking.convertedBags - (booking.precloseBags ?? 0))),
         remainingKgs: Math.max(0, round2(booking.kgs - booking.convertedKgs - (booking.precloseKgs ?? 0))),
         status: booking.status as BookingStatus,
@@ -1763,6 +1776,9 @@ interface BookingPdfData {
   kgs: number;
   convertedBags: number;
   convertedKgs: number;
+  /** Net of returns — see generateBookingPdf. */
+  dispatchedBags: number;
+  dispatchedKgs: number;
   remainingBags: number;
   remainingKgs: number;
   status: string;
@@ -2114,6 +2130,7 @@ function buildBookingPdfDoc(b: BookingPdfData): TDocumentDefinitions {
   const summaryCells: Cell[] = [
     summaryCell('BOOKED', b.bags, b.kgs),
     summaryCell('CONVERTED', b.convertedBags, b.convertedKgs),
+    summaryCell('DISPATCHED', b.dispatchedBags, b.dispatchedKgs),
     summaryCell(preclosed ? 'STILL PENDING' : 'REMAINING', b.remainingBags, b.remainingKgs),
     ...(preclosed ? [summaryCell('WRITTEN OFF', b.precloseBags ?? 0, b.precloseKgs ?? 0)] : []),
   ];
