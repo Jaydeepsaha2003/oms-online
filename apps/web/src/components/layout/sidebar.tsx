@@ -121,12 +121,12 @@ export function Sidebar({ collapsed = false, onNavigate }: SidebarProps) {
     [items, location.pathname],
   );
 
-  // Accordion: only one group is open at a time. Default to the active route's group.
+  // Accordion: only one group is open at a time. Default to the group of the
+  // entry that owns the URL — not any group with a prefix match, or
+  // /bookings/dispatch (Dispatch) would open Orders for its /bookings.
   const activeGroupId = useMemo(
-    () =>
-      items.find((n) => n.children?.length && n.children.some((c) => c.to && isUnder(location.pathname, c.to)))?.id ??
-      null,
-    [items, location.pathname],
+    () => items.find((n) => n.children?.some((c) => c.to === activePath))?.id ?? null,
+    [items, activePath],
   );
   const [openGroup, setOpenGroup] = useState<string | null>(activeGroupId);
 
@@ -280,8 +280,7 @@ function MenuGroup({
   open: boolean;
   onToggle: () => void;
 }) {
-  const location = useLocation();
-  const childActive = (node.children ?? []).some((c) => c.to && isUnder(location.pathname, c.to));
+  const childActive = (node.children ?? []).some((c) => c.to === activePath);
   const Icon = getMenuIcon(node.icon);
 
   // Collapsed rail: ONE icon for the group itself — its own icon, its own label

@@ -335,15 +335,6 @@ export const MENU: MenuNode[] = [
         permission: perm(RESOURCES.BOOKING, ACTIONS.VIEW),
       },
       {
-        id: 'booking-dispatch',
-        label: 'Booking Dispatch',
-        to: '/bookings/dispatch',
-        icon: 'Truck',
-        // The dispatch floor's permission, not the booking one: this screen
-        // ships goods, and reading it is no use without being able to save.
-        permission: perm(RESOURCES.DISPATCH, ACTIONS.CREATE),
-      },
-      {
         id: 'order-modify',
         label: 'Order Modify',
         to: '/orders/modify',
@@ -377,6 +368,15 @@ export const MENU: MenuNode[] = [
         label: 'Dispatch Order',
         to: '/dispatch/new',
         icon: 'PackagePlus',
+        permission: perm(RESOURCES.DISPATCH, ACTIONS.CREATE),
+      },
+      {
+        id: 'booking-dispatch',
+        label: 'Booking Dispatch',
+        to: '/bookings/dispatch',
+        icon: 'Truck',
+        // The dispatch floor's permission, not the booking one: this screen
+        // ships goods, and reading it is no use without being able to save.
         permission: perm(RESOURCES.DISPATCH, ACTIONS.CREATE),
       },
       {
