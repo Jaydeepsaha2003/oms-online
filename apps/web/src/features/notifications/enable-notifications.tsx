@@ -3,6 +3,7 @@ import { BellRing, Loader2 } from 'lucide-react';
 import { toast } from 'sonner';
 import { cn } from '@/lib/utils';
 import { hasActivePushSubscription, subscribeToPush } from '@/lib/push-subscription';
+import { isAndroid } from '@/lib/service-worker';
 import { Button } from '@/components/ui/button';
 import { Switch } from '@/components/ui/switch';
 import { readDeviceSound, writeDeviceSound, type DeviceSound } from '@/features/crm/followup-nudge';
@@ -137,6 +138,28 @@ export function DeviceNotificationSettings() {
           ))}
       </div>
       {problem && <p className="mt-1 text-[11px] text-amber-700 dark:text-amber-400">{problem}</p>}
+
+      {/* What only the phone's own settings can do. A web app cannot ask
+          Android for a pop-up or lock-screen alert, and a phone that puts the
+          browser to sleep for battery never wakes for one. */}
+      {supported && isAndroid() && (
+        <details className="mt-2 rounded-md border bg-white px-2.5 py-1.5 text-[11.5px] dark:bg-white/5">
+          <summary className="cursor-pointer font-bold">Show on the lock screen, like WhatsApp</summary>
+          <ol className="mt-1.5 list-decimal space-y-1 pl-4 leading-snug">
+            <li>
+              Long-press an OMS notification → <b>Settings</b> (or Settings → Apps → <b>OMS</b>, or <b>Chrome</b> if OMS is not installed → Notifications). Turn on{' '}
+              <b>Pop on screen</b> and set <b>Lock screen</b> to show notifications.
+            </li>
+            <li>
+              Settings → Apps → <b>OMS</b> and <b>Chrome</b> → Battery → <b>Unrestricted</b> (no battery optimisation). On Xiaomi / Redmi / Vivo / Oppo also allow{' '}
+              <b>Autostart</b>.
+            </li>
+            <li>
+              If <b>Do not disturb</b> is on, add OMS to its allowed apps.
+            </li>
+          </ol>
+        </details>
+      )}
 
       {/* Sound is this device's own call — the shop-wide chime setting silenced
           or unsilenced every machine at once. */}

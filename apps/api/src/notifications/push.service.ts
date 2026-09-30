@@ -83,6 +83,14 @@ export class PushService {
           await webpush.sendNotification(
             { endpoint: sub.endpoint, keys: { p256dh: sub.p256dh, auth: sub.auth } },
             body,
+            /*
+             * High urgency, as a chat app sends. web-push's default is
+             * "normal", which Android's push service holds back while a
+             * locked phone dozes — the alert then turned up only once the
+             * screen was unlocked, never on the lock screen. A day's TTL: an
+             * order alert a phone missed for longer than that is stale news.
+             */
+            { urgency: 'high', TTL: 24 * 60 * 60 },
           );
         } catch (err) {
           const webPushErr = err as { statusCode?: number; body?: string; headers?: Record<string, string> };
