@@ -161,9 +161,20 @@ export interface PartyLedgerFooter {
 export type PartyListStanding = 'GREEN' | 'BLACK' | 'CUSTOM' | 'NONE';
 
 /** An aging bucket — total amount + how many invoices. */
+/** One unpaid bill, as the statement names it: bill date and due date. */
+export interface LedgerOldestBill {
+  code: string;
+  invDate: string;
+  dueDate: string;
+  party: string;
+}
+
 export interface LedgerDueBucket {
   amount: number;
   count: number;
+  /** The same amount split by side of the book (each 0 when that side is filtered out). */
+  bank: number;
+  cash: number;
 }
 
 export interface PartyLedgerKpis {
@@ -184,6 +195,10 @@ export interface PartyLedgerKpis {
    * invoice does not exist. `inRange` is what lets the UI say "raised before this
    * date range" instead of leaving the user hunting for it.
    */
+  /** The oldest bill still owing on the BANK side, and on the CASH side —
+   *  printed separately on the statement. */
+  oldestBank: LedgerOldestBill | null;
+  oldestCash: LedgerOldestBill | null;
   invDueFromDetail: {
     code: string;
     /** The date the KPI is measured from — due date, or invoice date if none. */
