@@ -1489,7 +1489,7 @@ const DISPATCH_ANIM_CSS = `
   .dispatch-truck, .dispatch-parcel, .dispatch-road, .dispatch-text { animation: none !important; }
 }`;
 
-function DispatchTruckAnimation({ code, onDone }: { code: string; onDone: () => void }) {
+export function DispatchTruckAnimation({ code, onDone }: { code: string; onDone: () => void }) {
   // Bind the timer once — re-renders (e.g. the pending list refetching) must not reset it.
   const onDoneRef = useRef(onDone);
   onDoneRef.current = onDone;

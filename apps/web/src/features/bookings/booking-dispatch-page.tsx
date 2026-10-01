@@ -1,15 +1,12 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { ArrowLeft, Check, Eraser, Info, Loader2, Pencil, Plus, Send, Trash2, Truck, X } from 'lucide-react';
+import { ArrowLeft, Check, ChevronRight, Coffee, Eraser, Info, Loader2, Lock, Pencil, Plus, Search, Send, ShoppingBag, Trash2, Truck, X } from 'lucide-react';
 import { toast } from 'sonner';
 import { qtyOrderForCategory, type BookingDispatchLineInput, type BookingDispatchResult } from '@oms/shared';
 import { getApiErrorMessage } from '@/lib/api';
 import { formatDate } from '@/lib/date-format';
+import { useIsMobile } from '@/hooks/use-is-mobile';
 import { useConfirm } from '@/components/common/confirm';
-import { Button } from '@/components/ui/button';
-import { Input } from '@/components/ui/input';
-import { Label } from '@/components/ui/label';
-import { Card, CardContent } from '@/components/ui/card';
 import { DatePicker } from '@/components/ui/date-picker';
 import { NativeSelect } from '@/components/common/combo';
 import { useOrderLookups } from '@/features/orders/use-orders';
@@ -18,6 +15,7 @@ import { useDraftPhotoCheck } from '@/features/dispatch/use-dispatch';
 import { DesignNamePicker, resolveDesignNameChoices } from '@/features/orders/design-name-picker';
 import { LinePhotoButton, toPhotoInput, type LinePhoto } from '@/features/orders/line-photos';
 import { buildItemOptions } from '@/features/orders/item-options';
+import { DispatchTruckAnimation } from '@/features/dispatch/dispatch-order-page';
 import { useAllDrawableBookings, useBookingDispatchOptions, useDispatchFromBooking } from './use-bookings';
 
 const today = () => new Date().toISOString().slice(0, 10);
@@ -25,6 +23,23 @@ const n = (s: string) => (s.trim() === '' || Number.isNaN(Number(s)) ? null : Nu
 const r3 = (x: number) => Math.round(x * 1000) / 1000;
 const r2 = (x: number) => Math.round(x * 100) / 100;
 const norm = (s?: string | null) => (s ?? '').trim().replace(/\s+/g, ' ').toUpperCase();
+const nf = (x: number) => x.toLocaleString('en-IN');
+const inr = (x: number) => `₹ ${nf(x)}`;
+const items = (k: number) => `${k} item${k === 1 ? '' : 's'}`;
+const QTY_TIP = 'Pcs, Box and Kgs fill each other the first time; a field you change or clear stays as you left it. Pcs is what gets billed.';
+
+/** A party's initials on a colour that stays the same for that party. */
+const AVATARS = [
+  'linear-gradient(145deg,#4aa3ff,#0a6cff)',
+  'linear-gradient(145deg,#a78bfa,#6d4bdb)',
+  'linear-gradient(145deg,#34d399,#0f9d63)',
+  'linear-gradient(145deg,#fbbf24,#e07a00)',
+  'linear-gradient(145deg,#fb7185,#d6264a)',
+];
+const avatarOf = (name = '') => ({
+  initials: name.split(' ').filter(Boolean).slice(0, 2).map((w) => w[0]).join(''),
+  bg: AVATARS[[...name].reduce((h, c) => h + c.charCodeAt(0), 0) % AVATARS.length],
+});
 
 /** The category this screen works in. Cups are what moves this way. */
 const CATEGORY = 'CUP';
@@ -86,13 +101,19 @@ export function BookingDispatchPage() {
   const { data: lookups } = useOrderLookups();
   const { data: qtyLayout } = useOrderQtyLayout();
   const send = useDispatchFromBooking();
+  const isMobile = useIsMobile();
   const [done, setDone] = useState<BookingDispatchResult | null>(null);
+  /** Order code the truck animation plays for, after a dispatch. */
+  const [shipped, setShipped] = useState<string | null>(null);
+  const topRef = useRef<HTMLDivElement>(null);
 
   const [draft] = useState(readDraft);
   const [customer, setCustomer] = useState(draft?.customer ?? '');
   const [bookingId, setBookingId] = useState<number | null>(draft?.bookingId ?? null);
   const [dispatchDate, setDispatchDate] = useState(today());
   const [lines, setLines] = useState<DraftLine[]>(draft?.lines ?? []);
+  /** Phone only: the booking list, then the form for the booking picked. */
+  const [screen, setScreen] = useState<'pick' | 'form'>(draft?.lines.length && draft.bookingId != null ? 'form' : 'pick');
   const keyer = useRef(Date.now());
   const keepLines = useRef(!!draft?.lines.length);
   useEffect(() => {
@@ -131,8 +152,24 @@ export function BookingDispatchPage() {
   }, [allBookings, bookingSearch]);
   /** A booking picked from the list, applied once its party's options load. */
   const pickRef = useRef<number | null>(draft?.bookingId ?? null);
-  const pickBooking = (b: { id: number; customerName?: string }) => {
-    if (!b.customerName) return;
+  /** The lines belong to one party: switching party clears them, so ask first. */
+  const okToSwitch = async (name: string) =>
+    name === customer ||
+    !lines.length ||
+    confirm({
+      title: 'Change party?',
+      description: `The ${items(lines.length)} on this list ${lines.length === 1 ? 'belongs' : 'belong'} to ${customer} and will be cleared.`,
+      confirmText: 'Change',
+      destructive: true,
+    });
+  const changeCustomer = async (name: string) => {
+    if (await okToSwitch(name)) setCustomer(name);
+  };
+  const pickBooking = async (b: { id: number; customerName?: string }) => {
+    if (!b.customerName || !(await okToSwitch(b.customerName))) return;
+    setDone(null);
+    setScreen('form');
+    topRef.current?.scrollIntoView({ block: 'start' });
     if (b.customerName === customer) return setBookingId(b.id);
     pickRef.current = b.id;
     setCustomer(b.customerName);
@@ -407,9 +444,12 @@ export function BookingDispatchPage() {
       { bookingId: booking.id, dispatchDate, bags, lines: payload },
       {
         onSuccess: (res) => {
+          setShipped(res.orderCode ?? '');
           setDone(res);
           setLines([]);
           setTotalBags('');
+          setScreen('pick');
+          topRef.current?.scrollIntoView({ block: 'start', behavior: 'smooth' });
         },
         onError: (e) => toast.error(getApiErrorMessage(e, 'Dispatch failed')),
       },
@@ -434,404 +474,595 @@ export function BookingDispatchPage() {
       void addLine();
     }
   };
-  const qtyInput = (label: string, value: string, onChange: (v: string) => void) => (
-    <div key={label} className="space-y-1">
-      <Label className="text-base">{label}</Label>
-      <Input
-        type="number"
-        step="any"
-        min={0}
-        className="text-right tabular-nums"
-        value={value}
-        onChange={(e) => onChange(e.target.value)}
-        onKeyDown={enterAdds}
-        placeholder="0"
-      />
-    </div>
-  );
   const entryRate = entry.product ? rateFor(entry) : 0;
+  const bags = n(totalBags) ?? 0;
+  /** Where the user is: Booking → Items → Bags → Dispatch. */
+  const step = !booking ? 0 : !lines.length ? 1 : bags <= 0 ? 2 : 3;
+  const hint = kgsPerBag && totals.kgs ? r2(totals.kgs / kgsPerBag) : 0;
+  const over = !!booking && bags > booking.remainingBags;
+  const past = dispatchDate < today();
+  const onForm = isMobile && screen === 'form' && !!booking;
+  const editNo = editingKey ? lines.findIndex((l) => l.key === editingKey) + 1 : 0;
+
+  const backToList = () => {
+    setScreen('pick');
+    if (editingKey) resetEntry();
+    topRef.current?.scrollIntoView({ block: 'start' });
+  };
+  const cancelAll = async () => {
+    if (!lines.length) return isMobile ? backToList() : navigate('/bookings');
+    const ok = await confirm({
+      title: 'Discard this dispatch?',
+      description: `The ${items(lines.length)} on this list will be removed.`,
+      confirmText: 'Discard',
+      destructive: true,
+    });
+    if (!ok) return;
+    setLines([]);
+    setTotalBags('');
+    resetEntry();
+    if (isMobile) backToList();
+  };
+
+  const qtyBox = (f: 'pcs' | 'box' | 'gram', label: string, value: string, onChange: (v: string) => void) => {
+    const filled = !!value && auto(f) && !!entry.product;
+    return (
+      <label key={label} className="bd-f bd-float bd-qty flex-1" data-auto={filled || undefined}>
+        <span className="bd-lbl justify-between">
+          {label}
+          {filled && (
+            <span className="bd-auto" title="Filled from the other quantities">
+              AUTO
+            </span>
+          )}
+        </span>
+        <input
+          type="number"
+          step="any"
+          min={0}
+          inputMode="decimal"
+          placeholder="0"
+          value={value}
+          onChange={(e) => onChange(e.target.value)}
+          onKeyDown={enterAdds}
+        />
+      </label>
+    );
+  };
+  const req = <span className="text-[#ff3b30]">*</span>;
+  const muted = { color: 'var(--bd-muted)' };
+
+  const bookingList = (
+    <section className="bd-card" aria-label={`Open ${CATEGORY} bookings`} style={{ animationDelay: '.08s' }}>
+      <div className="bd-head">
+        <span className="bd-kicker">Step 1</span>
+        <span className="bd-title">{CATEGORY} bag bookings</span>
+        <span className="bd-pill">{allBookings.length} open</span>
+      </div>
+      <label className="bd-search">
+        <span className="sr-only">Search bookings</span>
+        <Search className="size-[15px]" strokeWidth={2.4} />
+        <input value={bookingSearch} onChange={(e) => setBookingSearch(e.target.value)} placeholder="Search party or booking…" />
+      </label>
+      <div role="listbox" aria-label="Bookings" className="bd-list">
+        {shownBookings.map((b, i) => {
+          const on = b.id === bookingId;
+          const av = avatarOf(b.customerName);
+          return (
+            <button
+              key={b.id}
+              type="button"
+              role="option"
+              aria-selected={on}
+              className="bd-row"
+              style={{ animationDelay: `${Math.min(i, 8) * 40}ms` }}
+              onClick={() => void pickBooking(b)}
+            >
+              <span className="bd-av" style={{ background: av.bg }}>
+                {av.initials}
+                {on && (
+                  <span className="bd-av-check">
+                    <Check className="size-2.5 text-white" strokeWidth={4} />
+                  </span>
+                )}
+              </span>
+              <span className="flex min-w-0 flex-col gap-px">
+                <span className="bd-row-name">{b.customerName}</span>
+                <span className="bd-row-sub">
+                  <span className="bd-mono">{b.code}</span> · {formatDate(b.bookingDate)}
+                  {b.kgsPerBag ? ` · 1 bag = ${b.kgsPerBag} kgs` : ''}
+                </span>
+                {isMobile && on && lines.length > 0 && <span className="bd-draft">Draft · {items(lines.length)}</span>}
+              </span>
+              <span className="flex flex-col items-end leading-tight">
+                <span className="bd-big">
+                  {nf(b.remainingBags)}
+                  <small>BAGS</small>
+                </span>
+                <span className="bd-tiny">{nf(b.remainingKgs)} kgs left</span>
+              </span>
+              {isMobile && <ChevronRight className="size-[13px] text-[#c7c7cc]" strokeWidth={3} />}
+            </button>
+          );
+        })}
+        {!shownBookings.length && (
+          <p className="px-2.5 py-5 text-center text-[13px]" style={muted}>
+            {allLoading ? 'Loading…' : `No open ${CATEGORY} bookings${bookingSearch ? ' match this search' : ''}.`}
+          </p>
+        )}
+      </div>
+    </section>
+  );
+
+  const partyCard = (
+    <section className="bd-card" aria-label="Party and booking" style={{ animationDelay: '.14s' }}>
+      <div className="bd-grid">
+        {/* On a phone the dark booking card above already says who and which. */}
+        {!isMobile && (
+          <>
+            <div className="bd-f" data-on={customer ? '' : undefined}>
+              <span className="bd-lbl">Customer {req}</span>
+              <NativeSelect
+                value={customer}
+                onChange={(v) => void changeCustomer(v)}
+                options={customers}
+                placeholder="Select customer…"
+                onInvalidEntry={() => toast.error('Please select a correct customer')}
+              />
+            </div>
+            <div className="bd-f" data-on={booking ? '' : undefined}>
+              <span className="bd-lbl">
+                Booking {req}
+                {isFetching && <Loader2 className="size-3 animate-spin text-[#0a6cff]" />}
+              </span>
+              {/* Keyed by CODE, not id: the closed field shows its own value, and
+                  "4" tells an operator nothing about which booking they picked. */}
+              <NativeSelect
+                value={booking?.code ?? ''}
+                onChange={(v) => setBookingId(bookings.find((b) => b.code === v)?.id ?? null)}
+                options={bookings.map((b) => b.code)}
+                renderOption={(v) => {
+                  const b = bookings.find((x) => x.code === v);
+                  return b ? `${b.code} · ${formatDate(b.bookingDate)} · ${b.remainingBags} bags left` : v;
+                }}
+                placeholder={customer ? 'Select booking…' : 'Pick a customer first'}
+                disabled={!customer}
+              />
+            </div>
+          </>
+        )}
+        <div className="bd-f" data-past={past ? '' : undefined}>
+          <span className="bd-lbl">Dispatch date</span>
+          <DatePicker value={dispatchDate} onChange={setDispatchDate} clearable={false} />
+        </div>
+        <div className="bd-f">
+          <span className="bd-lbl">Bag weight</span>
+          <span className="bd-ro bd-bagw">
+            <ShoppingBag className="size-[15px]" strokeWidth={2.2} />
+            {kgsPerBag ? `1 bag = ${kgsPerBag} kgs` : '—'}
+          </span>
+        </div>
+      </div>
+      <p className="bd-note items-center" style={past ? { color: '#b25000' } : undefined}>
+        <span className="size-1.5 rounded-full" style={{ background: past ? '#ff9500' : '#c7c7cc' }} />A past date needs approval, same as
+        any other dispatch.
+      </p>
+      {booking && (
+        <div className="bd-meter" data-over={over ? '' : undefined}>
+          <div className="flex items-baseline gap-2">
+            <span className="flex-1">
+              <b className="bd-mono">{booking.code}</b> has <b>{nf(booking.remainingBags)}</b> bags / <b>{nf(booking.remainingKgs)}</b> kgs left
+            </span>
+            <span className="bd-meter-use">
+              {bags ? `${nf(bags)} of ${nf(booking.remainingBags)} bags${over ? ' — over' : ''}` : 'No bags yet'}
+            </span>
+          </div>
+          <div className="bd-bar" role="img" aria-label={`${nf(bags)} of ${nf(booking.remainingBags)} bags used by this dispatch`}>
+            <span style={{ width: `${over ? 100 : booking.remainingBags ? (bags / booking.remainingBags) * 100 : 0}%` }} />
+          </div>
+        </div>
+      )}
+    </section>
+  );
+
+  const entryCard = (
+    <section ref={entryRef} className="bd-card bd-entry" data-editing={editingKey ? '' : undefined} aria-label="Add item">
+      <div className="bd-head">
+        {isMobile ? (
+          <span className="bd-plus">
+            <Plus className="size-3" strokeWidth={3} />
+          </span>
+        ) : (
+          <span className="bd-kicker">Step 2</span>
+        )}
+        <span className="bd-title">{editingKey ? 'Edit cup' : 'Add cups'}</span>
+        {editingKey && <span className="bd-badge-orange">{isMobile ? 'Line' : 'Editing line'} {editNo}</span>}
+        {isMobile && (
+          <span className="bd-i" title={QTY_TIP} aria-label={QTY_TIP}>
+            i
+          </span>
+        )}
+      </div>
+      <div className="bd-flex">
+        <div className="bd-f bd-wide flex-[2_1_240px]" data-on={entry.itemName ? '' : undefined}>
+          <span className={isMobile ? 'sr-only' : 'bd-lbl'}>Item name</span>
+          <NativeSelect
+            value={entry.itemName}
+            onChange={onItemPick}
+            onType={setItemQuery}
+            options={itemOptions.options}
+            placeholder="Choose an item…"
+            className="text-left"
+            digitsFirst
+            onInvalidEntry={() => toast.error('Please select a correct item')}
+          />
+        </div>
+        <div className="bd-f bd-float flex-[1_1_130px]">
+          <span className="bd-lbl">{isMobile ? 'Sub-cat' : 'Sub-category'}</span>
+          <span className="bd-ro bd-mono" style={entry.subCategory ? undefined : { color: '#aeaeb2' }}>
+            {entry.subCategory || 'From the item'}
+          </span>
+        </div>
+        <div className="bd-f bd-float flex-[1_1_150px]" data-on={entry.designName && !noDesignNames ? '' : undefined}>
+          <span className="bd-lbl">{isMobile ? 'Design' : 'Design Name'}</span>
+          <DesignNamePicker
+            value={noDesignNames ? 'NA' : entry.designName}
+            onChange={(designName) => setEntry((e) => ({ ...e, designName }))}
+            choices={designNames.choices}
+            multiple={designNames.multiple}
+            disabled={noDesignNames}
+            onInvalidEntry={() => toast.error('Please select a correct design name')}
+          />
+        </div>
+        <div className="bd-f bd-float bd-narrow flex-[1_1_110px]">
+          <span className="bd-lbl" style={isMobile ? { color: '#3a9a5c' } : undefined}>
+            Rate ₹
+          </span>
+          <span className="bd-ro bd-rate" title="Frozen on the booking at its booking date">
+            {!isMobile && <Lock className="size-3 opacity-60" strokeWidth={2.6} />}
+            {entryRate ? nf(entryRate) : '—'}
+          </span>
+        </div>
+      </div>
+      <div className="bd-flex">
+        {/* Bags are not per line — asked once for the whole dispatch below. */}
+        <div className="bd-grp bd-wide flex-[3_1_300px]">
+          {qtyOrderForCategory(qtyLayout, CATEGORY)
+            .filter((f) => f !== 'bags')
+            .map((f) =>
+              f === 'pcs' ? qtyBox('pcs', 'Pcs', entry.pcs, onPcs) : f === 'box' ? qtyBox('box', 'Box', entry.box, onBox) : qtyBox('gram', 'Kgs', entry.gram, onKgs),
+            )}
+        </div>
+        <div className="bd-grp bd-wide flex-[2_1_320px]">
+          <label className="bd-f flex-1">
+            <span className={isMobile ? 'sr-only' : 'bd-lbl'}>Remarks</span>
+            <input
+              value={entry.comment}
+              onChange={(e) => setEntry((x) => ({ ...x, comment: e.target.value }))}
+              onKeyDown={enterAdds}
+              placeholder={isMobile ? 'Remark (optional)' : 'Item remark…'}
+            />
+          </label>
+          <span className="bd-photo" data-miss={editingKey && missingPhotoKeys.has(editingKey) ? '' : undefined}>
+            <LinePhotoButton
+              photos={entry.photos}
+              onChange={(photos) => setEntry((e) => ({ ...e, photos }))}
+              status={editingKey ? photoStatusFor(editingKey) : undefined}
+            />
+          </span>
+          {editingKey ? (
+            <>
+              <button type="button" className="bd-btn bd-orange max-sm:order-last" onClick={() => void addLine()} title="Update this item">
+                <Check className="size-4" strokeWidth={3} /> Update
+              </button>
+              <button type="button" className="bd-btn bd-grey bd-sq" onClick={resetEntry} aria-label="Cancel item edit" title="Cancel item edit">
+                <X className="size-4" strokeWidth={2.8} />
+              </button>
+            </>
+          ) : (
+            <>
+              <button type="button" className="bd-btn bd-blue max-sm:order-last" onClick={() => void addLine()}>
+                <Plus className="size-[17px]" strokeWidth={2.8} /> Add
+              </button>
+              <button
+                type="button"
+                className="bd-btn bd-red bd-sq"
+                onClick={resetEntry}
+                disabled={!entryDirty}
+                aria-label="Clear the item fields"
+                title="Clear the item fields"
+              >
+                <Eraser className="size-[17px]" strokeWidth={2.2} />
+              </button>
+            </>
+          )}
+        </div>
+      </div>
+      {!isMobile && (
+        <p className="bd-note">
+          <Info className="mt-px size-[13px] shrink-0" strokeWidth={2.4} />
+          {QTY_TIP}
+        </p>
+      )}
+    </section>
+  );
+
+  const linesCard = computed.length > 0 && (
+    <section className="bd-card" aria-label="Items to dispatch" style={{ gap: 7 }}>
+      <div className="bd-head px-0.5 pb-0.5">
+        <span className="bd-title">Items</span>
+        <span className="bd-pill">{items(lines.length)}</span>
+      </div>
+      {computed.map((l, i) => {
+        const meta = [l.designName !== 'NA' ? l.designName : '', l.comment].filter(Boolean).join(' · ');
+        return (
+          <div key={l.key} className="bd-line" data-editing={l.key === editingKey ? '' : undefined}>
+            <span className="bd-idx">{i + 1}</span>
+            <div className="min-w-0 flex-[1_1_180px]">
+              <div className="text-sm leading-tight font-bold">{l.itemName}</div>
+              <div className="mt-px text-[11.5px]" style={muted}>
+                <span className="font-mono">{l.subCategory}</span>
+                {meta && (
+                  <>
+                    {' · '}
+                    <span className="font-semibold" style={{ color: 'var(--bd-lbl)' }}>
+                      {meta}
+                    </span>
+                  </>
+                )}
+              </div>
+            </div>
+            <div className="flex gap-[5px]">
+              {(
+                [
+                  ['Box', l.box],
+                  ['Pcs', l.pcs],
+                  ['Kgs', l.kgs],
+                ] as const
+              ).map(([k, v]) => (
+                <span key={k} className="bd-chip" data-zero={v ? undefined : ''}>
+                  <small>{k}</small>
+                  {v ? nf(v) : '—'}
+                </span>
+              ))}
+            </div>
+            <div className="flex min-w-[86px] flex-col items-end leading-tight">
+              <span className="text-[14.5px] font-extrabold tabular-nums">{inr(l.amount)}</span>
+              <span className="bd-tiny">@ {inr(l.rate)}</span>
+            </div>
+            <div className="flex gap-1">
+              <span className="bd-photo" data-miss={missingPhotoKeys.has(l.key) ? '' : undefined}>
+                <LinePhotoButton photos={l.photos} onChange={(photos) => setLinePhotos(l.key, photos)} status={photoStatusFor(l.key)} />
+              </span>
+              <button
+                type="button"
+                className="bd-ib"
+                onClick={() => editLine(lines.find((x) => x.key === l.key)!)}
+                aria-label={`Edit ${l.itemName}`}
+                title="Edit this line"
+              >
+                <Pencil className="size-[15px]" strokeWidth={2.2} />
+              </button>
+              <button type="button" className="bd-ib bd-red" onClick={() => removeLine(l.key)} aria-label={`Remove ${l.itemName}`} title="Remove">
+                <Trash2 className="size-[15px]" strokeWidth={2.2} />
+              </button>
+            </div>
+          </div>
+        );
+      })}
+      <div className="bd-totals">
+        {[
+          ['Box', nf(totals.box)],
+          ['Pcs', nf(totals.pcs)],
+          ['Kgs', nf(totals.kgs)],
+          ['Amount', inr(totals.amount)],
+        ].map(([k, v]) => (
+          <div key={k}>
+            <small>{k}</small>
+            {v}
+          </div>
+        ))}
+      </div>
+    </section>
+  );
+
+  const bagsCard = booking && computed.length > 0 && (
+    <section className="bd-card bd-bags" aria-label="Bags" style={{ animationDelay: '.05s' }}>
+      <label className="flex flex-[0_1_210px] flex-col gap-[5px]">
+        <span className="bd-kicker" style={{ color: '#6b6fd0' }}>
+          {isMobile ? 'Bags' : 'Step 3'}
+        </span>
+        <span className="text-sm font-extrabold">Dispatch in how many bags? {req}</span>
+        <input
+          type="number"
+          step="any"
+          min={0}
+          inputMode="decimal"
+          value={totalBags}
+          onChange={(e) => setTotalBags(e.target.value)}
+          placeholder={hint ? String(hint) : '0'}
+          data-set={bags > 0 ? '' : undefined}
+          data-over={over ? '' : undefined}
+        />
+      </label>
+      <div className="flex flex-[1_1_220px] flex-col gap-[7px] pb-[3px]">
+        <span className="bd-bags-text">
+          These bags come off {booking.code}.{hint ? ` By bag weight it is about ${nf(hint)}.` : ''}
+          {over ? ` That is more than the ${nf(booking.remainingBags)} left on it.` : ''}
+        </span>
+        {!!hint && !totalBags && (
+          <button type="button" className="bd-hint" onClick={() => setTotalBags(String(Math.max(1, Math.round(hint))))}>
+            Use {Math.max(1, Math.round(hint))} bag{Math.round(hint) > 1 ? 's' : ''}
+          </button>
+        )}
+      </div>
+    </section>
+  );
 
   return (
-    <div className="mx-auto flex w-full max-w-5xl flex-col gap-3 font-sans">
-      <div className="flex items-center gap-3">
-        <Button variant="ghost" size="icon" onClick={() => navigate('/bookings')} aria-label="Back">
-          <ArrowLeft />
-        </Button>
-        <div className="bg-gradient-brand flex size-10 items-center justify-center rounded-xl text-white shadow-md ring-1 ring-white/20">
-          <Truck className="size-5" />
-        </div>
-        <div>
-          <h2 className="text-xl font-bold tracking-tight">Booking Dispatch</h2>
-          <p className="text-muted-foreground text-xs">
-            Send {CATEGORY.toLowerCase()}s out against a bag booking — the order line is created for you.
-          </p>
-        </div>
-      </div>
+    <div
+      ref={topRef}
+      data-m={isMobile || undefined}
+      className="bd-page -mx-2.5 -my-3 min-h-[calc(100%+1.5rem)] px-2.5 pt-3 sm:-m-4 sm:min-h-[calc(100%+2rem)] sm:px-4 sm:pt-4 md:-m-6 md:min-h-[calc(100%+3rem)] md:px-6 md:pt-6"
+    >
+      <div className="bd-wrap">
+        <header className="flex items-center gap-[11px]">
+          <button
+            type="button"
+            className="bd-back"
+            onClick={onForm ? backToList : () => navigate('/bookings')}
+            aria-label={onForm ? 'Back to booking list' : 'Back to bookings'}
+          >
+            <ArrowLeft className="size-[17px]" strokeWidth={2.4} />
+          </button>
+          <span className="bd-logo">
+            <Truck className="size-[21px]" />
+          </span>
+          <div className="min-w-0 flex-1">
+            <h1 className="text-[21px] leading-tight font-extrabold tracking-tight">{onForm ? 'New dispatch' : 'Booking Dispatch'}</h1>
+            <p className="mt-0.5 text-[12.5px] leading-snug" style={{ color: 'var(--bd-sub)' }}>
+              {onForm
+                ? 'Add the cups, enter the bags, then dispatch.'
+                : isMobile
+                  ? 'Choose a bag booking to dispatch cups against.'
+                  : `Send ${CATEGORY.toLowerCase()}s out against a bag booking — the order line is created for you.`}
+            </p>
+          </div>
+        </header>
 
-      {done && (
-        <Card className="border-l-4 border-l-emerald-500 bg-emerald-50/60 py-0">
-          <CardContent className="space-y-1.5 px-4 py-3">
-            <p className="flex items-center gap-2 text-[13.5px] font-bold text-emerald-800">
-              <Check className="size-4" /> Dispatched · order {done.orderCode ?? done.orderId}
-            </p>
-            <p className="text-[12px] font-medium text-emerald-900/80">
-              {done.totals.box} box · {done.totals.pcs} pcs · {done.totals.kgs} kgs · {done.totals.bags} bags off the booking.
-              {done.lines.some((l) => l.approvalCode)
-                ? ` Some lines need approval: ${done.lines.filter((l) => l.approvalCode).map((l) => l.approvalCode).join(', ')}.`
-                : ' Now waiting in Pending Challan.'}
-            </p>
-            <div className="flex flex-wrap gap-2 pt-1">
-              <Button size="sm" variant="outline" className="h-8 rounded-[4px]" onClick={() => setDone(null)}>
+        <nav className="bd-steps" aria-label="Progress">
+          <span className="bd-track" style={{ width: `${(step / 3) * 75}%` }} />
+          {['Booking', 'Items', 'Bags', 'Dispatch'].map((label, i) => (
+            <div key={label} className="bd-step" data-s={i < step ? 'done' : i === step ? 'cur' : undefined} aria-current={i === step ? 'step' : undefined}>
+              <span>{i < step ? <Check className="size-3" strokeWidth={3.5} /> : i + 1}</span>
+              {label}
+            </div>
+          ))}
+        </nav>
+
+        {done && (
+          <section role="status" className="bd-done">
+            <span className="bd-done-ic">
+              <Check className="size-[18px]" strokeWidth={3} />
+            </span>
+            <div className="min-w-0 flex-[1_1_260px]">
+              <div className="text-[15px] font-extrabold">Dispatched · order {done.orderCode ?? done.orderId}</div>
+              <div className="mt-0.5 text-[12.5px] leading-snug text-white/90">
+                {done.totals.box} box · {done.totals.pcs} pcs · {done.totals.kgs} kgs · {done.totals.bags} bags off the booking.
+                {done.lines.some((l) => l.approvalCode)
+                  ? ` Some lines need approval: ${done.lines.filter((l) => l.approvalCode).map((l) => l.approvalCode).join(', ')}.`
+                  : ' Now waiting in Pending Challan.'}
+              </div>
+            </div>
+            <div className="flex gap-[7px]">
+              <button type="button" onClick={() => setDone(null)}>
                 Dispatch more
-              </Button>
-              <Button size="sm" className="h-8 rounded-[4px]" onClick={() => navigate('/challans/pending')}>
+              </button>
+              <button type="button" onClick={() => navigate('/challans/pending')}>
                 Go to Pending Challan
-              </Button>
+              </button>
             </div>
-          </CardContent>
-        </Card>
-      )}
+          </section>
+        )}
 
-      {/* Every party's open CUP bookings: pick a row, then add its items below. */}
-      <Card className="py-0">
-        <CardContent className="space-y-2 px-4 py-3">
-          <div className="flex flex-wrap items-center justify-between gap-2">
-            <p className="text-sm font-bold">
-              {CATEGORY} bag bookings <span className="text-muted-foreground font-medium">· {allBookings.length} open</span>
-            </p>
-            <Input
-              value={bookingSearch}
-              onChange={(e) => setBookingSearch(e.target.value)}
-              placeholder="Search party or booking…"
-              className="h-8 w-56"
-            />
-          </div>
-          <div className="max-h-64 overflow-auto rounded-md border">
-            <table className="w-full text-[13px]">
-              <thead className="bg-muted sticky top-0 text-left text-[11px] uppercase">
-                <tr>
-                  <th className="px-2.5 py-1.5">Customer</th>
-                  <th className="px-2.5 py-1.5">Booking</th>
-                  <th className="px-2.5 py-1.5">Date</th>
-                  <th className="px-2.5 py-1.5 text-right">Bags left</th>
-                  <th className="px-2.5 py-1.5 text-right">Kgs left</th>
-                  <th className="px-2.5 py-1.5">Bag weight</th>
-                </tr>
-              </thead>
-              <tbody>
-                {shownBookings.map((b) => (
-                  <tr
-                    key={b.id}
-                    onClick={() => pickBooking(b)}
-                    className={
-                      b.id === bookingId
-                        ? 'cursor-pointer border-t bg-indigo-50 font-semibold dark:bg-indigo-500/15'
-                        : 'hover:bg-muted/60 cursor-pointer border-t'
-                    }
-                  >
-                    <td className="px-2.5 py-1.5">
-                      {b.id === bookingId && <Check className="mr-1 inline size-3.5 text-indigo-600" />}
-                      {b.customerName}
-                    </td>
-                    <td className="px-2.5 py-1.5 font-mono text-[12px]">{b.code}</td>
-                    <td className="px-2.5 py-1.5">{formatDate(b.bookingDate)}</td>
-                    <td className="px-2.5 py-1.5 text-right tabular-nums">{b.remainingBags}</td>
-                    <td className="px-2.5 py-1.5 text-right tabular-nums">{b.remainingKgs}</td>
-                    <td className="px-2.5 py-1.5">
-                      {b.kgsPerBag ? `1 bag = ${b.kgsPerBag} kgs` : '—'}
-                    </td>
-                  </tr>
-                ))}
-                {!shownBookings.length && (
-                  <tr>
-                    <td colSpan={6} className="text-muted-foreground px-2.5 py-4 text-center">
-                      {allLoading ? 'Loading…' : `No open ${CATEGORY} bookings${bookingSearch ? ' match this search' : ''}.`}
-                    </td>
-                  </tr>
-                )}
-              </tbody>
-            </table>
-          </div>
-        </CardContent>
-      </Card>
-
-      <Card className="border-l-primary border-l-4 py-0">
-        <CardContent className="grid grid-cols-1 gap-3 px-4 py-4 sm:grid-cols-2">
-          <div className="space-y-1.5">
-            <Label className="text-base">
-              Customer <span className="text-rose-500">*</span>
-            </Label>
-            <NativeSelect
-              value={customer}
-              onChange={setCustomer}
-              options={customers}
-              placeholder="Select customer…"
-              onInvalidEntry={() => toast.error('Please select a correct customer')}
-            />
-          </div>
-          <div className="space-y-1.5">
-            <Label className="text-base">
-              Booking <span className="text-rose-500">*</span>
-              {isFetching && <Loader2 className="text-muted-foreground ml-1.5 inline size-3 animate-spin" />}
-            </Label>
-            {/* Keyed by CODE, not id: the closed field shows its own value, and
-                "4" tells an operator nothing about which booking they picked. */}
-            <NativeSelect
-              value={booking?.code ?? ''}
-              onChange={(v) => setBookingId(bookings.find((b) => b.code === v)?.id ?? null)}
-              options={bookings.map((b) => b.code)}
-              renderOption={(v) => {
-                const b = bookings.find((x) => x.code === v);
-                return b ? `${b.code} · ${formatDate(b.bookingDate)} · ${b.remainingBags} bags left` : v;
-              }}
-              placeholder={customer ? 'Select booking…' : 'Pick a customer first'}
-            />
-          </div>
-          <div className="space-y-1.5">
-            <Label className="text-base">Dispatch date</Label>
-            <DatePicker value={dispatchDate} onChange={setDispatchDate} clearable={false} />
-            <p className="text-muted-foreground text-[11px]">A past date needs approval, same as any other dispatch.</p>
-          </div>
-          <div className="space-y-1.5">
-            <Label className="text-base">Bag weight</Label>
-            <Input
-              readOnly
-              tabIndex={-1}
-              value={kgsPerBag ? `1 bag = ${kgsPerBag} kgs` : '—'}
-              className="border-indigo-200/70 bg-indigo-50/60 font-medium text-indigo-700"
-            />
-          </div>
-        </CardContent>
-      </Card>
-
-      {booking && (
-        <Card className="border-border border-l-4 border-l-slate-400 bg-slate-50/70 py-0">
-          <CardContent className="space-y-2.5 px-4 py-3">
-            <div ref={entryRef} className="space-y-2.5">
-              {editingKey && (
-                <p className="text-[12px] font-bold text-amber-700">Editing a line — change it, then tap Update.</p>
+        {isMobile ? (
+          onForm && booking ? (
+            <>
+              <section className="bd-hero" aria-label="Selected booking">
+                <div className="flex items-center gap-2.5">
+                  <span className="bd-av" style={{ width: 42, height: 42, borderRadius: 13, fontSize: 14, background: avatarOf(customer).bg }}>
+                    {avatarOf(customer).initials}
+                  </span>
+                  <div className="min-w-0 flex-1">
+                    <div className="truncate text-base font-extrabold">{customer}</div>
+                    <div className="text-xs text-white/70">
+                      <span className="bd-mono text-white">{booking.code}</span> · booked {formatDate(booking.bookingDate)}
+                    </div>
+                  </div>
+                  <button type="button" className="bd-change" onClick={backToList}>
+                    Change
+                  </button>
+                </div>
+                <div className="grid grid-cols-3 gap-1.5">
+                  {[
+                    ['Bags left', nf(booking.remainingBags)],
+                    ['Kgs left', nf(booking.remainingKgs)],
+                    ['Per bag', kgsPerBag ? `${kgsPerBag} kg` : '—'],
+                  ].map(([k, v]) => (
+                    <div key={k} className="bd-hero-stat">
+                      {v}
+                      <small>{k}</small>
+                    </div>
+                  ))}
+                </div>
+              </section>
+              {partyCard}
+              {entryCard}
+              {linesCard}
+              {bagsCard}
+            </>
+          ) : (
+            bookingList
+          )
+        ) : (
+          <div className="flex flex-wrap items-start gap-3">
+            <div className="flex min-w-0 flex-[1_1_340px] flex-col gap-3">
+              {bookingList}
+              {partyCard}
+            </div>
+            <div className="flex min-w-0 flex-[999_1_520px] flex-col gap-3">
+              {booking ? (
+                <>
+                  {entryCard}
+                  {linesCard}
+                  {bagsCard}
+                </>
+              ) : (
+                <section className="bd-empty">
+                  <span className="bd-empty-ic">
+                    <Coffee className="size-[26px]" strokeWidth={1.8} />
+                  </span>
+                  <div className="text-base font-extrabold tracking-tight">Pick a booking to start</div>
+                  <div className="max-w-80 text-[13px] leading-snug" style={{ color: 'var(--bd-sub)' }}>
+                    Tap a booking on the list, or choose the customer and booking. The cups you add are priced at that booking's frozen rates.
+                  </div>
+                </section>
               )}
-              <div className="grid grid-cols-2 items-end gap-2 sm:grid-cols-[2fr_1fr_1.2fr_0.8fr]">
-                <div className="col-span-2 space-y-1 sm:col-span-1">
-                  <Label className="text-base">Item name</Label>
-                  <NativeSelect
-                    value={entry.itemName}
-                    onChange={onItemPick}
-                    onType={setItemQuery}
-                    options={itemOptions.options}
-                    placeholder="Item name"
-                    className="text-left"
-                    digitsFirst
-                    onInvalidEntry={() => toast.error('Please select a correct item')}
-                  />
-                </div>
-                <div className="space-y-1">
-                  <Label className="text-base">Sub-category</Label>
-                  <Input readOnly tabIndex={-1} value={entry.subCategory} placeholder="From the item" className="bg-muted/40 font-mono text-[12px]" />
-                </div>
-                <div className="space-y-1">
-                  <Label className="text-base">Design Name</Label>
-                  <DesignNamePicker
-                    value={noDesignNames ? 'NA' : entry.designName}
-                    onChange={(designName) => setEntry((e) => ({ ...e, designName }))}
-                    choices={designNames.choices}
-                    multiple={designNames.multiple}
-                    disabled={noDesignNames}
-                    onInvalidEntry={() => toast.error('Please select a correct design name')}
-                  />
-                </div>
-                <div className="space-y-1">
-                  <Label className="text-base">Rate ₹</Label>
-                  <Input
-                    readOnly
-                    tabIndex={-1}
-                    value={entryRate ? entryRate.toLocaleString('en-IN') : ''}
-                    title="Frozen on the booking at its booking date"
-                    className="border-emerald-200 bg-emerald-50 text-right font-bold text-emerald-700 tabular-nums"
-                  />
-                </div>
-              </div>
-              <div className="grid grid-cols-2 items-end gap-2 sm:grid-cols-[repeat(3,minmax(0,1fr))_2fr_auto]">
-                {/* Bags are not per line — asked once for the whole dispatch below. */}
-                {qtyOrderForCategory(qtyLayout, CATEGORY)
-                  .filter((f) => f !== 'bags')
-                  .map((f) =>
-                    f === 'pcs' ? qtyInput('Pcs', entry.pcs, onPcs) : f === 'box' ? qtyInput('Box', entry.box, onBox) : qtyInput('Kgs', entry.gram, onKgs),
-                  )}
-                <div className="col-span-2 space-y-1 sm:col-span-1">
-                  <Label className="text-base">Remarks</Label>
-                  <Input
-                    value={entry.comment}
-                    onChange={(e) => setEntry((x) => ({ ...x, comment: e.target.value }))}
-                    onKeyDown={enterAdds}
-                    placeholder="Item remark…"
-                  />
-                </div>
-                <div className="col-span-2 flex items-center justify-end gap-1.5 sm:col-span-1">
-                  <LinePhotoButton
-                    photos={entry.photos}
-                    onChange={(photos) => setEntry((e) => ({ ...e, photos }))}
-                    status={editingKey ? photoStatusFor(editingKey) : undefined}
-                  />
-                  {editingKey ? (
-                    <>
-                      <Button onClick={() => void addLine()} size="icon" aria-label="Update item" title="Update this item">
-                        <Check className="size-4" />
-                      </Button>
-                      <Button type="button" variant="outline" size="icon" onClick={resetEntry} aria-label="Cancel item edit" title="Cancel item edit">
-                        <X className="size-4" />
-                      </Button>
-                    </>
-                  ) : (
-                    <>
-                      <Button type="button" onClick={() => void addLine()}>
-                        <Plus /> Add
-                      </Button>
-                      <Button
-                        type="button"
-                        variant="outline"
-                        size="icon"
-                        onClick={resetEntry}
-                        disabled={!entryDirty}
-                        aria-label="Clear the item fields"
-                        title="Clear the item fields"
-                        className="border-red-300 text-red-600 hover:bg-red-50 hover:text-red-700"
-                      >
-                        <Eraser className="size-4" />
-                      </Button>
-                    </>
-                  )}
-                </div>
-              </div>
-              <p className="text-muted-foreground flex items-center gap-1.5 text-[11px]">
-                <Info className="size-3.5 shrink-0" />
-                Pcs, Box and Kgs fill each other the first time; a field you change or clear stays as you left it. Pcs is what gets billed.
-              </p>
             </div>
+          </div>
+        )}
 
-            {computed.length > 0 && (
-              <div className="overflow-x-auto rounded-lg border bg-white">
-                <table className="w-full text-[13px]">
-                  <thead className="bg-slate-100 text-[11px] font-bold tracking-wide text-slate-700 uppercase">
-                    <tr>
-                      <th className="px-3 py-2 text-left">Item</th>
-                      <th className="px-3 py-2 text-left">Size</th>
-                      <th className="px-3 py-2 text-right">Box</th>
-                      <th className="px-3 py-2 text-right">Pcs</th>
-                      <th className="px-3 py-2 text-right">Kgs</th>
-                      <th className="px-3 py-2 text-right">Rate</th>
-                      <th className="px-3 py-2 text-right">Amount</th>
-                      <th className="w-28" />
-                    </tr>
-                  </thead>
-                  <tbody className="[&_td]:border-t [&_td]:px-3 [&_td]:py-1.5">
-                    {computed.map((l) => (
-                      <tr key={l.key} className={l.key === editingKey ? 'bg-amber-50' : undefined}>
-                        <td>
-                          <p className="font-semibold">{l.itemName}</p>
-                          {(l.designName !== 'NA' || l.comment) && (
-                            <p className="text-muted-foreground text-[11.5px]">
-                              {[l.designName !== 'NA' ? l.designName : '', l.comment].filter(Boolean).join(' · ')}
-                            </p>
-                          )}
-                        </td>
-                        <td className="text-muted-foreground font-mono text-[11.5px]">{l.subCategory}</td>
-                        <td className="text-right tabular-nums">{l.box || '—'}</td>
-                        <td className="text-right tabular-nums">{l.pcs}</td>
-                        <td className="text-right tabular-nums">{l.kgs}</td>
-                        <td className="text-right tabular-nums">{l.rate}</td>
-                        <td className="text-right font-semibold tabular-nums">{l.amount.toLocaleString('en-IN')}</td>
-                        <td>
-                          <div className="flex items-center justify-end gap-0.5">
-                            <LinePhotoButton
-                              photos={l.photos}
-                              onChange={(photos) => setLinePhotos(l.key, photos)}
-                              status={photoStatusFor(l.key)}
-                            />
-                            <Button
-                              variant="ghost"
-                              size="icon"
-                              className="size-7"
-                              onClick={() => editLine(lines.find((x) => x.key === l.key)!)}
-                              aria-label={`Edit ${l.itemName}`}
-                              title="Edit this line"
-                            >
-                              <Pencil className="size-4" />
-                            </Button>
-                            <Button
-                              variant="ghost"
-                              size="icon"
-                              className="text-destructive hover:text-destructive size-7"
-                              onClick={() => removeLine(l.key)}
-                              aria-label={`Remove ${l.itemName}`}
-                            >
-                              <Trash2 className="size-4" />
-                            </Button>
-                          </div>
-                        </td>
-                      </tr>
-                    ))}
-                  </tbody>
-                  <tfoot className="bg-slate-100 font-bold">
-                    <tr>
-                      <td className="px-3 py-2 text-right" colSpan={2}>
-                        Total
-                      </td>
-                      <td className="px-3 py-2 text-right tabular-nums">{totals.box}</td>
-                      <td className="px-3 py-2 text-right tabular-nums">{totals.pcs}</td>
-                      <td className="px-3 py-2 text-right tabular-nums">{totals.kgs}</td>
-                      <td />
-                      <td className="px-3 py-2 text-right tabular-nums">{totals.amount.toLocaleString('en-IN')}</td>
-                      <td />
-                    </tr>
-                  </tfoot>
-                </table>
+        {(!isMobile || onForm) && (
+          <div className="bd-foot">
+            <div>
+              <div className="flex min-w-0 flex-1 flex-col leading-tight">
+                <span className="text-base font-extrabold whitespace-nowrap tabular-nums">{inr(totals.amount)}</span>
+                <span className="truncate text-[11.5px] font-semibold" style={muted}>
+                  {lines.length
+                    ? `${items(lines.length)} · ${nf(totals.pcs)} pcs · ${nf(totals.kgs)} kgs${bags ? ` · ${nf(bags)} bags` : ''}`
+                    : booking
+                      ? `${booking.code} · ${customer}`
+                      : 'No booking picked'}
+                </span>
               </div>
-            )}
-
-            {computed.length > 0 && (
-              <div className="flex flex-wrap items-end gap-3 rounded-lg border border-indigo-200 bg-indigo-50/60 px-3 py-2.5">
-                <div className="space-y-1">
-                  <Label className="text-base">
-                    Dispatch in how many bags? <span className="text-rose-500">*</span>
-                  </Label>
-                  <Input
-                    type="number"
-                    step="any"
-                    min={0}
-                    value={totalBags}
-                    onChange={(e) => setTotalBags(e.target.value)}
-                    placeholder={kgsPerBag ? String(r2(totals.kgs / kgsPerBag)) : '0'}
-                    className="w-40 text-right font-bold tabular-nums"
-                  />
-                </div>
-                <p className="text-muted-foreground pb-2 text-[11.5px]">
-                  These bags come off {booking.code}.{kgsPerBag ? ` By bag weight it is about ${r2(totals.kgs / kgsPerBag)}.` : ''}
-                </p>
-              </div>
-            )}
-
-            <p className="text-muted-foreground text-[11.5px] font-medium">
-              {booking.code} has <b className="text-foreground tabular-nums">{booking.remainingBags}</b> bags /{' '}
-              <b className="text-foreground tabular-nums">{booking.remainingKgs}</b> kgs left.
-            </p>
-          </CardContent>
-        </Card>
-      )}
-
-      <div className="flex items-center justify-end gap-2 border-t px-1 py-3">
-        <Button type="button" variant="destructive" onClick={() => navigate('/bookings')}>
-          Cancel
-        </Button>
-        <Button
-          onClick={() => void submit()}
-          disabled={send.isPending || !booking || !lines.length}
-          title="Dispatch (Ctrl+S)"
-        >
-          {send.isPending ? <Loader2 className="animate-spin" /> : <Send />}
-          Dispatch {lines.length > 0 ? `${lines.length} item(s)` : ''}
-        </Button>
+              <button type="button" className="bd-btn bd-red" style={{ fontWeight: 700, paddingInline: 14 }} onClick={() => void cancelAll()}>
+                Cancel
+              </button>
+              <button
+                type="button"
+                className="bd-btn bd-blue"
+                onClick={() => void submit()}
+                disabled={send.isPending || !booking || !lines.length}
+                title="Dispatch (Ctrl+S)"
+              >
+                {send.isPending ? <Loader2 className="size-4 animate-spin" /> : <Send className="size-[17px]" strokeWidth={2.2} />}
+                {lines.length ? `Dispatch ${items(lines.length)}` : 'Dispatch'}
+              </button>
+            </div>
+          </div>
+        )}
       </div>
+      {shipped !== null && <DispatchTruckAnimation code={shipped} onDone={() => setShipped(null)} />}
     </div>
   );
 }
