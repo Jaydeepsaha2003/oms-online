@@ -19,7 +19,7 @@ import {
 import { toast } from 'sonner';
 import { GlobalWorkerOptions, getDocument, type PDFDocumentProxy } from 'pdfjs-dist';
 import pdfWorker from 'pdfjs-dist/build/pdf.worker.min.mjs?url';
-import { LEDGER_DUE_FILTERS } from '@oms/shared';
+import { LEDGER_DUE_FILTERS, LEDGER_EXPORT_COLUMNS } from '@oms/shared';
 import type {
   DueFromCalc,
   LedgerBalanceRow,
@@ -51,6 +51,9 @@ import { DemandPlanDialog } from '@/features/crm/demand-plan-dialog';
 
 const inr = (v: number) => (v ?? 0).toLocaleString('en-IN', { maximumFractionDigits: 0 });
 GlobalWorkerOptions.workerSrc = pdfWorker;
+
+/** The export columns last picked, remembered per browser. */
+const EXPORT_COLS_KEY = 'oms.party-ledger.export-cols';
 /** Tally leaves a zero cell blank rather than printing 0. */
 const money = (v: number) => (v ? inr(v) : '');
 /** The 3 summary rows (Opening Balance / Current Total / Closing Balance) fill
@@ -381,7 +384,32 @@ export function PartyLedgerPage() {
     if (q.mode) params.set('mode', q.mode);
     if (q.voucherType) params.set('voucherType', q.voucherType);
     if (q.dueType) params.set('dueType', q.dueType);
+    if (exportCols.length < LEDGER_EXPORT_COLUMNS.length) params.set('cols', exportCols.join(','));
     return `/party-ledger/export.${fmt}?${params.toString()}`;
+  };
+  /** Which file the column picker is open for; the file is built on Done. */
+  const [exportAsk, setExportAsk] = useState<'pdf' | 'xlsx' | null>(null);
+  const [exportCols, setExportCols] = useState<string[]>(() => {
+    try {
+      const saved = JSON.parse(localStorage.getItem(EXPORT_COLS_KEY) ?? 'null');
+      if (Array.isArray(saved) && saved.length) return saved;
+    } catch {
+      /* storage blocked — start with every column */
+    }
+    return LEDGER_EXPORT_COLUMNS.map((c) => c.key);
+  });
+  const textPicked = exportCols.some((k) => k !== 'dr' && k !== 'cr');
+  const moneyPicked = exportCols.includes('dr') || exportCols.includes('cr');
+  const exportDone = () => {
+    try {
+      localStorage.setItem(EXPORT_COLS_KEY, JSON.stringify(exportCols));
+    } catch {
+      /* not remembered — still exported */
+    }
+    const fmt = exportAsk;
+    setExportAsk(null);
+    if (fmt === 'pdf') void onPdf();
+    else void onExcel();
   };
   const [pdfLoading, setPdfLoading] = useState(false);
   const [planOpen, setPlanOpen] = useState(false);
@@ -541,11 +569,6 @@ export function PartyLedgerPage() {
      last row lands exactly on the Closing Balance the footer reports. */
   const openingNet =
     footer && footer.opening ? legs.reduce((sum, l) => sum + (l.openNet(footer) ?? 0), 0) : null;
-  /** How many rows the sticky footer renders — Opening (when there is one),
-   *  Current Total (always), Closing (when not filtered to one voucher type).
-   *  Drives the body spacer that stops it covering the last invoices. */
-  const footRowCount =
-    (footer?.opening ? 1 : 0) + 1 + (footer?.closing && closingNet != null ? 1 : 0);
   // No opening to seed from (voucher-type filter) → there is no running balance to
   // walk, so the column stays empty rather than counting up from a made-up zero.
   const running = useMemo(() => {
@@ -726,7 +749,7 @@ export function PartyLedgerPage() {
     <button
       type="button"
       className="pl-btn pl-btn-sq pl-btn-rose"
-      onClick={onPdf}
+      onClick={() => setExportAsk('pdf')}
       disabled={!rows.length || pdfLoading}
       aria-label="Open Party Ledger PDF"
       title="Open PDF (Ctrl+P)"
@@ -738,7 +761,7 @@ export function PartyLedgerPage() {
     <button
       type="button"
       className="pl-btn pl-btn-sq pl-btn-emerald"
-      onClick={onExcel}
+      onClick={() => setExportAsk('xlsx')}
       disabled={!rows.length || excelLoading}
       aria-label="Download Party Ledger Excel"
       title="Download Excel"
@@ -1060,16 +1083,6 @@ export function PartyLedgerPage() {
                   );
                 })
               )}
-              {/* Spacer: the tfoot below is `sticky bottom-0`, so it OVERLAYS the
-                  end of the body rather than pushing it up — scrolled to the
-                  bottom, the last one to three invoices sat hidden behind the
-                  Opening / Current / Closing rows and simply could not be read.
-                  Reserving the footer's own height lets them scroll clear of it. */}
-              {footer && (
-                <tr aria-hidden="true">
-                  <td colSpan={99} className="p-0" style={{ height: footRowCount * 34 }} />
-                </tr>
-              )}
             </tbody>
 
             {/* Opening balance + current total + closing balance ride together at
@@ -1273,6 +1286,49 @@ export function PartyLedgerPage() {
       </Sheet>
 
       {/* ── Keyboard shortcuts ── */}
+      {/* Pick the columns for the PDF / Excel; Done builds the file. */}
+      <Dialog open={exportAsk != null} onOpenChange={(o) => !o && setExportAsk(null)}>
+        <DialogContent className="max-w-sm gap-3 rounded-[18px]">
+          <DialogHeader>
+            <DialogTitle>{exportAsk === 'pdf' ? 'PDF' : 'Excel'} — columns to include</DialogTitle>
+          </DialogHeader>
+          <div className="grid grid-cols-2 gap-x-4 gap-y-2">
+            {LEDGER_EXPORT_COLUMNS.map((c) => (
+              <label key={c.key} className="flex cursor-pointer items-center gap-2 text-[13.5px] font-medium">
+                <input
+                  type="checkbox"
+                  className="size-4 accent-indigo-600"
+                  checked={exportCols.includes(c.key)}
+                  onChange={(e) =>
+                    setExportCols((cur) => {
+                      const next = new Set(cur);
+                      if (e.target.checked) next.add(c.key);
+                      else next.delete(c.key);
+                      return LEDGER_EXPORT_COLUMNS.map((x) => x.key as string).filter((k) => next.has(k));
+                    })
+                  }
+                />
+                {c.label}
+              </label>
+            ))}
+          </div>
+          <div className="flex items-center gap-3 text-[12px]">
+            <button type="button" className="text-indigo-600 hover:underline" onClick={() => setExportCols(LEDGER_EXPORT_COLUMNS.map((c) => c.key))}>
+              Select all
+            </button>
+            {(!textPicked || !moneyPicked) && <span className="font-semibold text-rose-600">Pick a text column and Debit or Credit.</span>}
+          </div>
+          <div className="flex justify-end gap-2">
+            <Button variant="outline" onClick={() => setExportAsk(null)}>
+              Cancel
+            </Button>
+            <Button onClick={exportDone} disabled={!textPicked || !moneyPicked}>
+              Done
+            </Button>
+          </div>
+        </DialogContent>
+      </Dialog>
+
       <Dialog open={keysOpen} onOpenChange={setKeysOpen}>
         <DialogContent className="max-w-sm gap-3 rounded-[18px]">
           <DialogHeader>

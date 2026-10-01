@@ -351,6 +351,8 @@ export interface LedgerEntryDto {
   editable: boolean;
   editedAt: string | null;
   editedByName: string | null;
+  /** The bank statement line this receipt was posted from or matched to. */
+  bankLine: { runId: number; rowId: number } | null;
 }
 
 export type LedgerQuery = PaginationQuery & {

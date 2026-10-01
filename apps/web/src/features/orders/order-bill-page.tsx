@@ -604,6 +604,10 @@ export function OrderBillPage() {
                   <td style={td}>
                     {it.productName || it.product || '—'}
                     {it.priority === 'URGENT' && <span style={{ color: '#e11d48', fontWeight: 700 }}> (URGENT)</span>}
+                    {/* The design name the party chose — "NA" / blank means none. */}
+                    {it.design && !['', 'NA', 'N/A', '-'].includes(it.design.trim().toUpperCase()) && (
+                      <div style={{ fontSize: '0.85em', fontWeight: 500 }}>Design: {it.design}</div>
+                    )}
                   </td>
                   <td style={{ ...td, textAlign: 'right' }}>{numf(it.bags)}</td>
                   <td style={{ ...td, textAlign: 'right' }}>{numf(it.pcs)}</td>

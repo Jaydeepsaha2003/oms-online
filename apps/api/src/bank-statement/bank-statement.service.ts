@@ -1361,6 +1361,30 @@ export class BankStatementService {
         continue;
       }
       /*
+       * Partly covered already: a receipt holds most of this credit, so the gap
+       * is far more likely a slip in that receipt (₹41,880 typed for a ₹41,882
+       * credit) than a second payment. Posting the gap as its own receipt hid
+       * the slip behind a ₹2 voucher. Say what does not agree and how to fix it;
+       * post the gap only when this line is ticked on its own.
+       */
+      if (row.matchedAmount > 0 && !(picked?.length === 1 && picked[0] === row.id)) {
+        const refs = (row.matchedRefs ?? '').split(',').filter(Boolean);
+        const by = await this.prisma.acctLedger.findMany({
+          where: { OR: [{ receiptRefId: { in: refs } }, { advanceRefId: { in: refs } }, { voucherNo: { in: refs.map((r) => r.replace(/^VOUCHER:/, '')) } }] },
+          select: { voucherNo: true },
+        });
+        const rs = (n: number) => `₹${n.toLocaleString('en-IN')}`;
+        const names = by.map((v) => v.voucherNo).join(', ') || 'existing receipts';
+        failed.push({
+          rowId: row.id,
+          reason:
+            `${rs(row.amount)} came in, but ${names} already covers ${rs(row.matchedAmount)} of it — ${rs(amount)} does not agree. ` +
+            `If the party paid ${rs(row.amount)}, correct ${names} to ${rs(row.amount)} in Receive Payments and press Recheck. ` +
+            `If the ${rs(amount)} really is a separate payment, tick only this line and Process it.`,
+        });
+        continue;
+      }
+      /*
        * Collect it the way Receive Payment would collect it by hand.
        *
        * A party whose BANK money comes through an agent cannot be receipted in

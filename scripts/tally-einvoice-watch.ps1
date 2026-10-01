@@ -2,7 +2,7 @@
   Runs ON THE TALLY PC, next to tally-einvoice-helper.ps1. Start it with tally-einvoice-watch.bat
   and leave the window open.
 
-  Every bill posted to Tally — from any phone or PC — shows up in Tally as an SSS bill with no IRN.
+  Every bill posted to Tally - from any phone or PC - shows up in Tally as an SSS bill with no IRN.
   This watches for that and runs the helper (e-invoice + e-way + print), one bill at a time.
     - Keys go to Tally only when nobody has touched this PC for $IdleSeconds, so it never types
       over someone working here.
@@ -30,7 +30,7 @@ while ($true) {
   try {
     $list = & $helper -List 6>&1 | Out-String # read-only: asks Tally which bills are pending
   } catch {
-    continue # Tally closed or busy — try again next round
+    continue # Tally closed or busy - try again next round
   }
   if ($list -match 'Koi bill') { continue }
   Write-Host "`n$(Get-Date -Format 'HH:mm:ss')  Pending:`n$list" -ForegroundColor Yellow

@@ -107,6 +107,28 @@ test('agent routing set with no agent named says what to fix', async () => {
   assert.match(res.failed[0].reason, /PAY BY/i, 'the message must name the setting to change');
 });
 
+test('a line a receipt already mostly covers is NOT topped up with a tiny receipt', async () => {
+  // SHREE PADMAVATI, 30-Apr: bank ₹41,882, receipt typed by hand as ₹41,880.
+  // The ₹2 gap is almost certainly a typing slip in that receipt — Process must
+  // say so, not quietly create a ₹2 receipt.
+  const p = await party('SLIP TRADERS', 'PARTY');
+  await bill(p, 'SSS/SL1', 41882);
+  const typed = await payments.save({ takeAccOn: 'PARTY', customerId: p.id, payMode: 'BANK', bankName: 'AXIS BANK', adjMode: 'AUTOMATIC', receiptAmt: 41880, recDate: '2026-08-11' }, 'Tester');
+  const { run, row } = await runWithRow(p, 41882);
+
+  const res = await svc.process(run.id, 'Tester');
+  assert.equal(res.created.length, 0, 'no ₹2 receipt');
+  assert.equal(res.failed.length, 1);
+  assert.match(res.failed[0].reason, new RegExp(typed.voucherNo), 'names the receipt that covers it');
+  assert.match(res.failed[0].reason, /41,880/);
+  assert.match(res.failed[0].reason, /₹2 does not agree/, 'states the difference: ' + res.failed[0].reason);
+
+  // A genuine second payment can still be posted, by ticking only this line.
+  const alone = await svc.process(run.id, 'Tester', [row.id]);
+  assert.equal(alone.created.length, 1);
+  assert.equal(alone.created[0].amount, 2);
+});
+
 test('a per-bucket override decides it, not the headline PAY BY', async () => {
   // payByModes overrides payBy for one bucket — the same rule Receive Payment
   // resolves through payByFor(). Bank money via agent, cash direct.

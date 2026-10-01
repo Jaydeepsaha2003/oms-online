@@ -345,7 +345,7 @@ function PostQueue({ canPost, canManage }: { canPost: boolean; canManage: boolea
   const onPost = async (r: TallyQueueRow) => {
     const ok = await confirm({
       title: `Post ${r.code} to Tally?`,
-      description: `${r.customerName} · ${rs(r.amount)}. After posting, open it in Tally and check it — make the e-invoice only then.`,
+      description: `${r.customerName} · ${rs(r.amount)}. The Tally PC then makes the e-invoice, e-way bill and print by itself (tally-einvoice-watch).`,
       confirmText: 'Post to Tally',
     });
     if (ok) post.mutate(r.code);

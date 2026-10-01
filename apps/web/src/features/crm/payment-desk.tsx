@@ -1,4 +1,5 @@
 import { useMemo, useRef, useState } from 'react';
+import { useNavigate } from 'react-router-dom';
 import * as DialogPrimitive from '@radix-ui/react-dialog';
 import {
   AlertTriangle,
@@ -155,7 +156,7 @@ export function balancesInView(list: PartyBalanceSummary[], view: LedgerView): P
     .filter((p) => (p[key]?.outstanding ?? 0) > 0)
     .map((p) => {
       const s = p[key];
-      return { ...p, outstanding: s.outstanding, gross: s.outstanding, overdue: s.overdue, dueSoon: s.dueSoon, oldestDays: s.oldestDays, invoiceCount: s.invoiceCount };
+      return { ...p, outstanding: s.outstanding, gross: s.outstanding, overdue: s.overdue, dueSoon: s.dueSoon, oldestDays: s.oldestDays, invoiceCount: s.invoiceCount, lastReceiptAt: s.lastReceiptAt ?? null };
     });
 }
 
@@ -585,9 +586,23 @@ function usePartyCollect(p: PartyBalanceSummary, view: LedgerView) {
       const m = urgencyMeta(f);
       return { key: f.id, text: f.title, meta: `${m.label} · ${formatDate(f.updatedAt)}${f.agentName ? ` · ${f.agentName}` : ''}`, dot: DOT[m.tone] };
     });
-  if (p.lastReceiptAt) activity.push({ key: 0, text: 'Last payment received.', meta: formatDate(p.lastReceiptAt), dot: DOT.emerald });
+  // The last 5 receipts with their amounts; just the date until they load.
+  // Only the side of the book in view: Cash shows cash receipts, Bank bank, both under Bank + Cash.
+  const receipts = (data?.recentReceipts ?? []).filter((r) => view === 'ALL' || r.side === view).slice(0, 5);
+  if (receipts.length) {
+    receipts.forEach((r, i) => {
+      activity.push({ key: -(i + 1), text: `${inrFull(r.amount)} received · ${r.mode}`, meta: `${formatDate(r.date)} · ${r.voucherNo}`, dot: DOT.emerald });
+    });
+  } else if (!data && p.lastReceiptAt) activity.push({ key: 0, text: 'Last payment received.', meta: formatDate(p.lastReceiptAt), dot: DOT.emerald });
 
-  return { data, invoices, side, picked, pickedCodes, pickedSum, amount, setAmount, ask, toggle, quick, stats, activity, prefill: () => prefillFor(p, ask, pickedCodes, view) };
+  // Receive the money now: Receive Payment opens on this party with the ticked
+  // bills' total (or the amount typed) filled in, on this side's mode.
+  const navigate = useNavigate();
+  const canReceive = usePermissions().can('payment:create');
+  const receive = () =>
+    navigate('/account/payment', { state: { party: p.partyName, amount: ask, payMode: view === 'ALL' ? undefined : view } });
+
+  return { data, invoices, side, picked, pickedCodes, pickedSum, amount, setAmount, ask, toggle, quick, stats, activity, canReceive, receive, prefill: () => prefillFor(p, ask, pickedCodes, view) };
 }
 
 function PartyDetailAside({ p, view, onCollect, asideRef }: {
@@ -596,7 +611,7 @@ function PartyDetailAside({ p, view, onCollect, asideRef }: {
   onCollect: (c: CollectPrefill) => void;
   asideRef: React.Ref<HTMLElement>;
 }) {
-  const { data, invoices, side, picked, pickedCodes, pickedSum, amount, setAmount, ask, toggle, quick, stats, activity, prefill } = usePartyCollect(p, view);
+  const { data, invoices, side, picked, pickedCodes, pickedSum, amount, setAmount, ask, toggle, quick, stats, activity, canReceive, receive, prefill } = usePartyCollect(p, view);
   const pr = priorityOf(p);
 
   return (
@@ -685,6 +700,11 @@ function PartyDetailAside({ p, view, onCollect, asideRef }: {
             Log promise
           </button>
         </div>
+        {canReceive && (
+          <button type="button" className="pd-btn pd-btn-resolve pd-btn-lg mt-2.5 w-full" disabled={ask <= 0} onClick={receive}>
+            Receive payment · ₹{ask.toLocaleString('en-IN')}
+          </button>
+        )}
       </div>
 
       <div className="pd-section">
@@ -784,7 +804,7 @@ function CollectSheet({ party, listView, onCollect, onClose }: {
 }) {
   const [view, setView] = useState(listView);
   const p = partyInView(party, view);
-  const { data, invoices, side, picked, pickedCodes, pickedSum, amount, setAmount, ask, toggle, quick, stats, activity, prefill } = usePartyCollect(p, view);
+  const { data, invoices, side, picked, pickedCodes, pickedSum, amount, setAmount, ask, toggle, quick, stats, activity, canReceive, receive, prefill } = usePartyCollect(p, view);
   const pr = priorityOf(p);
   const log = () => { onClose(); onCollect(prefill()); };
   // A long book would push the amount and Log promise a long scroll down, so
@@ -916,6 +936,11 @@ function CollectSheet({ party, listView, onCollect, onClose }: {
 
           <div className="cs-foot">
             <DialogPrimitive.Close className="cs-cancel">Cancel</DialogPrimitive.Close>
+            {canReceive && (
+              <button type="button" className="cs-cancel text-emerald-700" disabled={ask <= 0} onClick={receive}>
+                Receive
+              </button>
+            )}
             <button type="button" className="cs-log truncate" disabled={ask <= 0} onClick={log}>
               Log promise · ₹{ask.toLocaleString('en-IN')}
             </button>

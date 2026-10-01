@@ -430,6 +430,7 @@ export class PaymentsService {
       this.prisma.acctLedger.count({ where }),
     ]);
     const editability = await this.editabilityFor(rows);
+    const bankLines = await this.bankLinesFor(rows);
     return {
       items: rows.map((r) => ({
         id: r.id,
@@ -454,12 +455,39 @@ export class PaymentsService {
         editable: editability.get(r.id) ?? false,
         editedAt: r.editedAt ? r.editedAt.toISOString() : null,
         editedByName: r.editedByName,
+        bankLine: bankLines.get(r.id) ?? null,
       })),
       total,
       page: q.page,
       pageSize: q.pageSize,
       totalPages: Math.max(1, Math.ceil(total / q.pageSize)),
     };
+  }
+
+  /** The bank statement line each receipt was posted from (Process) or matched
+   *  to — the same refs the statement records in `postedRef` / `matchedRefs`. */
+  private async bankLinesFor(rows: LedgerRow[]): Promise<Map<number, { runId: number; rowId: number }>> {
+    const receipts = rows.filter((r) => r.voucherType === 'RECEIPT');
+    if (!receipts.length) return new Map();
+    const refsOf = (r: LedgerRow) => [r.receiptRefId, r.advanceRefId, `VOUCHER:${r.voucherNo}`].filter((x): x is string => !!x);
+    const lines = await this.prisma.bankStatementRow.findMany({
+      where: {
+        OR: [
+          { postedRef: { in: receipts.map((r) => r.voucherNo) } },
+          ...receipts.flatMap(refsOf).map((ref) => ({ matchedRefs: { contains: ref } })),
+        ],
+      },
+      select: { id: true, runId: true, postedRef: true, matchedRefs: true },
+      orderBy: { id: 'desc' },
+    });
+    const out = new Map<number, { runId: number; rowId: number }>();
+    for (const r of receipts) {
+      const refs = new Set(refsOf(r));
+      const hit =
+        lines.find((l) => l.postedRef === r.voucherNo) ?? lines.find((l) => (l.matchedRefs ?? '').split(',').some((x) => refs.has(x)));
+      if (hit) out.set(r.id, { runId: hit.runId, rowId: hit.id });
+    }
+    return out;
   }
 
   /* â”€â”€ Save (the legacy BtnSave waterfall, in one transaction) â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€ */
