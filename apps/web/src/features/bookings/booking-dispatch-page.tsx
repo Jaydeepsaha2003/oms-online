@@ -504,6 +504,17 @@ export function BookingDispatchPage() {
     if (isMobile) backToList();
   };
 
+  /** Phone: a dropdown's list opens BELOW its field, and the keyboard covers the
+   *  lower half of the screen. With the item field halfway down this form, the
+   *  browser scrolled it up for the keyboard after the list had opened — and the
+   *  combo-box shuts its list when the page scrolls under it, so it never showed.
+   *  Lift the field to the top right on focus (or a tap on an already-focused
+   *  field), before the keyboard arrives. */
+  const liftCombo = (e: React.SyntheticEvent) => {
+    const el = e.target as HTMLElement;
+    if (isMobile && el.matches('input[data-slot="combobox"]')) el.scrollIntoView({ block: 'start' });
+  };
+
   const qtyBox = (f: 'pcs' | 'box' | 'gram', label: string, value: string, onChange: (v: string) => void) => {
     const filled = !!value && auto(f) && !!entry.product;
     return (
@@ -666,7 +677,14 @@ export function BookingDispatchPage() {
   );
 
   const entryCard = (
-    <section ref={entryRef} className="bd-card bd-entry" data-editing={editingKey ? '' : undefined} aria-label="Add item">
+    <section
+      ref={entryRef}
+      className="bd-card bd-entry"
+      data-editing={editingKey ? '' : undefined}
+      aria-label="Add item"
+      onFocusCapture={liftCombo}
+      onClickCapture={liftCombo}
+    >
       <div className="bd-head">
         {isMobile ? (
           <span className="bd-plus">

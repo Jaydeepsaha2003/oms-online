@@ -2951,6 +2951,11 @@ select:not(:disabled):not([multiple]):focus-visible {
   width: 100%; height: 44px; padding: 0 12px; border: 0; border-radius: 12px; background: var(--bd-field); color: var(--bd-text);
   font-size: 14px; font-weight: 600; box-shadow: var(--bd-ring); transition: background 0.25s ease, box-shadow 0.25s ease;
 }
+.bd-f input[data-slot='combobox'] { scroll-margin-top: 10px; }
+/* Phone: room under the form so a focused dropdown can be lifted to the top,
+   leaving its list space above the keyboard (see liftCombo). */
+.bd-page[data-m]:has(.bd-entry input[data-slot='combobox']:focus) { padding-bottom: 70vh; }
+.bd-page[data-m]:has(.bd-entry input[data-slot='combobox']:focus) .bd-foot { visibility: hidden; }
 .bd-f input:focus-visible, .bd-f input[data-slot='combobox']:focus-visible { outline: none; box-shadow: inset 0 0 0 1.5px #0a6cff, 0 0 0 3px rgba(10, 108, 255, 0.15); }
 .bd-f[data-on] input[data-slot='combobox'] { background: linear-gradient(180deg, #eef5ff, #e2edff); color: #0a56d6; font-weight: 700; box-shadow: inset 0 0 0 1.5px rgba(10, 108, 255, 0.5); }
 .dark .bd-f[data-on] input[data-slot='combobox'] { background: rgba(10, 108, 255, 0.14); color: #a9c8ff; }
