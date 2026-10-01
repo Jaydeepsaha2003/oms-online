@@ -1,19 +1,18 @@
 <#
-  Tally e-invoice helper. Runs ON THE TALLY PC, next to TallyPrime.
-
-  For each SSS bill that has a party GSTIN but no IRN (oldest first, strictly one at a time):
-    1. opens it in Tally and saves it (Ctrl+A), answers Yes to "generate e-Invoice"
-       (the e-way bill goes along when F12 "Send e-Way Bill details with e-Invoice" is Yes),
-    2. waits until Tally really has the IRN,
-    3. only then prints it. No IRN = no print, and the helper stops.
-  It never types the e-invoice password: save the login in Tally, or log in yourself when asked.
-
-  Double-click tally-einvoice.bat   -> ONE bill, hands-off (don't touch the keyboard while it runs).
-  powershell -File tally-einvoice-helper.ps1 -List     -> only shows the pending bills.
-  powershell -File tally-einvoice-helper.ps1 -Max 20   -> up to 20 bills, one after another.
+  ONE script for the Tally PC (tally-pc.bat). Leave its window open; it runs by itself at every Windows logon.
+    1. tells OMS "I am here": OMS takes this PC's current address from the call (LAN only, no internet),
+    2. if TallyPrime is not running: starts it with the 'tally data' folder (like dragging the folder onto the icon),
+       picks the 3rd company and types the Tally user ID + password,
+    3. then watches Tally: every SSS bill posted without an IRN gets e-invoice + e-way + print, one at a time
+       (keys only when nobody has touched this PC for a minute; stops with a beep if a bill goes wrong).
+  Needs tally-autostart.ini next to it (never in git): oms=, key=, user=, pass=
+  tally-pc.bat -Once   -> only ONE pending bill, then exit.     tally-pc.bat -List -> only list the pending bills.
 #>
-param([switch]$Auto, [int]$Max = 1, [switch]$List, [string]$Tally = 'http://localhost:9000')
+param([switch]$Once, [switch]$List, [int]$Max = 1, [string]$Tally = 'http://localhost:9000', [int]$EverySeconds = 20, [int]$IdleSeconds = 60)
 $ErrorActionPreference = 'Stop'
+
+# ---- e-invoice + e-way + print for the pending SSS bills (was tally-einvoice-helper.ps1) ----
+function Run-Helper([switch]$List, [int]$Max = 1) {
 
 # Tally keys (SendKeys: % = Alt, ^ = Ctrl, ~ = Enter). {DATE} and {NO} are filled in per bill.
 # ponytail: blind keystrokes, calibrated on this PC in step mode; if a Tally screen changes, fix the list here.
@@ -228,3 +227,127 @@ foreach ($v in $pending | Select-Object -First $Max) {
   }
 }
 Write-Host "`nDone."
+
+}
+
+if ($Once -or $List) { Run-Helper -List:$List -Max $Max; return }
+
+# ---- start-up: tell OMS, open Tally, log in (was tally-autostart.ps1) ----
+Start-Transcript -Path "$PSScriptRoot\tally-pc-log.txt" -Force | Out-Null
+# Ask first, with a small animated window: fades in, a pulsing banner and a bar that runs down for $Seconds.
+# No answer in time = Yes. No = nothing is touched (no hello, no Tally, no keys).
+function Ask-Start([int]$Seconds = 20) {
+  Add-Type -AssemblyName System.Windows.Forms, System.Drawing
+  $ui = [System.Windows.Forms.Application]; $ui::EnableVisualStyles()
+  $f = New-Object System.Windows.Forms.Form
+  $f.Text = 'Tally PC automation'; $f.StartPosition = 'CenterScreen'; $f.TopMost = $true; $f.Opacity = 0
+  $f.FormBorderStyle = 'FixedDialog'; $f.ControlBox = $false; $f.ClientSize = New-Object System.Drawing.Size(480, 250)
+  $f.Font = New-Object System.Drawing.Font('Segoe UI', 10); $f.BackColor = [System.Drawing.Color]::White
+  $band = New-Object System.Windows.Forms.Label
+  $band.Text = '  Tally Automation ON hone wali hai'; $band.Dock = 'Top'; $band.Height = 62; $band.TextAlign = 'MiddleLeft'
+  $band.ForeColor = [System.Drawing.Color]::White; $band.Font = New-Object System.Drawing.Font('Segoe UI', 14, [System.Drawing.FontStyle]::Bold)
+  $msg = New-Object System.Windows.Forms.Label
+  $msg.Text = "Tally khulega, company ka login hoga aur bills ke e-invoice apne aap banenge.`nAap kuch type mat karna jab tak chal raha ho."
+  $msg.SetBounds(20, 76, 440, 60)
+  $left = New-Object System.Windows.Forms.Label; $left.SetBounds(20, 140, 440, 24); $left.ForeColor = [System.Drawing.Color]::DimGray
+  $bar = New-Object System.Windows.Forms.ProgressBar; $bar.SetBounds(20, 168, 440, 10); $bar.Maximum = $Seconds * 10; $bar.Value = $bar.Maximum
+  $yes = New-Object System.Windows.Forms.Button; $yes.Text = 'Haan, shuru karo'; $yes.SetBounds(160, 196, 170, 38); $yes.DialogResult = 'Yes'
+  $yes.BackColor = [System.Drawing.Color]::FromArgb(0, 120, 212); $yes.ForeColor = [System.Drawing.Color]::White; $yes.FlatStyle = 'Flat'
+  $no = New-Object System.Windows.Forms.Button; $no.Text = 'Nahi'; $no.SetBounds(340, 196, 120, 38); $no.DialogResult = 'No'
+  $f.Controls.AddRange(@($msg, $left, $bar, $yes, $no, $band)); $f.AcceptButton = $yes; $f.CancelButton = $no
+  $t = New-Object System.Windows.Forms.Timer; $t.Interval = 100; $st = @{ n = 0 }
+  $t.Add_Tick({
+    $st.n++; $n = $st.n
+    if ($f.Opacity -lt 1) { $f.Opacity = [Math]::Min(1, $f.Opacity + 0.1) }      # fade in
+    $k = [Math]::Abs([Math]::Sin($n / 6))                                         # pulsing banner
+    $band.BackColor = [System.Drawing.Color]::FromArgb(0, [int](100 + 40 * $k), [int](190 + 40 * $k))
+    $bar.Value = [Math]::Max(0, $bar.Maximum - $n)
+    $left.Text = "$([Math]::Ceiling(($bar.Maximum - $n) / 10)) second mein jawab nahi aaya to apne aap shuru ho jayega."
+    if ($n -ge $bar.Maximum) { $f.DialogResult = 'Yes' }
+  })
+  $t.Start(); [System.Media.SystemSounds]::Asterisk.Play()
+  $r = $f.ShowDialog(); $t.Stop(); $f.Dispose()
+  $r -eq 'Yes'
+}
+if (-not (Ask-Start)) { Write-Host 'Cancelled by the user - nothing done.'; return }
+
+# Make it start by itself at every logon: a shortcut in the Startup folder (no admin needed).
+try { schtasks /delete /tn TallyAutoStart /f *> $null } catch { }   # the old two-file set-up, if it was installed
+$lnk = Join-Path ([Environment]::GetFolderPath('Startup')) 'Tally PC.lnk'
+if (-not (Test-Path $lnk)) { $s = (New-Object -ComObject WScript.Shell).CreateShortcut($lnk); $s.TargetPath = "$PSScriptRoot\tally-pc.bat"; $s.WorkingDirectory = $PSScriptRoot; $s.Save(); Write-Host 'Added to Startup: it will run by itself at every logon.' }
+
+$cfg = @{}
+Get-Content "$PSScriptRoot\tally-autostart.ini" | ForEach-Object { if ($_ -match '^\s*(\w+)\s*=\s*(.*?)\s*$') { $cfg[$Matches[1]] = $Matches[2] } }
+
+function Hello {
+  foreach ($i in 1..20) {   # the network may still be coming up right after power-on
+    try { $r = Invoke-RestMethod -Method Post -Uri "$($cfg.oms)/api/tally/pc-hello" -Headers @{ 'x-tally-key' = $cfg.key } -TimeoutSec 10; Write-Host "OMS knows us as $($r.data.url)"; return }
+    catch { Write-Host "OMS not reachable yet ($($_.Exception.Message))"; Start-Sleep -Seconds 15 }
+  }
+}
+function Tally-Answers { try { [void](Invoke-WebRequest 'http://localhost:9000' -UseBasicParsing -TimeoutSec 5); $true } catch { $false } }
+function Tally-Proc { Get-Process | Where-Object { $_.ProcessName -like 'tally*' -and $_.MainWindowHandle -ne 0 } | Select-Object -First 1 }
+# SendKeys treats + ^ % ~ ( ) { } [ ] as commands: wrap them so a password with them is typed as text.
+function Plain($s) { $s -replace '([+^%~(){}\[\]])', '{$1}' }
+
+function Start-Tally {
+  # ponytail: blind keystrokes (a startup screen has nothing dangerous to hit); if Tally's start screens change, fix here.
+  # The owner's hand routine: drag the 'tally data' folder onto the Tally icon = start Tally with that folder as its argument.
+  $desks = @([Environment]::GetFolderPath('Desktop'), [Environment]::GetFolderPath('CommonDesktopDirectory')) | Where-Object { $_ -and (Test-Path $_) }
+  $icon = $desks | ForEach-Object { Get-ChildItem $_ -File -Filter 'tally*' } | Where-Object { $_.Extension -in '.lnk', '.exe' } | Select-Object -First 1
+  $data = $desks | ForEach-Object { Get-ChildItem $_ -Directory -Filter '*tally*data*' } | Select-Object -First 1
+  if (-not $icon -or -not $data) { throw "Tally icon ya 'tally data' folder desktop par nahi mila (dekha: $($desks -join ', '))." }
+  $exe = if ($icon.Extension -eq '.lnk') { (New-Object -ComObject WScript.Shell).CreateShortcut($icon.FullName).TargetPath } else { $icon.FullName }
+  Write-Host "Starting $exe with $($data.FullName)"
+  Start-Process $exe -ArgumentList "`"$($data.FullName)`""
+  foreach ($i in 1..30) { Start-Sleep -Seconds 2; if (Tally-Proc) { break } }
+  Start-Sleep -Seconds 12   # let the company list draw
+  $p = Tally-Proc
+  if (-not $p) { throw 'Tally did not open.' }
+  $sh = New-Object -ComObject WScript.Shell
+  [void]$sh.AppActivate($p.Id); Start-Sleep -Seconds 1
+  $sh.SendKeys('{HOME}{DOWN}{DOWN}~'); Start-Sleep -Seconds 8     # 3rd company in the list
+  [void]$sh.AppActivate($p.Id); Start-Sleep -Seconds 1
+  $sh.SendKeys((Plain $cfg.user) + '~'); Start-Sleep -Seconds 1
+  $sh.SendKeys((Plain $cfg.pass) + '~')
+}
+# "Start Tally" pressed in OMS? Asked every round of the watch below.
+function Start-Asked { try { (Invoke-RestMethod -Method Post -Uri "$($cfg.oms)/api/tally/pc-poll" -Headers @{ 'x-tally-key' = $cfg.key } -TimeoutSec 10).data.start } catch { $false } }
+
+if (-not (Tally-Proc)) { Start-Tally }
+foreach ($i in 1..40) { if (Tally-Answers) { Write-Host 'Tally answers on 9000.'; Hello; break }; Start-Sleep -Seconds 3 }
+
+# ---- watch (was tally-einvoice-watch.ps1) ----
+Add-Type @'
+using System; using System.Runtime.InteropServices;
+public static class Idle {
+  [StructLayout(LayoutKind.Sequential)] struct Info { public uint cb; public uint time; }
+  [DllImport("user32.dll")] static extern bool GetLastInputInfo(ref Info i);
+  public static uint Seconds() { Info i = new Info(); i.cb = 8; GetLastInputInfo(ref i); return ((uint)Environment.TickCount - i.time) / 1000; }
+}
+'@
+
+Write-Host "Watching Tally for bills without an e-invoice (every $EverySeconds s). Close this window to stop." -ForegroundColor Cyan
+while ($true) {
+  Start-Sleep -Seconds $EverySeconds
+  if (Start-Asked) {
+    if (Tally-Proc) { Write-Host 'Start Tally asked from OMS - Tally is already open.' }
+    else { try { Start-Tally; Hello } catch { Write-Host "Start Tally failed: $($_.Exception.Message)" -ForegroundColor Red } }
+  }
+  if ([Idle]::Seconds() -lt $IdleSeconds) { continue } # someone is using this PC
+  try {
+    $list = Run-Helper -List 6>&1 | Out-String # read-only: asks Tally which bills are pending
+  } catch {
+    continue # Tally closed or busy - try again next round
+  }
+  if ($list -match 'Koi bill') { continue }
+  Write-Host "`n$(Get-Date -Format 'HH:mm:ss')  Pending:`n$list" -ForegroundColor Yellow
+  try {
+    Run-Helper
+  } catch {
+    [console]::Beep(600, 900)
+    Write-Host "STOPPED: $($_.Exception.Message)" -ForegroundColor Red
+    Write-Host 'Fix it in Tally, then start tally-pc.bat again.' -ForegroundColor Red
+    break
+  }
+}
