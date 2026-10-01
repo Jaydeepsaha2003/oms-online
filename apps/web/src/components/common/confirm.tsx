@@ -108,7 +108,10 @@ export function ConfirmProvider({ children }: { children: React.ReactNode }) {
           }
         >
           <DialogHeader>
-            <DialogTitle>{options.title ?? 'Are you sure?'}</DialogTitle>
+            {/* Clear of the dialog's close button, which sits over the title's
+                end — a long title ran under it. Both sides on a phone, where
+                the title is centred. */}
+            <DialogTitle className="px-9 sm:pr-9 sm:pl-0">{options.title ?? 'Are you sure?'}</DialogTitle>
             {options.description ? (
               <DialogDescription>{options.description}</DialogDescription>
             ) : null}

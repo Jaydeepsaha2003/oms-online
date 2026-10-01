@@ -565,7 +565,40 @@ export function BankStatementPage() {
             and put a horizontal scrollbar under a list you are supposed to read
             at a glance — while the header itself wrapped onto three lines.
           */}
-          <div className="max-h-60 overflow-y-auto rounded-[4px] border">
+          {/* Phones: a card a line. The table's narration column was a few
+              characters wide there and cut every narration to "NEFT/IN42…",
+              which is the one field you need to recognise the payment by. */}
+          <div className="max-h-[45vh] space-y-2 overflow-y-auto text-left sm:hidden">
+            {res.duplicates.slice(0, 40).map((d, i) => (
+              <div
+                key={i}
+                className={cn(
+                  'rounded-xl border px-3 py-2.5',
+                  d.posted ? 'border-rose-200 bg-rose-50 dark:border-rose-400/30 dark:bg-rose-500/10' : 'bg-card',
+                )}
+              >
+                <div className="flex items-baseline justify-between gap-3">
+                  <span className="text-[12.5px] font-semibold tabular-nums">{formatDate(d.txnDate)}</span>
+                  <span className="text-foreground text-[15px] font-extrabold tabular-nums">{money0(d.amount)}</span>
+                </div>
+                <p className="text-foreground mt-1 font-mono text-[12.5px] leading-snug [overflow-wrap:anywhere]">{d.narration}</p>
+                <div className="mt-1.5 flex flex-wrap items-center gap-1.5 text-[11.5px]">
+                  <span className="rounded-full bg-slate-100 px-2 py-0.5 font-semibold text-slate-700 dark:bg-white/10 dark:text-slate-200">
+                    In file {d.incoming} · held {d.onRecord}
+                  </span>
+                  {d.posted && (
+                    <span className="rounded-full bg-rose-100 px-2 py-0.5 font-bold text-rose-700 dark:bg-rose-500/20 dark:text-rose-300">Posted to ledger</span>
+                  )}
+                  {d.incoming > d.onRecord && (
+                    <span className="rounded-full bg-emerald-100 px-2 py-0.5 font-bold text-emerald-700 dark:bg-emerald-500/20 dark:text-emerald-300">
+                      +{d.incoming - d.onRecord} new — still comes in
+                    </span>
+                  )}
+                </div>
+              </div>
+            ))}
+          </div>
+          <div className="hidden max-h-60 overflow-y-auto rounded-[4px] border sm:block">
             <table className="w-full table-fixed text-[11.5px]">
               <colgroup>
                 <col className="w-[5.5rem]" />
@@ -585,7 +618,8 @@ export function BankStatementPage() {
                 {res.duplicates.slice(0, 40).map((d, i) => (
                   <tr key={i} className={cn('border-t', d.posted && 'bg-rose-50 dark:bg-rose-500/10')}>
                     <td className="px-2 py-1 whitespace-nowrap tabular-nums">{formatDate(d.txnDate)}</td>
-                    <td className="truncate px-2 py-1" title={d.narration}>
+                    {/* Wrapped, not cut: the narration is how the payment is recognised. */}
+                    <td className="px-2 py-1 [overflow-wrap:anywhere]">
                       {d.narration}
                       {d.posted && <span className="ml-1 font-bold text-rose-700">posted</span>}
                     </td>
