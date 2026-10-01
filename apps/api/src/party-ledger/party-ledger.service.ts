@@ -2,7 +2,7 @@ import { BadRequestException, Injectable, NotFoundException } from '@nestjs/comm
 import { Prisma } from '@prisma/client';
 import ExcelJS from 'exceljs';
 import type { TDocumentDefinitions } from 'pdfmake/interfaces';
-import { classifyDueType, payBucketOf } from '@oms/shared';
+import { classifyDueType, LEDGER_EXPORT_COLUMNS, payBucketOf } from '@oms/shared';
 import type {
   DueFromBasis,
   DueFromCalc,
@@ -382,7 +382,7 @@ export class PartyLedgerService {
     if (custIds) ledgerWhere.OR = this.ledgerScopeOr(custIds, agentName);
     const ledger = await this.prisma.acctLedger.findMany({
       where: ledgerWhere,
-      select: { voucherNo: true, transDate: true, customerName: true, particulars: true, voucherType: true, bankDebit: true, cashDebit: true, bankCredit: true, cashCredit: true },
+      select: { voucherNo: true, transDate: true, customerName: true, particulars: true, voucherType: true, transMode: true, bankDebit: true, cashDebit: true, bankCredit: true, cashCredit: true },
     });
 
     const raw: RawRow[] = [];
@@ -414,6 +414,12 @@ export class PartyLedgerService {
           const after = particulars.slice('DEBIT NOTE'.length).trim();
           particulars = after ? `${l.customerName} (${after})` : l.customerName;
         }
+      }
+      // "CASH RECEIPT BY . / ." (who took it / where) reads as noise on a statement.
+      if (particulars.toUpperCase().startsWith('CASH RECEIPT BY')) particulars = 'CASH RECEIPT';
+      // Receipts imported with no particulars (374 bank ones) still say what they are.
+      if (!particulars.trim() && (l.voucherType || 'RECEIPT').toUpperCase() === 'RECEIPT') {
+        particulars = l.transMode === 'CASH' ? 'CASH RECEIPT' : l.transMode === 'CHEQUE' ? 'CHEQUE RECEIPT' : 'BANK RECEIPT';
       }
       raw.push({
         txnDate: l.transDate,
@@ -971,36 +977,54 @@ export class PartyLedgerService {
 
   async exportExcel(q: PartyLedgerQuery): Promise<{ buffer: Buffer; filename: string }> {
     const res = await this.ledger(q);
-    const buffer = await buildLedgerXlsx(res, (q.mode ?? 'BOTH').toUpperCase(), await this.companyName());
+    const buffer = await buildLedgerXlsx(res, (q.mode ?? 'BOTH').toUpperCase(), await this.companyName(), exportCols(q.cols));
     return { buffer, filename: `${this.baseName(res)}.xlsx` };
   }
 
   async exportPdf(q: PartyLedgerQuery): Promise<{ buffer: Buffer; filename: string }> {
     const res = await this.ledger(q);
-    const buffer = await this.pdf.render(buildLedgerDoc(res, (q.mode ?? 'BOTH').toUpperCase()));
+    const buffer = await this.pdf.render(buildLedgerDoc(res, (q.mode ?? 'BOTH').toUpperCase(), exportCols(q.cols)));
     return { buffer, filename: this.pdfName(res) };
   }
 }
 
 /* ── Shared export helpers ────────────────────────────────────────────────── */
 
+/** The text (lead) columns, in grid order; Debit/Credit follow per money leg. */
+const LEAD_KEYS = ['date', 'particulars', 'vchType', 'vchNo', 'status', 'due'];
+/** The columns an export asked for — every one when none were picked. */
+function exportCols(raw?: string): Set<string> {
+  const all = LEDGER_EXPORT_COLUMNS.map((c) => c.key as string);
+  const picked = new Set((raw ?? '').split(',').map((s) => s.trim()).filter((k) => all.includes(k)));
+  if (!picked.size) return new Set(all);
+  if (!LEAD_KEYS.some((k) => picked.has(k)) || !(picked.has('dr') || picked.has('cr'))) {
+    throw new BadRequestException('Pick at least one text column and Debit or Credit.');
+  }
+  return picked;
+}
+
 const modeLabel = (m: string) => (m === 'B' ? 'Bank only' : m === 'C' ? 'Cash only' : 'Bank & Cash');
 const partyOf = (res: PartyLedgerResult) =>
   res.scope === 'CUSTOMER' ? (res.customerName ?? 'Party') : res.scope === 'AGENT' ? `Agent: ${res.agentName}` : res.scope === 'GROUP' ? `${res.groupName} (combined)` : 'All Parties';
-const PDF_MONTHS = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'] as const;
-/** Compact d-MMM-yy date used by both Date columns in the portrait PDF. */
+/** dd/mm/yy — the date as the Party Ledger screen shows it. */
 const pdfDate = (value: string | Date | null): string => {
   if (!value) return '';
   const date = typeof value === 'string' ? new Date(value) : value;
   if (Number.isNaN(date.getTime())) return '';
-  return `${date.getDate()}-${PDF_MONTHS[date.getMonth()]}-${String(date.getFullYear()).slice(-2)}`;
+  const two = (n: number) => String(n).padStart(2, '0');
+  return `${two(date.getDate())}/${two(date.getMonth() + 1)}/${two(date.getFullYear() % 100)}`;
 };
 const shortDate = (value: string | null) => formatDate(value, '');
 
-/** Tally prints every figure to two decimals and leaves a zero cell empty. */
-const amt2 = (v: number) => (v ? v.toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 }) : '');
-/** Same, but a zero prints as 0.00 (used for the ageing summary, never blank). */
-const amt2z = (v: number) => (v || 0).toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+/** Paise only when there are any: 6,72,292 but 1,234.50. */
+const hasPaise = (v: number) => Math.round(v * 100) % 100 !== 0;
+const amtDigits = (v: number) => (hasPaise(v) ? 2 : 0);
+/** A figure for the statement; a zero cell is left empty, as Tally prints it. */
+const amt2 = (v: number) => (v ? v.toLocaleString('en-IN', { minimumFractionDigits: amtDigits(v), maximumFractionDigits: 2 }) : '');
+/** Same, but a zero prints as 0 (used for the ageing summary, never blank). */
+const amt2z = (v: number) => (v || 0).toLocaleString('en-IN', { minimumFractionDigits: amtDigits(v || 0), maximumFractionDigits: 2 });
+/** The Excel number format for one figure — decimals only when it has paise. */
+const xlNumFmt = (v: unknown) => (typeof v === 'number' && hasPaise(v) ? '#,##0.00' : '#,##0');
 
 /** The Dr/Cr key pair for one money leg, so Bank and Cash render identically. */
 interface Leg {
@@ -1033,7 +1057,7 @@ const STATUS_LEGEND = 'St:  F = fully paid   P = partially paid   D = due';
  * both money legs are shown, the table uses compact type and column widths so
  * all four amount columns still fit without clipping.
  */
-function buildLedgerDoc(res: PartyLedgerResult, mode: string): TDocumentDefinitions {
+function buildLedgerDoc(res: PartyLedgerResult, mode: string, cols: Set<string>): TDocumentDefinitions {
   const BLACK = '#000000';
   const d = pdfDate;
   const k = res.kpis;
@@ -1041,12 +1065,35 @@ function buildLedgerDoc(res: PartyLedgerResult, mode: string): TDocumentDefiniti
   const legs = legsFor(mode);
   /** Both legs shown → the Dr/Cr pairs sit under "Bank" / "Cash" group headings. */
   const grouped = legs.length === 2;
-  /** Printable width inside the narrow portrait margins. */
-  const pageWidth = 595 - 36;
-
-  /** Single-leg reports have room for larger type; grouped reports use compact
-   *  type to keep Bank and Cash visible together on the portrait sheet. */
-  const BODY = grouped ? 7.5 : 9;
+  /** Only the picked columns print: a full row is built, then filtered. */
+  const leadKeep = LEAD_KEYS.map((k) => cols.has(k));
+  const moneyKeep = [cols.has('dr'), cols.has('cr')];
+  // Column widths at the base type size (see numW / leadW below).
+  const baseNumW = grouped ? 52 : 58;
+  const baseLeadW: (number | '*')[] = grouped ? [34, '*', 42, 48, 64, 38] : [39, '*', 50, 60, 78, 44];
+  /*
+   * Type grows into the room the dropped columns leave. Single-leg reports
+   * start larger; grouped ones start compact so Bank and Cash fit together.
+   * Type and widths scale up together into the room the page leaves (to 12pt
+   * at most) while Particulars keeps at least 150pt. Portrait unless that would
+   * print under 10pt — then the sheet turns landscape, so even a full set of
+   * columns reads comfortably.
+   */
+  const baseBody = grouped ? 7.5 : 9;
+  /** Space between a cell's text and its rules. */
+  const cellPad = 5;
+  const pad = 2 * cellPad;
+  const fixedW =
+    baseLeadW.reduce<number>((sum, w, i) => sum + (leadKeep[i] && w !== '*' ? w + pad : 0), 0) +
+    legs.length * moneyKeep.filter(Boolean).length * (baseNumW + pad);
+  /** Printable widths inside the narrow margins. */
+  const portraitW = 595 - 36;
+  const landscapeW = 842 - 36;
+  const scaleFor = (w: number) => Math.min(12 / baseBody, Math.max(1, (w - (leadKeep[1] ? 150 : 0)) / fixedW));
+  const landscape = baseBody * scaleFor(portraitW) < 10 && scaleFor(landscapeW) > scaleFor(portraitW);
+  const pageWidth = landscape ? landscapeW : portraitW;
+  const scale = scaleFor(pageWidth);
+  const BODY = Math.round(baseBody * scale * 10) / 10;
   const txt = (text: string, extra: Record<string, unknown> = {}) => ({ text, fontSize: BODY, lineHeight: 1.12, ...extra });
   const num = (v: number, extra: Record<string, unknown> = {}) => ({
     text: amt2(v),
@@ -1068,19 +1115,25 @@ function buildLedgerDoc(res: PartyLedgerResult, mode: string): TDocumentDefiniti
   /* ── headings ── */
   /** Date, Particulars, Vch Type, Vch No, Payment Status, Due Date. */
   const LEAD = 6;
+  const perLeg = moneyKeep.filter(Boolean).length;
+  const keep = (_: unknown, i: number) => (i < LEAD ? leadKeep[i] : moneyKeep[(i - LEAD) % 2]);
   const groupRow = [
-    ...Array.from({ length: LEAD }, () => txt('')),
-    ...legs.flatMap((l) => [head(l.group.toUpperCase(), { alignment: 'center', colSpan: 2, characterSpacing: 1 }), txt('')]),
+    ...leadKeep.filter(Boolean).map(() => txt('')),
+    ...legs.flatMap((l) =>
+      perLeg === 2
+        ? [head(l.group.toUpperCase(), { alignment: 'center', colSpan: 2, characterSpacing: 1 }), txt('')]
+        : [head(l.group.toUpperCase(), { alignment: 'center', characterSpacing: 1 })],
+    ),
   ];
   const colRow = [
-    head('Date', { alignment: 'right' }),
+    head('Date'),
     head('Particulars'),
     head('Vch Type'),
     head('Vch No'),
     head('Payment Status'),
     head('Due Date', { alignment: 'right' }),
     ...legs.flatMap(() => [head('Debit', { alignment: 'right' }), head('Credit', { alignment: 'right' })]),
-  ];
+  ].filter(keep);
   const heads = grouped ? [groupRow, colRow] : [colRow];
 
   /* ── one voucher line, single row ── */
@@ -1095,23 +1148,28 @@ function buildLedgerDoc(res: PartyLedgerResult, mode: string): TDocumentDefiniti
     const balance = r.status === 'P' ? ` ${amt2z(r.pendingAmount)}` : '';
     const paymentStatus = r.status === 'F' ? 'Paid' : overdue ? `Over Due${balance}` : r.status === 'P' ? `Due${balance}` : r.status === 'D' ? 'Due' : '';
     return [
-      txt(d(r.txnDate), { alignment: 'right', noWrap: true }),
+      txt(d(r.txnDate), { noWrap: true }),
       txt(particulars),
       txt(voucherLabel, { fontSize: BODY - 1, noWrap: true }),
       txt(r.voucherNo, { noWrap: true }),
       txt(paymentStatus, { bold: !!paymentStatus, fontSize: BODY - 0.5, noWrap: true }),
       txt(d(r.dueDate), { alignment: 'right', noWrap: true }),
       ...legs.flatMap((l) => [num(r[l.dr]), num(r[l.cr])]),
-    ];
+    ].filter(keep);
   };
 
   /* ── opening / current / closing, laid out on the same grid ── */
-  const balRow = (label: string, b: LedgerBalanceRow, strong: boolean) => [
-    txt(''),
-    txt(label, { bold: true, characterSpacing: strong ? 0.4 : 0, fontSize: BODY - 0.5, noWrap: true }),
-    ...Array.from({ length: LEAD - 2 }, () => txt('')),
-    ...legs.flatMap((l) => [num(b[l.dr], { bold: true }), num(b[l.cr], { bold: true })]),
-  ].map((c, index) => (strong ? { ...c, fontSize: index === 1 ? BODY - 0.5 : BODY + 0.5 } : c));
+  // The label sits in Particulars, or the first picked text column without it.
+  const labelAt = leadKeep[1] ? 1 : leadKeep.indexOf(true);
+  const balRow = (label: string, b: LedgerBalanceRow, strong: boolean) => {
+    const lead = Array.from({ length: LEAD }, (_, i) =>
+      i === labelAt ? txt(label, { bold: true, characterSpacing: strong ? 0.4 : 0, fontSize: BODY - 0.5, noWrap: true }) : txt(''),
+    );
+    const at = leadKeep.slice(0, labelAt).filter(Boolean).length;
+    return [...lead, ...legs.flatMap((l) => [num(b[l.dr], { bold: true }), num(b[l.cr], { bold: true })])]
+      .filter(keep)
+      .map((c, index) => (strong ? { ...c, fontSize: index === at ? BODY - 0.5 : BODY + 0.5 } : c));
+  };
 
   // Opening/Closing are withheld under a voucher-type filter (see PartyLedgerFooter),
   // so the grid drops those two lines and Current Total becomes the bottom line.
@@ -1132,8 +1190,8 @@ function buildLedgerDoc(res: PartyLedgerResult, mode: string): TDocumentDefiniti
      space: every extra point taken here comes straight out of Particulars. */
   // The compact grouped widths retain enough room for crore-scale figures while
   // single-leg reports use wider amount cells and larger type.
-  const numW = grouped ? 52 : 58;
-  const leadW = grouped ? [34, '*', 42, 48, 64, 38] : [39, '*', 50, 60, 78, 44];
+  const numW = baseNumW * scale;
+  const leadW = baseLeadW.map((w) => (w === '*' ? w : w * scale));
 
   const kpiCell = (label: string, bucket: { amount: number; count: number }) => ({
     stack: [
@@ -1155,7 +1213,7 @@ function buildLedgerDoc(res: PartyLedgerResult, mode: string): TDocumentDefiniti
 
   return {
     pageSize: 'A4',
-    pageOrientation: 'portrait',
+    pageOrientation: landscape ? 'landscape' : 'portrait',
     pageMargins: [18, 22, 18, 32],
     defaultStyle: { font: 'Calibri', fontSize: BODY, color: BLACK },
     content: [
@@ -1181,7 +1239,7 @@ function buildLedgerDoc(res: PartyLedgerResult, mode: string): TDocumentDefiniti
 
       /* The ledger grid. */
       {
-        table: { headerRows, dontBreakRows: true, widths: [...leadW, ...legs.flatMap(() => [numW, numW])], body },
+        table: { headerRows, dontBreakRows: true, widths: [...leadW, ...legs.flatMap(() => [numW, numW])].filter(keep), body },
         layout: {
           // Column rules run the full height; horizontal rules only frame the
           // headings, the opening line and the totals — Tally's exact skeleton.
@@ -1198,8 +1256,8 @@ function buildLedgerDoc(res: PartyLedgerResult, mode: string): TDocumentDefiniti
           vLineWidth: () => 0.5,
           hLineColor: () => BLACK,
           vLineColor: () => BLACK,
-          paddingLeft: () => (grouped ? 2 : 3),
-          paddingRight: () => (grouped ? 2 : 3),
+          paddingLeft: () => cellPad,
+          paddingRight: () => cellPad,
           // Roomier rows: the larger type needs the leading, and it stops the
           // figure columns reading as a solid block. Headings get a touch more.
           paddingTop: () => 4,
@@ -1253,13 +1311,15 @@ function buildLedgerDoc(res: PartyLedgerResult, mode: string): TDocumentDefiniti
  * Status as real columns rather than folding them into a narration line — a sheet
  * is something you filter and pivot, so the data stays tabular.
  */
-async function buildLedgerXlsx(res: PartyLedgerResult, mode: string, company: string | null): Promise<Buffer> {
+async function buildLedgerXlsx(res: PartyLedgerResult, mode: string, company: string | null, keepCols: Set<string>): Promise<Buffer> {
   const BLACK = 'FF000000';
   const legs = legsFor(mode);
   const grouped = legs.length === 2;
   const q = (v: number) => (v ? v : null); // 0 → blank cell, as Tally prints it
 
   interface Col {
+    /** Which picked column this is (see LEDGER_EXPORT_COLUMNS). */
+    key: string;
     header: string;
     /** The Bank / Cash banner this column sits under, when both legs are shown. */
     group?: string;
@@ -1271,20 +1331,24 @@ async function buildLedgerXlsx(res: PartyLedgerResult, mode: string, company: st
     bal?: (b: LedgerBalanceRow) => number;
   }
   // Column order mirrors the screen and the PDF: St and Due From follow Vch No.
-  const cols: Col[] = [
-    { header: 'Date', width: 12, align: 'left', get: (r) => shortDate(r.txnDate) },
-    { header: 'Particulars', width: 38, align: 'left', get: (r) => r.particulars },
-    { header: 'Vch Type', width: 16, align: 'left', get: (r) => r.voucherType },
-    { header: 'Vch No', width: 16, align: 'left', get: (r) => r.voucherNo },
-    { header: 'St', width: 6, align: 'center', get: (r) => (r.status === 'P' && r.pendingSide ? `P(${r.pendingSide})` : r.status || '') },
-    { header: 'Due From', width: 12, align: 'left', get: (r) => r.dueFrom || '' },
+  const allCols: Col[] = [
+    { key: 'date', header: 'Date', width: 12, align: 'left', get: (r) => shortDate(r.txnDate) },
+    { key: 'particulars', header: 'Particulars', width: 38, align: 'left', get: (r) => r.particulars },
+    { key: 'vchType', header: 'Vch Type', width: 16, align: 'left', get: (r) => r.voucherType },
+    { key: 'vchNo', header: 'Vch No', width: 16, align: 'left', get: (r) => r.voucherNo },
+    { key: 'status', header: 'St', width: 6, align: 'center', get: (r) => (r.status === 'P' && r.pendingSide ? `P(${r.pendingSide})` : r.status || '') },
+    { key: 'due', header: 'Due From', width: 12, align: 'left', get: (r) => r.dueFrom || '' },
     ...legs.flatMap((l): Col[] => [
-      { header: 'Debit', group: l.group, width: 15, align: 'right', num: true, get: (r) => q(r[l.dr]), bal: (b) => b[l.dr] },
-      { header: 'Credit', group: l.group, width: 15, align: 'right', num: true, get: (r) => q(r[l.cr]), bal: (b) => b[l.cr] },
+      { key: 'dr', header: 'Debit', group: l.group, width: 15, align: 'right', num: true, get: (r) => q(r[l.dr]), bal: (b) => b[l.dr] },
+      { key: 'cr', header: 'Credit', group: l.group, width: 15, align: 'right', num: true, get: (r) => q(r[l.cr]), bal: (b) => b[l.cr] },
     ]),
   ];
+  const cols = allCols.filter((c) => keepCols.has(c.key));
   const nCols = cols.length;
-  const labelCol = 4; // "Vch No" column — where the totals labels sit (1-based)
+  /** Money columns per leg (Debit, Credit or both) — sizes the Bank/Cash banner. */
+  const perLeg = cols.filter((c) => c.group === legs[0].group).length;
+  // Totals labels sit in the last text column (Vch No when every column prints).
+  const labelCol = cols.filter((c) => !c.num).length;
   /** The summary block below the grid uses wide text columns, not the narrow St. */
   const sumLabelCol = 2; // Particulars
   const sumValueCol = 4; // Vch No
@@ -1332,14 +1396,14 @@ async function buildLedgerXlsx(res: PartyLedgerResult, mode: string, company: st
     const row = ws.getRow(groupRowNo);
     const firstLeg = cols.findIndex((c) => c.group);
     legs.forEach((l, i) => {
-      const from = firstLeg + i * 2 + 1;
-      ws.mergeCells(groupRowNo, from, groupRowNo, from + 1);
+      const from = firstLeg + i * perLeg + 1;
+      if (perLeg === 2) ws.mergeCells(groupRowNo, from, groupRowNo, from + 1);
       const cell = row.getCell(from);
       cell.value = l.group;
       cell.font = { name: 'Calibri', size: 10, bold: true, color: { argb: BLACK } };
       cell.alignment = { vertical: 'middle', horizontal: 'center' };
       cell.border = box;
-      row.getCell(from + 1).border = box;
+      if (perLeg === 2) row.getCell(from + 1).border = box;
     });
     row.height = 16;
   }
@@ -1369,7 +1433,7 @@ async function buildLedgerXlsx(res: PartyLedgerResult, mode: string, company: st
         cell.alignment = { vertical: 'middle', horizontal: 'right' };
       } else if (c.bal) {
         cell.value = c.bal(b) || null;
-        cell.numFmt = '#,##0.00';
+        cell.numFmt = xlNumFmt(cell.value);
       }
     });
     row.height = strong ? 18 : 16;
@@ -1385,7 +1449,7 @@ async function buildLedgerXlsx(res: PartyLedgerResult, mode: string, company: st
       cell.value = c.get(r);
       cell.alignment = { vertical: 'middle', horizontal: c.align };
       cell.font = { name: 'Calibri', size: 9, color: { argb: BLACK } };
-      if (c.num) cell.numFmt = '#,##0.00';
+      if (c.num) cell.numFmt = xlNumFmt(cell.value);
       cell.border = box;
     });
     rIdx++;
@@ -1408,7 +1472,7 @@ async function buildLedgerXlsx(res: PartyLedgerResult, mode: string, company: st
     l.alignment = { vertical: 'middle', horizontal: 'right' };
     const v = row.getCell(sumValueCol);
     v.value = bucket.amount || 0;
-    v.numFmt = '#,##0.00';
+    v.numFmt = xlNumFmt(v.value);
     v.font = { name: 'Calibri', size: 9, bold: true, color: { argb: BLACK } };
     v.alignment = { vertical: 'middle', horizontal: 'right' };
     const n = row.getCell(sumNoteCol);

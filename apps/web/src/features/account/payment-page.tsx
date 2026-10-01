@@ -1,7 +1,8 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
-import { useLocation } from 'react-router-dom';
+import { useLocation, useNavigate } from 'react-router-dom';
 import {
   BookOpenCheck,
+  Eye,
   CheckCircle2,
   ChevronLeft,
   ChevronRight,
@@ -129,21 +130,21 @@ export function PaymentPage() {
   const canCreate = can('payment:create');
   // Arriving from Party Advances (or anywhere else) can hand over a party or
   // agent name to preselect, so the user lands straight on that pending context.
-  const { state } = useLocation() as { state?: { party?: string; agent?: string } | null };
+  const { state } = useLocation() as { state?: { party?: string; agent?: string; amount?: number; payMode?: string } | null };
   const confirm = useConfirm();
 
   /* ── form state ─────────────────────────────────────────────────────────── */
   const [recDate, setRecDate] = useState(TODAY);
   const [party, setParty] = useState(state?.party ?? '');
   const [agent, setAgent] = useState(state?.agent ?? '');
-  const [payMode, setPayMode] = useState('');
+  const [payMode, setPayMode] = useState(state?.payMode ?? '');
   const [bankName, setBankName] = useState('');
   const [bankRef, setBankRef] = useState('');
   const [chequeNo, setChequeNo] = useState('');
   const [cashLoc, setCashLoc] = useState('');
   const [cashBy, setCashBy] = useState('');
   const [adjMode, setAdjMode] = useState('AUTOMATIC');
-  const [receiptStr, setReceiptStr] = useState('');
+  const [receiptStr, setReceiptStr] = useState(state?.amount ? String(state.amount) : '');
   const [remarks, setRemarks] = useState('');
   /** AGST REF: ticked invoice numbers, in tick order. */
   const [selected, setSelected] = useState<string[]>([]);
@@ -151,7 +152,8 @@ export function PaymentPage() {
   const [ledgerOpen, setLedgerOpen] = useState(false);
 
   /* ── lookups ────────────────────────────────────────────────────────────── */
-  const { data: customerData } = useCustomers({ page: 1, pageSize: 1000 });
+  // Inactive parties too: an old party still pays what it owes.
+  const { data: customerData } = useCustomers({ page: 1, pageSize: 1000, status: 'ALL' });
   const { data: agentData } = useAgents({ page: 1, pageSize: 1000 });
   const { data: banks } = useActiveBankAccounts();
   const byParty = useMemo(() => {
@@ -160,6 +162,10 @@ export function PaymentPage() {
     return m;
   }, [customerData]);
   const partyOptions = useMemo(() => [...byParty.keys()].sort((a, b) => a.localeCompare(b)), [byParty]);
+  const inactiveParties = useMemo(
+    () => new Set((customerData?.items ?? []).filter((c) => !c.active && c.partyName).map((c) => c.partyName!)),
+    [customerData],
+  );
   const agentOptions = useMemo(
     () => (agentData?.items ?? []).map((a) => a.name).filter(Boolean).sort((a, b) => a.localeCompare(b)),
     [agentData],
@@ -607,6 +613,7 @@ export function PaymentPage() {
                 value={party}
                 onChange={(v) => { setParty(v); if (v) setAgent(''); setSelected([]); }}
                 options={['', ...partyOptions]}
+                renderOption={(v) => (inactiveParties.has(v) ? `${v} · Inactive` : v)}
                 placeholder="Select party…"
                 disabled={!!agent}
                 className={cn(CONTROL, 'font-medium', party && CONTROL_ON)}
@@ -1319,6 +1326,7 @@ function EditPaymentDialog({ entry, onClose }: { entry: LedgerEntryDto; onClose:
 function LedgerModal({ ownerKind, owner, customerId, agentName, onClose }: { ownerKind: string; owner: string; customerId?: number; agentName?: string; onClose: () => void }) {
   const { can } = usePermissions();
   const confirm = useConfirm();
+  const navigate = useNavigate();
   const canEdit = can('payment:update');
   const canDelete = can('payment:delete');
   const showActions = canEdit || canDelete;
@@ -1637,7 +1645,22 @@ function LedgerModal({ ownerKind, owner, customerId, agentName, onClose }: { own
                         )}
                       </td>
                     )}
-                    <td className={cn(TD, 'font-mono font-bold whitespace-nowrap')}>{r.voucherNo}</td>
+                    <td className={cn(TD, 'font-mono font-bold whitespace-nowrap')}>
+                      {r.voucherNo}
+                      {/* Came from (or was matched on) a bank statement: open that
+                          file at that line, which is highlighted for a moment. */}
+                      {r.bankLine && (
+                        <button
+                          type="button"
+                          onClick={() => navigate('/account/bank-statement', { state: { runId: r.bankLine!.runId, rowId: r.bankLine!.rowId } })}
+                          className="ml-1.5 inline-flex size-5 cursor-pointer items-center justify-center rounded-[4px] align-middle text-indigo-600 hover:bg-indigo-100 dark:text-indigo-300 dark:hover:bg-indigo-400/20"
+                          aria-label={`View ${r.voucherNo} in the bank statement`}
+                          title="View in bank statement"
+                        >
+                          <Eye className="size-3.5" />
+                        </button>
+                      )}
+                    </td>
                     <td className={cn(TD, 'font-semibold whitespace-nowrap tabular-nums')}>{prettyDate(r.transDate)}</td>
                     {!scoped && <td className={cn(TD, 'font-semibold')}>{r.customerName}</td>}
                     <td className={cn(TD, 'whitespace-nowrap')}>

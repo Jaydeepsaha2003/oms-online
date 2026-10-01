@@ -246,6 +246,19 @@ export class CustomersService {
 
   async remove(id: number): Promise<void> {
     await this.ensureExists(id);
+    // A party with history keeps its record. Deleting VEER ENTERPRISE left its
+    // open bill NB/53 behind — owed in CRM, but nowhere it could be paid.
+    const name = (await this.prisma.customer.findUnique({ where: { id }, select: { partyName: true } }))?.partyName ?? '';
+    const [bills, orders, receipts] = await Promise.all([
+      this.prisma.challan.count({ where: { OR: [{ customerId: id }, { customerName: name }] } }),
+      this.prisma.order.count({ where: { OR: [{ customerId: id }, { customerName: name }] } }),
+      this.prisma.acctLedger.count({ where: { custId: id } }),
+    ]);
+    if (bills || orders || receipts) {
+      throw new BadRequestException(
+        `${name} has ${bills} bill(s), ${orders} order(s) and ${receipts} receipt/ledger entr(ies), so it cannot be deleted. Mark it Inactive instead.`,
+      );
+    }
     await this.prisma.customer.delete({ where: { id } });
   }
 

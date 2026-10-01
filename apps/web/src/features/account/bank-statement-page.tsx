@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
+import { useLocation, useNavigate } from 'react-router-dom';
 import { toast } from 'sonner';
 import {
   ArrowRight,
@@ -188,7 +189,12 @@ export function BankStatementPage() {
   );
 
   /* ── The working ──────────────────────────────────────────────────────── */
-  const [runId, setRunId] = useState<number | undefined>(undefined);
+  // Opened from View Receipts: that receipt's statement file, at its line.
+  const location = useLocation();
+  const navigate = useNavigate();
+  const jump = useRef(location.state as { runId?: number; rowId?: number } | null);
+  const [runId, setRunId] = useState<number | undefined>(jump.current?.runId);
+  const [flashRow, setFlashRow] = useState<number | null>(null);
   const { data: runResult, isLoading: runLoading } = useBankRun(runId);
   const { data: runsList } = useBankRuns(1, 15);
   const createRun = useCreateBankRun();
@@ -684,6 +690,24 @@ export function BankStatementPage() {
       return bt - at;
     });
   }, [rows, selectedParty, statusFilter, recentFirst]);
+  // The line asked for: show every line so it is on the list, bring it into
+  // view and highlight it for 5 seconds. The state is cleared so a reload
+  // does not jump again.
+  useEffect(() => {
+    const rowId = jump.current?.rowId;
+    if (rowId == null || !rows.some((r) => r.id === rowId)) return;
+    jump.current = null;
+    navigate(location.pathname, { replace: true, state: null });
+    setStatusFilter('');
+    setSelectedParty(undefined);
+    setFlashRow(rowId);
+    requestAnimationFrame(() =>
+      document.querySelector(`[data-bank-row="${rowId}"]`)?.scrollIntoView({ behavior: 'smooth', block: 'center' }),
+    );
+    const t = setTimeout(() => setFlashRow(null), 5000);
+    return () => clearTimeout(t);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [rows]);
   /** How many lines sit in each status, for the filter's own labels. */
   const statusCounts = useMemo(() => {
     const m = new Map<string, number>();
@@ -1610,6 +1634,7 @@ export function BankStatementPage() {
                           selectable={isDraft && canEdit}
                           vouchers={runResult?.receiptVouchers ?? {}}
                           onChangeParty={isDraft && canEdit ? reviewParty : undefined}
+                          flash={r.id === flashRow}
                         />
                       ))
                     )}
@@ -1861,9 +1886,10 @@ function LineCard({
   );
 }
 
-function LineRow({ row, checked, onToggle, selectable, vouchers, onChangeParty }: { row: BankStatementRowDto; checked: boolean; onToggle: () => void; selectable: boolean; vouchers: Record<string, string>; onChangeParty?: (row: BankStatementRowDto) => void }) {
+function LineRow({ row, checked, onToggle, selectable, vouchers, onChangeParty, flash }: { row: BankStatementRowDto; checked: boolean; onToggle: () => void; selectable: boolean; vouchers: Record<string, string>; onChangeParty?: (row: BankStatementRowDto) => void; flash?: boolean }) {
   return (
     <tr
+      data-bank-row={row.id}
       className={cn(
         'border-b transition-colors',
         row.status === 'UNMATCHED' && 'bg-rose-50/60 dark:bg-rose-500/10',
@@ -1873,6 +1899,7 @@ function LineRow({ row, checked, onToggle, selectable, vouchers, onChangeParty }
         // and went away, which reads differently from one deliberately left out.
         row.status === 'RETURNED' && 'bg-rose-50/70 line-through decoration-rose-400/70 dark:bg-rose-500/10',
         selectable && 'cursor-pointer hover:bg-indigo-50/60',
+        flash && 'animate-pulse !bg-yellow-200 ring-2 ring-yellow-500 ring-inset dark:!bg-yellow-400/30',
       )}
       onClick={selectable ? onToggle : undefined}
     >
@@ -1932,7 +1959,7 @@ function LineRow({ row, checked, onToggle, selectable, vouchers, onChangeParty }
             )}
             title={
               (row.status === 'UNMATCHED'
-                ? `${money(row.matchedAmount)} of this ${money(row.amount)} credit is covered; ${money(row.amount - row.matchedAmount)} has no receipt and is what Process would create. Covered by: `
+                ? `${money(row.matchedAmount)} of this ${money(row.amount)} credit is covered; ${money(row.amount - row.matchedAmount)} has no receipt. Process will not post it on its own — correct the receipt if it was typed short, or tick only this line to post the difference. Covered by: `
                 : 'Receipt(s): ') + row.matchedRefs.map((r) => (vouchers[r] ? `${vouchers[r]} (${r})` : r)).join(', ')
             }
           >

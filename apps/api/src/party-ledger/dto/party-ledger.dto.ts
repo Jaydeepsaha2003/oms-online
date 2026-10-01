@@ -12,6 +12,8 @@ export class PartyLedgerQueryDto {
   @IsOptional() @IsIn(LEDGER_DUE_FILTERS.map((f) => f.value)) dueType?: LedgerDueFilter;
   /** BOTH | B | C. */
   @IsOptional() @IsString() mode?: string;
+  /** Exports only: the columns to include, comma-separated. */
+  @IsOptional() @IsString() cols?: string;
 }
 
 /** Which receipt voucher to explain. */

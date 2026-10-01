@@ -374,11 +374,15 @@ export interface PartyBalanceSide {
   oldestDays: number;
   /** Open invoices with money still owed on this side. */
   invoiceCount: number;
+  /** Most recent receipt on this side of the book. */
+  lastReceiptAt: string | null;
 }
 
 /** A party balance with its open-invoice breakdown (form drill-down). */
 export interface PartyBalanceDetail extends PartyBalanceSummary {
   invoices: PartyOpenInvoice[];
+  /** The party's last few receipts, newest first (single-party view only). */
+  recentReceipts?: { voucherNo: string; date: string; amount: number; mode: string; side: 'BANK' | 'CASH' }[];
 }
 
 /** CRM reminder defaults (AppConfig key CRM_REMINDER_DEFAULTS). */

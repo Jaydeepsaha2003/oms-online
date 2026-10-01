@@ -240,7 +240,21 @@ export interface PartyLedgerQuery {
   dueType?: LedgerDueFilter;
   /** BOTH | B | C. */
   mode?: string;
+  /** Exports only: comma-separated {@link LEDGER_EXPORT_COLUMNS} keys; all when omitted. */
+  cols?: string;
 }
+
+/** Columns a Party Ledger PDF / Excel can include — every one unless picked. */
+export const LEDGER_EXPORT_COLUMNS = [
+  { key: 'date', label: 'Date' },
+  { key: 'particulars', label: 'Particulars' },
+  { key: 'vchType', label: 'Vch Type' },
+  { key: 'vchNo', label: 'Vch No' },
+  { key: 'status', label: 'Status' },
+  { key: 'due', label: 'Due date' },
+  { key: 'dr', label: 'Debit' },
+  { key: 'cr', label: 'Credit' },
+] as const;
 
 /** One receipt / clearance against an invoice (row-click detail). */
 export interface LedgerReceiptLine {

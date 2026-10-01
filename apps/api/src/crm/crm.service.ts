@@ -36,7 +36,7 @@ const normaliseKind = (v: string | null | undefined): 'DELIVERY' | 'PAYMENT' | '
 
 const SETTINGS_KEY = 'CRM_REMINDER_DEFAULTS';
 /** An empty bank or cash side of a party balance. Spread, never shared. */
-const ZERO_SIDE = { outstanding: 0, overdue: 0, dueSoon: 0, oldestDays: 0, invoiceCount: 0 } as const;
+const ZERO_SIDE = { outstanding: 0, overdue: 0, dueSoon: 0, oldestDays: 0, invoiceCount: 0, lastReceiptAt: null } as const;
 const INCLUDE = {
   logs: { orderBy: { createdAt: 'asc' } },
   checklist: { orderBy: { sortOrder: 'asc' } },
@@ -581,6 +581,29 @@ export class CrmService {
    *  detail (not null) for a known party with nothing outstanding, so the form
    *  can always show "cleared". */
   async partyBalance(customerId?: number, party?: string): Promise<PartyBalanceDetail | null> {
+    const found = await this.findPartyBalance(customerId, party);
+    return found && { ...found, recentReceipts: await this.recentReceipts(found.customerId) };
+  }
+
+  /** The party's last 5 bank and last 5 cash receipts, newest first — the
+   *  desk shows whichever side of the book is in view. */
+  private async recentReceipts(customerId: number | null): Promise<NonNullable<PartyBalanceDetail['recentReceipts']>> {
+    if (customerId == null) return [];
+    const last5 = (side: 'BANK' | 'CASH') =>
+      this.prisma.acctLedger.findMany({
+        where: { custId: customerId, voucherType: 'RECEIPT', ...(side === 'BANK' ? { bankCredit: { gt: 0 } } : { cashCredit: { gt: 0 } }) },
+        orderBy: [{ transDate: 'desc' }, { id: 'desc' }],
+        take: 5,
+        select: { voucherNo: true, transDate: true, bankCredit: true, cashCredit: true, transMode: true },
+      });
+    const [bank, cash] = await Promise.all([last5('BANK'), last5('CASH')]);
+    return [
+      ...bank.map((r) => ({ voucherNo: r.voucherNo, date: r.transDate.toISOString(), amount: Math.round(r.bankCredit), mode: r.transMode, side: 'BANK' as const })),
+      ...cash.map((r) => ({ voucherNo: r.voucherNo, date: r.transDate.toISOString(), amount: Math.round(r.cashCredit), mode: r.transMode, side: 'CASH' as const })),
+    ].sort((a, b) => b.date.localeCompare(a.date));
+  }
+
+  private async findPartyBalance(customerId?: number, party?: string): Promise<PartyBalanceDetail | null> {
     const all = await this.computeBalances();
     if (customerId != null) {
       const hit = all.find((p) => p.customerId === customerId);
@@ -639,7 +662,12 @@ export class CrmService {
     const bankRecvByInv = new Map<string, number>();
     const cashRecvByInv = new Map<string, number>();
     const lastRecByCust = new Map<number, Date>();
+    /** The same, per side of the book (Bank / Cash view). */
+    const lastRecBySide = { bank: new Map<number, Date>(), cash: new Map<number, Date>() };
     for (const r of receipts) {
+      const sideLast = lastRecBySide[payBucketOf(r.payMode) === 'bank' ? 'bank' : 'cash'];
+      const sl = sideLast.get(r.custId);
+      if (!sl || r.recDate > sl) sideLast.set(r.custId, r.recDate);
       recvByInv.set(r.invNo, (recvByInv.get(r.invNo) ?? 0) + num(r.recAmt));
       const bucket = payBucketOf(r.payMode) === 'bank' ? bankRecvByInv : cashRecvByInv;
       bucket.set(r.invNo, (bucket.get(r.invNo) ?? 0) + num(r.recAmt));
@@ -754,8 +782,9 @@ export class CrmService {
       // The same totals per side of the book, for the Bank / Cash view. Built
       // from each invoice's own bank/cash remainder AFTER the advance above, so
       // the two sides always add back up to the combined figures.
-      const side = () => ({ outstanding: 0, overdue: 0, dueSoon: 0, oldestDays: 0, invoiceCount: 0 });
-      const sides = { bank: side(), cash: side() };
+      const lastOn = (k: 'bank' | 'cash') => (p.customerId != null ? (lastRecBySide[k].get(p.customerId)?.toISOString() ?? null) : null);
+      const side = (k: 'bank' | 'cash') => ({ outstanding: 0, overdue: 0, dueSoon: 0, oldestDays: 0, invoiceCount: 0, lastReceiptAt: lastOn(k) });
+      const sides = { bank: side('bank'), cash: side('cash') };
       /*
        * Oldest first, then by invoice code — the code is the tiebreaker, and it
        * is not cosmetic.

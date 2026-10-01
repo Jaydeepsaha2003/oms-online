@@ -28,7 +28,7 @@ export function usePostToTally(path = '/tally/post', listKey = 'challans') {
   const post = async (code: string, detail: string) => {
     const ok = await confirm({
       title: `Post ${code} to Tally?`,
-      description: `${detail}. After posting, open it in Tally and check it — make the e-invoice only then.`,
+      description: `${detail}. The Tally PC then makes the e-invoice, e-way bill and print by itself (tally-einvoice-watch).`,
       confirmText: 'Post to Tally',
     });
     if (ok) m.mutate(code);
