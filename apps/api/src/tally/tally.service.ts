@@ -4,6 +4,7 @@ import { PrismaService } from '../prisma/prisma.service';
 import { decode, tag } from '../account-groups/tally-master.parser';
 
 const CONFIG_KEY = 'TALLY_CONFIG';
+const START_KEY = 'TALLY_START_REQUEST';
 const DEFAULT_CONFIG: TallyConfig = { url: 'http://192.168.0.245:9000', companyGuid: null, gstLockDate: null };
 
 export const xmlEscape = (s: string) => s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
@@ -52,6 +53,20 @@ export class TallyService {
     } catch {
       return DEFAULT_CONFIG;
     }
+  }
+
+  /** "Start Tally" pressed in OMS: the Tally PC's script (tally-pc) picks this up on its next poll (every ~20 s). */
+  async requestStart(): Promise<void> {
+    const value = String(Date.now());
+    await this.prisma.appConfig.upsert({ where: { key: START_KEY }, update: { value }, create: { key: START_KEY, value } });
+  }
+
+  /** True once per request, and only if it is fresh: a PC that was off for hours must not start Tally on a stale click. */
+  async takeStart(): Promise<boolean> {
+    const row = await this.prisma.appConfig.findUnique({ where: { key: START_KEY } });
+    if (!row) return false;
+    await this.prisma.appConfig.deleteMany({ where: { key: START_KEY } });
+    return Date.now() - Number(row.value) < 10 * 60_000;
   }
 
   async saveConfig(input: TallyConfig): Promise<TallyConfig> {

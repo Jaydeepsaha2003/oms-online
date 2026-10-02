@@ -8,6 +8,9 @@ import type {
   DueFromCalc,
   DueFromReceipt,
   LedgerBalanceRow,
+  LedgerDueBucket,
+  LedgerOldestBill,
+  PartyLedgerFooter,
   LedgerClearedLine,
   LedgerClearedResult,
   LedgerReceiptLine,
@@ -821,9 +824,9 @@ export class PartyLedgerService {
      * is the remaining amount for the selected Bank/Cash mode, and each bill is
      * aged with the one shared rule so both screens agree on the split.
      */
-    const over = { amount: 0, count: 0 };
-    const past = { amount: 0, count: 0 };
-    const normal = { amount: 0, count: 0 };
+    const over = { amount: 0, count: 0, bank: 0, cash: 0 };
+    const past = { amount: 0, count: 0, bank: 0, cash: 0 };
+    const normal = { amount: 0, count: 0, bank: 0, cash: 0 };
     const inScope = custIds ? new Set(custIds) : null;
     for (const inv of pending.values()) {
       if (inScope && (inv.customerId == null || !inScope.has(inv.customerId))) continue;
@@ -833,6 +836,8 @@ export class PartyLedgerService {
       const target = bucket === 'OVERDUE' ? over : bucket === 'PAST DUE' ? past : normal;
       target.amount += amt;
       target.count += 1;
+      if (mode !== 'C') target.bank += Math.max(0, inv.bankBal);
+      if (mode !== 'B') target.cash += Math.max(0, inv.cashBal);
     }
 
     const oldest = this.oldestUnpaid(pending, custIds, scope);
@@ -850,14 +855,18 @@ export class PartyLedgerService {
     }
     const invDueFrom = oldest.text;
     const dna = await this.listStanding(scope, customerId, custIds);
+    const leg = (side: 'bank' | 'cash') => this.oldestUnpaid(pending, custIds, scope, side).detail;
+    const plain = (d: PartyLedgerKpis['invDueFromDetail']) => d && { code: d.code, invDate: d.invDate, dueDate: d.dueDate, party: d.party };
     return {
       invDueFrom,
       invDueFromDetail: oldest.detail,
+      oldestBank: mode === 'C' ? null : plain(leg('bank')),
+      oldestCash: mode === 'B' ? null : plain(leg('cash')),
       paymentDNA: dna.label,
       paymentDNAKind: dna.kind,
-      overDue: { amount: r0(over.amount), count: over.count },
-      pastDue: { amount: r0(past.amount), count: past.count },
-      normal: { amount: r0(normal.amount), count: normal.count },
+      overDue: { amount: r0(over.amount), count: over.count, bank: r0(over.bank), cash: r0(over.cash) },
+      pastDue: { amount: r0(past.amount), count: past.count, bank: r0(past.bank), cash: r0(past.cash) },
+      normal: { amount: r0(normal.amount), count: normal.count, bank: r0(normal.bank), cash: r0(normal.cash) },
     };
   }
 
@@ -875,13 +884,15 @@ export class PartyLedgerService {
     pending: Map<string, PendingInvoice>,
     custIds: number[] | null,
     scope: 'CUSTOMER' | 'AGENT' | 'ALL',
+    /** Only bills still owing on this side; either side when omitted. */
+    side?: 'bank' | 'cash',
   ): { text: string; detail: PartyLedgerKpis['invDueFromDetail'] } {
     const inScope = custIds ? new Set(custIds) : null;
     let best: { code: string; at: Date; party: string; invDate: Date } | null = null;
     for (const [code, inv] of pending) {
       if (inScope && (inv.customerId == null || !inScope.has(inv.customerId))) continue;
       // Still owed on either leg (EPS absorbs rounding crumbs).
-      if (inv.bankBal <= EPS && inv.cashBal <= EPS) continue;
+      if (side === 'bank' ? inv.bankBal <= EPS : side === 'cash' ? inv.cashBal <= EPS : inv.bankBal <= EPS && inv.cashBal <= EPS) continue;
       const at = inv.dueDate ?? inv.invDate;
       if (!best || at < best.at) best = { code, at, party: inv.customerName, invDate: inv.invDate };
     }
@@ -989,6 +1000,27 @@ export class PartyLedgerService {
 }
 
 /* ── Shared export helpers ────────────────────────────────────────────────── */
+
+/** Current Total as printed: the period's movement PLUS the opening, so the
+ *  statement's totals add up from the top of the page (the screen keeps the
+ *  period-only figure, with the opening on the line above it). */
+const currentWithOpening = (f: PartyLedgerFooter): LedgerBalanceRow =>
+  f.opening
+    ? { bankDr: f.current.bankDr + f.opening.bankDr, bankCr: f.current.bankCr + f.opening.bankCr, cashDr: f.current.cashDr + f.opening.cashDr, cashCr: f.current.cashCr + f.opening.cashCr }
+    : f.current;
+
+/** "SSS/26-27/150 · bill 07/05/26 · due 06/07/26" — the bill date is the one
+ *  the ledger rows show, so the bill can be found on the statement. */
+const oldestLine = (o: LedgerOldestBill | null, multiParty: boolean) =>
+  o ? `${o.code} · bill ${pdfDate(o.invDate)} · due ${pdfDate(o.dueDate)}${multiParty ? ` · ${o.party}` : ''}` : 'None';
+/** One "Oldest unpaid" line per side printed (Bank, Cash, or both). */
+const oldestLines = (res: PartyLedgerResult, mode: string): [string, string][] => {
+  const multi = res.scope !== 'CUSTOMER';
+  return [
+    ...(mode !== 'C' ? [['Oldest unpaid (Bank)', oldestLine(res.kpis.oldestBank, multi)] as [string, string]] : []),
+    ...(mode !== 'B' ? [['Oldest unpaid (Cash)', oldestLine(res.kpis.oldestCash, multi)] as [string, string]] : []),
+  ];
+};
 
 /** The text (lead) columns, in grid order; Debit/Credit follow per money leg. */
 const LEAD_KEYS = ['date', 'particulars', 'vchType', 'vchNo', 'status', 'due'];
@@ -1177,7 +1209,7 @@ function buildLedgerDoc(res: PartyLedgerResult, mode: string, cols: Set<string>)
     ...heads,
     ...(f.opening ? [balRow('Opening Balance', f.opening, false)] : []),
     ...res.rows.map(dataRow),
-    balRow('Current Total', f.current, !f.closing),
+    balRow('Current Total', currentWithOpening(f), !f.closing),
     ...(f.closing ? [balRow('Closing Balance', f.closing, true)] : []),
   ];
   const headerRows = heads.length;
@@ -1193,10 +1225,14 @@ function buildLedgerDoc(res: PartyLedgerResult, mode: string, cols: Set<string>)
   const numW = baseNumW * scale;
   const leadW = baseLeadW.map((w) => (w === '*' ? w : w * scale));
 
-  const kpiCell = (label: string, bucket: { amount: number; count: number }) => ({
+  const kpiCell = (label: string, bucket: LedgerDueBucket) => ({
     stack: [
       { text: label, fontSize: 9, bold: true, characterSpacing: 0.5 },
       { text: amt2z(bucket.amount), fontSize: 13.5, bold: true, margin: [0, 2, 0, 0] },
+      // Bank + Cash printed together: each side's share, so the two can be told apart.
+      ...(grouped
+        ? [{ text: [{ text: 'Bank ', fontSize: 9 }, { text: amt2z(bucket.bank), fontSize: 10, bold: true }, { text: '     Cash ', fontSize: 9 }, { text: amt2z(bucket.cash), fontSize: 10, bold: true }], margin: [0, 2, 0, 0] }]
+        : []),
       { text: `${bucket.count} invoice(s)`, fontSize: 9, margin: [0, 1, 0, 0] },
     ],
     margin: [8, 5, 8, 5],
@@ -1288,7 +1324,7 @@ function buildLedgerDoc(res: PartyLedgerResult, mode: string, cols: Set<string>)
               paddingBottom: () => 0,
             },
           },
-          factLine([['Oldest unpaid', k.invDueFrom]]),
+          ...oldestLines(res, mode).map((line) => factLine([line])),
         ],
         margin: [0, 10, 0, 0],
       },
@@ -1454,7 +1490,7 @@ async function buildLedgerXlsx(res: PartyLedgerResult, mode: string, company: st
     });
     rIdx++;
   });
-  balanceRow('Current Total', res.footer.current, !res.footer.closing);
+  balanceRow('Current Total', currentWithOpening(res.footer), !res.footer.closing);
   if (res.footer.closing) balanceRow('Closing Balance', res.footer.closing, true);
 
   // Ageing summary, two rows below the grid.
@@ -1476,15 +1512,19 @@ async function buildLedgerXlsx(res: PartyLedgerResult, mode: string, company: st
     v.font = { name: 'Calibri', size: 9, bold: true, color: { argb: BLACK } };
     v.alignment = { vertical: 'middle', horizontal: 'right' };
     const n = row.getCell(sumNoteCol);
-    n.value = `${bucket.count} invoice(s)`;
+    n.value = grouped
+      ? `${bucket.count} invoice(s) · Bank ${amt2z(bucket.bank)} · Cash ${amt2z(bucket.cash)}`
+      : `${bucket.count} invoice(s)`;
     n.font = { name: 'Calibri', size: 9, color: { argb: BLACK } };
     rIdx++;
   });
-  const tail = ws.getRow(rIdx);
-  tail.getCell(sumLabelCol).value = 'Oldest unpaid';
-  tail.getCell(sumLabelCol).alignment = { horizontal: 'right' };
-  tail.getCell(sumValueCol).value = k.invDueFrom;
-  rIdx++;
+  for (const [label, value] of oldestLines(res, mode)) {
+    const tail = ws.getRow(rIdx);
+    tail.getCell(sumLabelCol).value = label;
+    tail.getCell(sumLabelCol).alignment = { horizontal: 'right' };
+    tail.getCell(sumValueCol).value = value;
+    rIdx++;
+  }
   const dna = ws.getRow(rIdx);
   dna.getCell(sumLabelCol).value = 'Party list';
   dna.getCell(sumLabelCol).alignment = { horizontal: 'right' };

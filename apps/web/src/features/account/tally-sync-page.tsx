@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useState } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
-import { Loader2, Lock, RefreshCw } from 'lucide-react';
+import { Loader2, Lock, Power, RefreshCw } from 'lucide-react';
 import { toast } from 'sonner';
 import type {
   SaveTallyMappingInput,
@@ -345,7 +345,7 @@ function PostQueue({ canPost, canManage }: { canPost: boolean; canManage: boolea
   const onPost = async (r: TallyQueueRow) => {
     const ok = await confirm({
       title: `Post ${r.code} to Tally?`,
-      description: `${r.customerName} · ${rs(r.amount)}. The Tally PC then makes the e-invoice, e-way bill and print by itself (tally-einvoice-watch).`,
+      description: `${r.customerName} · ${rs(r.amount)}. The Tally PC then makes the e-invoice, e-way bill and print by itself (tally-pc on the Tally PC).`,
       confirmText: 'Post to Tally',
     });
     if (ok) post.mutate(r.code);
@@ -799,6 +799,12 @@ export function TallySyncPage() {
     onError: (e) => toast.error(getApiErrorMessage(e)),
   });
 
+  const start = useMutation({
+    mutationFn: () => http.post('/tally/start'),
+    onSuccess: () => toast.success('Asked the Tally PC to start Tally. It picks this up within ~20 seconds, then Tally opens and logs in by itself.'),
+    onError: (e) => toast.error(getApiErrorMessage(e)),
+  });
+
   const [url, setUrl] = useState('');
   const [lockDate, setLockDate] = useState('');
   useEffect(() => {
@@ -835,6 +841,12 @@ export function TallySyncPage() {
                 <span className="text-muted-foreground text-xs">· last checked {formatDateTime(data.checkedAt)}</span>
               </div>
               <p className="text-sm">{data.error ?? ui.hint}</p>
+              {canManage && data.state !== 'OK' && (
+                <Button size="sm" onClick={() => start.mutate()} disabled={start.isPending}>
+                  {start.isPending ? <Loader2 className="size-3.5 animate-spin" /> : <Power className="size-3.5" />}
+                  Start Tally on the Tally PC
+                </Button>
+              )}
             </>
           )}
         </CardContent>

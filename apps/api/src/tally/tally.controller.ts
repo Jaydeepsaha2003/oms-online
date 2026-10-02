@@ -1,4 +1,8 @@
-import { Body, Controller, Get, Param, ParseIntPipe, Post, Put, Query } from '@nestjs/common';
+import { timingSafeEqual } from 'node:crypto';
+import { Body, Controller, ForbiddenException, Get, Headers, Param, ParseIntPipe, Post, Put, Query, Req } from '@nestjs/common';
+import { SkipThrottle } from '@nestjs/throttler';
+import type { Request } from 'express';
+import { Public } from '../common/decorators/public.decorator';
 import { ApiBearerAuth, ApiTags } from '@nestjs/swagger';
 import { Type } from 'class-transformer';
 import { ArrayMinSize, IsArray, IsInt, IsOptional, IsString, IsUrl, MinLength, ValidateNested } from 'class-validator';
@@ -14,6 +18,16 @@ import { TallyPostingService } from './tally-posting.service';
 import { TallyNotesService } from './tally-notes.service';
 
 const R = RESOURCES.TALLY;
+
+/** The Tally PC script's calls: right TALLY_PC_KEY (api .env) AND a LAN source address. Returns the address. */
+function pcCaller(req: Request, key: string): string {
+  const want = Buffer.from(process.env.TALLY_PC_KEY ?? '');
+  const got = Buffer.from(key);
+  const ip = (req.ip ?? '').replace(/^::ffff:/, '');
+  if (!want.length || want.length !== got.length || !timingSafeEqual(want, got)) throw new ForbiddenException('Bad key');
+  if (!/^(192.168.|10.|172.(1[6-9]|2d|3[01]).)/.test(ip)) throw new ForbiddenException('LAN only');
+  return ip;
+}
 
 class TallyConfigDto {
   @IsUrl({ require_tld: false, require_protocol: true, protocols: ['http', 'https'] }) url!: string;
@@ -55,6 +69,39 @@ export class TallyController {
   @Permissions(perm(R, ACTIONS.VIEW))
   status() {
     return this.svc.status();
+  }
+
+  /**
+   * The Tally PC says hello at start-up (scripts/tally-autostart.ps1); OMS takes the address the call came
+   * FROM as the new Tally address. Needs the shared TALLY_PC_KEY (api .env) and a LAN source address.
+   */
+  @Public()
+  @SkipThrottle()
+  @Post('pc-hello')
+  async pcHello(@Req() req: Request, @Headers('x-tally-key') key = '') {
+    const ip = pcCaller(req, key);
+    const cfg = await this.svc.getConfig();
+    const url = `http://${ip}:9000`;
+    if (cfg.url !== url) await this.svc.saveConfig({ ...cfg, url });
+    return { url };
+  }
+
+  /** "Start Tally" button: asks the Tally PC script to open Tally and log in (it polls pc-poll). */
+  @Post('start')
+  @Permissions(perm(R, ACTIONS.MANAGE))
+  @Audit({ action: ACTIONS.UPDATE, resource: R, description: 'Asked the Tally PC to start Tally' })
+  async start() {
+    await this.svc.requestStart();
+    return { requested: true };
+  }
+
+  /** The Tally PC script asks every ~20 s whether someone pressed "Start Tally". Same key + LAN rule as pc-hello. */
+  @Public()
+  @SkipThrottle()
+  @Post('pc-poll')
+  async pcPoll(@Req() req: Request, @Headers('x-tally-key') key = '') {
+    pcCaller(req, key);
+    return { start: await this.svc.takeStart() };
   }
 
   @Put('config')
