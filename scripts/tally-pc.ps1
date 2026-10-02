@@ -11,6 +11,12 @@
 param([switch]$Once, [switch]$List, [int]$Max = 1, [string]$Tally = 'http://localhost:9000', [int]$EverySeconds = 20, [int]$IdleSeconds = 60)
 $ErrorActionPreference = 'Stop'
 
+# Settings + logins live in tally-autostart.ini next to this script (never in git): oms=, key=, user=, pass=, eiuser=, eipass=
+$cfg = @{}
+if (Test-Path "$PSScriptRoot\tally-autostart.ini") { Get-Content "$PSScriptRoot\tally-autostart.ini" | ForEach-Object { if ($_ -match '^\s*(\w+)\s*=\s*(.*?)\s*$') { $cfg[$Matches[1]] = $Matches[2] } } }
+# SendKeys treats + ^ % ~ ( ) { } [ ] as commands: wrap them so a password with them is typed as text.
+function Plain($s) { $s -replace '([+^%~(){}\[\]])', '{$1}' }
+
 # ---- e-invoice + e-way + print for the pending SSS bills (was tally-einvoice-helper.ps1) ----
 function Run-Helper([switch]$List, [int]$Max = 1) {
 
@@ -183,16 +189,26 @@ foreach ($v in $pending | Select-Object -First $Max) {
   # voucher details for e-Invoice and e-Way Bill generation?" (SSS-778). OCR reads "e-Invoice" as "e-lnvoice".
   Key 'y' '(?=.*YesorNo)(?=.*(generate|voucherdetailsfor).{0,4}[Il1]nvoice)' 'the "e-Invoice?" question'
 
-  # IRN. If the portal login pops up, the owner types it — this script never handles passwords.
+  # IRN. If Tally asks for the e-invoice portal login, type it ONCE (ID, Enter, password, Ctrl+A) - only when that
+  # screen really shows. A wrong password tried again and again can lock the portal account, so never a second try.
   Write-Host 'Waiting for the IRN (up to 5 min)...'
-  $irn = $null; $asked = $false
+  $irn = $null; $typed = $false
   foreach ($i in 1..100) {
     Start-Sleep -Seconds 3
-    # Tally doesn't answer while a screen of its own is open — just keep waiting.
+    # Tally doesn't answer while a screen of its own is open - just keep waiting.
     try { $irn = Txt (Ask-Tally $byNo).IRN } catch { }
     if ($irn) { break }
-    if (-not $asked -and $i % 3 -eq 0) {
-      try { if ((Seen 'waiting') -match 'Password') { $asked = $true; [console]::Beep(1000, 900); Write-Host '>>> Tally is asking for the e-invoice login: type the ID/password in Tally yourself. Waiting...' -ForegroundColor Yellow } } catch { }
+    if ($i -le 5 -or $i % 3 -eq 0) {
+      try { $login = (Seen 'waiting') -match 'Password' } catch { $login = $false }
+      if ($login -and $typed) { Stop-Here "$no : the e-invoice portal login did not go through (wrong ID/password?) - stopped, not tried again. Fix it in Tally." }
+      if ($login -and -not ($cfg.eiuser -and $cfg.eipass)) { [console]::Beep(1000, 900); Write-Host '>>> Tally is asking for the e-invoice login: type the ID/password in Tally yourself. Waiting...' -ForegroundColor Yellow }
+      elseif ($login) {
+        Write-Host 'Tally asks for the e-invoice login - typing it once.'
+        Key ((Plain $cfg.eiuser) + '~') 'Password' 'the e-invoice login'
+        Key (Plain $cfg.eipass) 'Password' 'the e-invoice login'
+        Key '^a' 'Password' 'the e-invoice login'
+        $typed = $true
+      }
     }
   }
   if (-not $irn) { Stop-Here "$no : no IRN after 5 minutes (login not done, or an error in Tally). Not printed - stopped." }
@@ -276,9 +292,6 @@ try { schtasks /delete /tn TallyAutoStart /f *> $null } catch { }   # the old tw
 $lnk = Join-Path ([Environment]::GetFolderPath('Startup')) 'Tally PC.lnk'
 if (-not (Test-Path $lnk)) { $s = (New-Object -ComObject WScript.Shell).CreateShortcut($lnk); $s.TargetPath = "$PSScriptRoot\tally-pc.bat"; $s.WorkingDirectory = $PSScriptRoot; $s.Save(); Write-Host 'Added to Startup: it will run by itself at every logon.' }
 
-$cfg = @{}
-Get-Content "$PSScriptRoot\tally-autostart.ini" | ForEach-Object { if ($_ -match '^\s*(\w+)\s*=\s*(.*?)\s*$') { $cfg[$Matches[1]] = $Matches[2] } }
-
 function Hello {
   foreach ($i in 1..20) {   # the network may still be coming up right after power-on
     try { $r = Invoke-RestMethod -Method Post -Uri "$($cfg.oms)/api/tally/pc-hello" -Headers @{ 'x-tally-key' = $cfg.key } -TimeoutSec 10; Write-Host "OMS knows us as $($r.data.url)"; return }
@@ -287,8 +300,6 @@ function Hello {
 }
 function Tally-Answers { try { [void](Invoke-WebRequest 'http://localhost:9000' -UseBasicParsing -TimeoutSec 5); $true } catch { $false } }
 function Tally-Proc { Get-Process | Where-Object { $_.ProcessName -like 'tally*' -and $_.MainWindowHandle -ne 0 } | Select-Object -First 1 }
-# SendKeys treats + ^ % ~ ( ) { } [ ] as commands: wrap them so a password with them is typed as text.
-function Plain($s) { $s -replace '([+^%~(){}\[\]])', '{$1}' }
 
 function Start-Tally {
   # ponytail: blind keystrokes (a startup screen has nothing dangerous to hit); if Tally's start screens change, fix here.

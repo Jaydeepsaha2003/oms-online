@@ -1,11 +1,11 @@
 # Dry run of tally-pc.ps1 -Once: fake Tally + fake keyboard. Prints every formula and key it would send.
 # Run after any change: powershell -ExecutionPolicy Bypass -File scripts\tally-pc.dryrun.ps1
-$script:calls = 0
+$script:calls = 0; $script:loginShown = 0
 function Invoke-WebRequest { param($Uri, $Method, $Body, [switch]$UseBasicParsing, $TimeoutSec)
   $script:calls++
   Write-Host ("TALLY FORMULA: " + [regex]::Match($Body, '<SYSTEM[^>]*>(.*)</SYSTEM>').Groups[1].Value)
   # $env:DRY_DONE=1 -> the IRN was already made by hand before the helper saves (it must stop).
-  $irn = if ($script:calls -ge 3 -or ($env:DRY_DONE -and $script:calls -ge 2)) { '<IRN TYPE="String">abc123</IRN>' } else { '' }
+  $irn = if ($script:calls -ge $(if ($env:DRY_LOGIN) { 5 } else { 3 }) -or ($env:DRY_DONE -and $script:calls -ge 2)) { '<IRN TYPE="String">abc123</IRN>' } else { '' }
   # $env:DRY_EWB=1 -> the bill also gets an e-way bill (tests the 2-2 print path)
   if ($irn -and $env:DRY_EWB) { $irn += '<EWAYBILLDETAILS.LIST><BILLNUMBER>202294394122</BILLNUMBER></EWAYBILLDETAILS.LIST>' }
   [pscustomobject]@{ Content = "<ENVELOPE><BODY><DATA><COLLECTION><VOUCHER><DATE TYPE=`"Date`">20260924</DATE><VOUCHERNUMBER>SSS-747/26-27</VOUCHERNUMBER><PARTYLEDGERNAME TYPE=`"String`">ANIL METAL</PARTYLEDGERNAME><MASTERID TYPE=`"Number`"> 23928</MASTERID><STATENAME>$(if ($env:DRY_STATE) { $env:DRY_STATE } else { 'Maharashtra' })</STATENAME>$irn</VOUCHER></COLLECTION></DATA></BODY></ENVELOPE>" }
@@ -20,6 +20,8 @@ function Snap($name) { Write-Host "PHOTO: $name"; $name }
 function Read-Screen($png) {
   # $env:DRY_INFO=1 -> after the IRN Tally first shows its "generated successfully - Press any key" box, once.
   if ($env:DRY_INFO -and $png -eq 'after-irn' -and -not $script:infoShown) { $script:infoShown = $true; return 'Information e-Invoice and e-Way Bill generated successfully. Press any key to continue' }
+  # $env:DRY_LOGIN=1 -> while waiting for the IRN Tally shows the e-invoice portal login, once.
+  if ($env:DRY_LOGIN -and ($png -eq 'waiting' -or ($script:loginShown -ge 1 -and $png -like 'before *')) -and $script:loginShown -lt 4) { $script:loginShown++; return 'e-Invoice Login User Name Password' }
   # $env:DRY_GATEWAY=1 -> Tally starts on the Gateway (helper should press K, not Alt+G).
   if ($env:DRY_GATEWAY) { return 'Gateway of Tally Balance Sheet Day Book Vch No For 24-Sep-26 24-Sep-26 ANIL METAL Sales No. SSS-747/26-27 Party Alc name: ANIL METAL Look for Do you want to generate e-Invoice? Yes or No Print Number of Copies Printer Settings' }
   if ($env:DRY_WRONG) { return 'Saved Views Day Book Vch No For 24-Sep-26 24-Sep-26 MUKTI KITCHENWARE Sales No. SSS-738/26-27 Party Alc name: MUKTI KITCHENWARE Look for' }
