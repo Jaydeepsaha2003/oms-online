@@ -8,7 +8,7 @@
   Needs tally-autostart.ini next to it (never in git): oms=, key=, user=, pass=
   tally-pc.bat -Once   -> only ONE pending bill, then exit.     tally-pc.bat -List -> only list the pending bills.
 #>
-param([switch]$Once, [switch]$List, [int]$Max = 1, [string]$Tally = 'http://localhost:9000', [int]$EverySeconds = 20, [int]$IdleSeconds = 60)
+param([switch]$EnableWake, [switch]$Overlay, [int]$Parent = 0, [switch]$Once, [switch]$List, [int]$Max = 1, [string]$Tally = 'http://localhost:9000', [int]$EverySeconds = 10, [int]$IdleSeconds = 20)
 $ErrorActionPreference = 'Stop'
 
 # Settings + logins live in tally-autostart.ini next to this script (never in git): oms=, key=, user=, pass=, eiuser=, eipass=
@@ -16,6 +16,117 @@ $cfg = @{}
 if (Test-Path "$PSScriptRoot\tally-autostart.ini") { Get-Content "$PSScriptRoot\tally-autostart.ini" | ForEach-Object { if ($_ -match '^\s*(\w+)\s*=\s*(.*?)\s*$') { $cfg[$Matches[1]] = $Matches[2] } } }
 # SendKeys treats + ^ % ~ ( ) { } [ ] as commands: wrap them so a password with them is typed as text.
 function Plain($s) { $s -replace '([+^%~(){}\[\]])', '{$1}' }
+
+# ---- windows: "Automation ON" overlay and the start question ----
+function Win32 {
+  if ('Fg' -as [type]) { return }
+  Add-Type -ReferencedAssemblies System.Windows.Forms, System.Drawing -TypeDefinition @'
+using System; using System.Runtime.InteropServices; using System.Windows.Forms;
+public static class Fg {
+  [DllImport("user32.dll")] static extern bool SetForegroundWindow(IntPtr h);
+  [DllImport("user32.dll")] static extern void keybd_event(byte vk, byte scan, uint flags, UIntPtr extra);
+  // Windows refuses to bring a window to the front for a background process; a tap on Alt lifts that lock.
+  [DllImport("user32.dll")] static extern bool ShowWindow(IntPtr h, int cmd);
+  [DllImport("user32.dll")] static extern bool IsIconic(IntPtr h);
+  [DllImport("user32.dll")] static extern IntPtr GetForegroundWindow();
+  public static IntPtr Foreground() { return GetForegroundWindow(); }
+  [DllImport("kernel32.dll")] static extern uint SetThreadExecutionState(uint f);
+  // While bills are being made the PC must not go back to sleep or switch the screen off.
+  public static void KeepAwake(bool on) { SetThreadExecutionState(on ? 0x80000003u : 0x80000000u); }
+  public static void Show(IntPtr h) { ShowWindow(h, IsIconic(h) ? 9 : 5); Front(h); }
+  public static void Front(IntPtr h) { keybd_event(0x12, 0, 0, UIntPtr.Zero); keybd_event(0x12, 0, 2, UIntPtr.Zero); SetForegroundWindow(h); }
+}
+// Never takes the focus (keys must keep going to Tally), always on top, no taskbar button.
+public class NoFocusForm : Form {
+  protected override bool ShowWithoutActivation { get { return true; } }
+  protected override CreateParams CreateParams { get { CreateParams p = base.CreateParams; p.ExStyle |= 0x08000000 | 0x80 | 0x8; return p; } }
+}
+'@
+}
+$flag = Join-Path $PSScriptRoot 'overlay-on.txt'   # exists while the automation works; its first line is the step shown
+
+function Show-Overlay([int]$parent) {
+  Win32
+  Add-Type -AssemblyName System.Windows.Forms, System.Drawing
+  $C = [System.Drawing.Color]; $white = $C::White
+  # Plain notice, like a Windows system message: white card, 1 px grey border, Segoe UI, one amber stripe that slowly breathes.
+  $mk = { param($txt, $x, $y, $w, $h, $font, $pt, $col)
+    $l = New-Object System.Windows.Forms.Label; $l.Text = $txt; $l.SetBounds($x, $y, $w, $h); $l.ForeColor = $col; $l.BackColor = $white
+    $l.Font = New-Object System.Drawing.Font($font, $pt); $l }
+  $f = New-Object NoFocusForm
+  $f.FormBorderStyle = 'None'; $f.StartPosition = 'Manual'; $f.TopMost = $true; $f.BackColor = $C::FromArgb(196, 200, 207)
+  $f.ClientSize = New-Object System.Drawing.Size(640, 300)
+  $wa = [System.Windows.Forms.Screen]::PrimaryScreen.WorkingArea
+  $f.Location = New-Object System.Drawing.Point([int]($wa.Left + ($wa.Width - 640) / 2), [int]($wa.Top + ($wa.Height - 300) / 2))
+  $card = New-Object System.Windows.Forms.Panel; $card.SetBounds(1, 1, 638, 298); $card.BackColor = $white
+  $stripe = New-Object System.Windows.Forms.Panel; $stripe.SetBounds(0, 0, 8, 298)
+  $ink = $C::FromArgb(32, 33, 36); $grey = $C::FromArgb(95, 99, 104)
+  $title = & $mk 'Tally Automation Mode is ON' 36 26 580 42 'Segoe UI Semibold' 22 $ink
+  $warn = & $mk 'Please do not press any key or touch the mouse.' 36 74 580 30 'Segoe UI Semibold' 13.5 $C::FromArgb(176, 40, 30)
+  $hint = & $mk 'Kripya abhi keyboard aur mouse ko haath na lagaiye. Tally ke peeche automation apne aap kaam kar rahi hai, ho jaane par ye window khud hat jayegi.' 36 110 580 48 'Segoe UI' 10.5 $grey
+  $rule = New-Object System.Windows.Forms.Panel; $rule.SetBounds(36, 172, 566, 1); $rule.BackColor = $C::FromArgb(226, 229, 234)
+  $cap = & $mk 'Abhi' 36 186 200 20 'Segoe UI' 9 $grey
+  $status = & $mk '' 36 206 566 28 'Segoe UI Semibold' 12 $ink
+  $track = New-Object System.Windows.Forms.Panel; $track.SetBounds(36, 246, 566, 4); $track.BackColor = $C::FromArgb(233, 235, 239)
+  $block = New-Object System.Windows.Forms.Panel; $block.SetBounds(0, 0, 110, 4); $block.BackColor = $C::FromArgb(74, 90, 110); $track.Controls.Add($block)
+  $hide = New-Object System.Windows.Forms.Button; $hide.Text = 'Chhupao'; $hide.SetBounds(510, 262, 92, 26); $hide.FlatStyle = 'Flat'
+  $hide.Font = New-Object System.Drawing.Font('Segoe UI', 9); $hide.ForeColor = $grey; $hide.BackColor = $white
+  $hide.FlatAppearance.BorderColor = $C::FromArgb(196, 200, 207); $hide.Add_Click({ $f.Hide() })
+  $card.Controls.AddRange(@($stripe, $title, $warn, $hint, $rule, $cap, $status, $track, $hide)); $f.Controls.Add($card)
+  $st = @{ n = 0 }
+  $t = New-Object System.Windows.Forms.Timer; $t.Interval = 50
+  $t.Add_Tick({
+    $st.n++; $n = $st.n
+    $k = ([Math]::Sin($n / 18) + 1) / 2                                              # stripe breathes, slowly
+    $stripe.BackColor = $C::FromArgb(232, [int](140 + 45 * $k), [int](10 + 20 * $k))
+    $block.Left = [int]([Math]::Abs((($n * 8) % 912) - 456))                         # thin bar sweeps 0..456 and back
+    if ($n % 6 -eq 0) {
+      if (-not (Test-Path $flag)) { $f.Close(); return }
+      $line = Get-Content $flag -TotalCount 1 -ErrorAction SilentlyContinue
+      if ($line -and $status.Text -ne $line) { $status.Text = $line }
+    }
+    if ($n % 40 -eq 0 -and $parent -and -not (Get-Process -Id $parent -ErrorAction SilentlyContinue)) { $f.Close() }   # the script died: never stay stuck on screen
+  })
+  $t.Start(); [System.Windows.Forms.Application]::Run($f); $t.Stop()
+}
+if ($Overlay) { Show-Overlay $Parent; return }
+
+# The main script switches it on/off: a second hidden PowerShell shows the window.
+function Overlay-On($text) {
+  Win32; [Fg]::KeepAwake($true)
+  Set-Content $flag $text -Encoding UTF8
+  if ($script:ovPid -and (Get-Process -Id $script:ovPid -ErrorAction SilentlyContinue)) { return }
+  $script:ovPid = (Start-Process powershell -WindowStyle Hidden -PassThru -ArgumentList '-NoProfile', '-ExecutionPolicy', 'Bypass', '-File', "`"$PSCommandPath`"", '-Overlay', '-Parent', $PID).Id
+}
+function Overlay-Text($text) { if (Test-Path $flag) { Set-Content $flag $text -Encoding UTF8 } }
+function Overlay-Off { Remove-Item $flag -ErrorAction SilentlyContinue; if ('Fg' -as [type]) { [Fg]::KeepAwake($false) } }
+
+# This PC's network card (the one with the default route): its address is what OMS needs to wake the PC (Wake-on-LAN),
+# and whether the card is allowed to wake it.
+function Pc-Net {
+  try {
+    $ad = (Get-NetIPConfiguration | Where-Object { $_.IPv4DefaultGateway -and $_.NetAdapter.Status -eq 'Up' } | Select-Object -First 1).NetAdapter
+    $wol = try { (Get-NetAdapterPowerManagement -Name $ad.Name -ErrorAction Stop).WakeOnMagicPacket } catch { 'unknown' }
+    [pscustomobject]@{ Name = $ad.Name; Desc = $ad.InterfaceDescription; Mac = $ad.MacAddress; Wifi = ($ad.PhysicalMediaType -match '802\.11'); Wol = "$wol" }
+  } catch { $null }
+}
+
+# One-time set-up so OMS can wake this PC from sleep: tally-pc.bat -EnableWake (asks Windows for admin once).
+if ($EnableWake) {
+  $admin = ([Security.Principal.WindowsPrincipal][Security.Principal.WindowsIdentity]::GetCurrent()).IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator)
+  if (-not $admin) { Start-Process powershell -Verb RunAs -ArgumentList '-NoProfile', '-ExecutionPolicy', 'Bypass', '-File', "`"$PSCommandPath`"", '-EnableWake'; return }
+  $n = Pc-Net
+  if (-not $n) { Write-Host 'Network card nahi mila.' -ForegroundColor Red }
+  else {
+    Write-Host "Network card: $($n.Name) ($($n.Desc))   Wi-Fi: $($n.Wifi)"
+    try { Set-NetAdapterPowerManagement -Name $n.Name -WakeOnMagicPacket Enabled -ErrorAction Stop; Write-Host 'Wake on Magic Packet: ON' -ForegroundColor Green } catch { Write-Host "Ye card Wake-on-LAN nahi deta: $($_.Exception.Message)" -ForegroundColor Yellow }
+    powercfg /deviceenablewake "$($n.Desc)" | Out-Null; Write-Host 'Allow this device to wake the computer: ON' -ForegroundColor Green
+  }
+  # No password prompt after waking (the helper types into Tally, which needs the unlocked desktop).
+  powercfg /setacvalueindex SCHEME_CURRENT SUB_NONE CONSOLELOCK 0 | Out-Null; powercfg /setdcvalueindex SCHEME_CURRENT SUB_NONE CONSOLELOCK 0 | Out-Null; powercfg /setactive SCHEME_CURRENT | Out-Null
+  Write-Host 'Password after wake: OFF' -ForegroundColor Green
+  Write-Host "BIOS mein bhi 'Wake on LAN' ON hona chahiye (ek baar dekh lena). Enter dabao..."; [void][Console]::ReadLine(); return
+}
 
 # ---- e-invoice + e-way + print for the pending SSS bills (was tally-einvoice-helper.ps1) ----
 function Run-Helper([switch]$List, [int]$Max = 1) {
@@ -117,37 +228,66 @@ if (-not $function:Snap) {
 function Stop-Here($msg) { [console]::Beep(800, 600); throw "$msg  Photos: $log" }
 # What Tally shows right now, spaces removed (OCR reads the same words with random spacing).
 function Seen($name) { (Read-Screen (Snap $name)) -replace '\s', '' }
-# Bill number as OCR can read it: the digits part (OCR sometimes reads S as 5).
-function Shows-Bill($t) { $t -like ('*' + ($script:no -replace '^SSS-', '') + '*') }
+# Bill number as OCR can read it: the digits part (OCR sometimes reads S as 5). The "/" is often read as 1, l, I or |
+# (SSS-792/26-27 came out "SSS-792126-27" and the helper refused to save), so the slash may be any of those, or missing.
+function Shows-Bill($t) { $p = ($script:no -replace '^SSS-', '') -split '/'; $t -match ([regex]::Escape($p[0]) + '[/1lI|!]?' + [regex]::Escape($p[1])) }
 # The number alone is not enough: on the real Day Book photo OCR read 774 as 776. Party names
 # (bigger, letters) came out exactly, so every "is this the bill?" check wants both.
 function Shows-Party($t) { ($t -replace '[^A-Za-z0-9]', '').ToUpper().Contains($script:partyKey) }
 function Is-ThisBill($t) { (Shows-Bill $t) -and (Shows-Party $t) }
 
 # One key into Tally. $gate: a pattern Tally's screen MUST show first, or nothing is sent.
-function Key($k, $gate = $null, $what = '') {
+# Speed: Tally already in front -> 0.1 s before the key (else focus it and wait 0.7 s: Alt was lost at 0.3 s once).
+# A gate polls the screen every ~0.3 s until it shows what the key needs (up to ~3 s), so no fixed waits to guess the speed.
+# After the key: 0.2 s (-Fast) or 0.5 s plus a photo - Ctrl+A was swallowed once when the bill was still opening (SSS-750),
+# which is why the bill's own screen is waited for (and checked) before Ctrl+A.
+function Key($k, $gate = $null, $what = '', [switch]$Fast) {
   Write-Host "  key $k"
-  if (-not (Focus-Tally)) { Stop-Here 'Could not bring Tally to the front - stopped.' }
-  Start-Sleep -Milliseconds 1000
-  if ($gate -and (Seen "before $k") -notmatch $gate) { Stop-Here "Tally is not showing $what - stopped before pressing $k." }
+  if (Is-TallyFront) { Start-Sleep -Milliseconds 100 }
+  else {
+    if (-not (Focus-Tally)) { Stop-Here 'Could not bring Tally to the front - stopped.' }
+    Start-Sleep -Milliseconds 700
+  }
+  if ($gate) {
+    foreach ($n in 1..10) { $t = Seen "before $k"; if ($t -match $gate) { break }; Start-Sleep -Milliseconds 300 }
+    if ($t -notmatch $gate) { Stop-Here "Tally is not showing $what - stopped before pressing $k." }
+  }
   if (-not (Is-TallyFront)) { Stop-Here "Another window took the focus - stopped before pressing $k." }
   $sh.SendKeys($k)
-  Start-Sleep -Milliseconds 1500
+  if ($Fast) { Start-Sleep -Milliseconds 200; return }
+  Start-Sleep -Milliseconds 500
   try { [void](Snap "after $k") } catch { }
+}
+
+# After the last print: Esc x4 back to the Gateway of Tally (as the owner does by hand), then check; two more Esc if needed.
+function Back-To-Gateway {
+  Overlay-Text 'Tally ko Gateway par wapas la raha hai'
+  Key '{ESC}' -Fast; Key '{ESC}' -Fast
+  foreach ($n in 1..8) {
+    $t = Seen 'gateway'
+    if ($t -match 'GatewayofTally' -and $t -match 'BalanceSheet') { return }   # never an Esc on the Gateway itself
+    Key '{ESC}' -Fast; Start-Sleep -Milliseconds 300
+  }
+  Write-Host '>>> Tally did not come back to the Gateway - look at it.' -ForegroundColor Yellow
 }
 
 # One print from Tally's Print box: F5 sets the copies first, every time (Tally may remember the last ones).
 function Print-Once($invCopies, $ewbCopies) {
-  Key '{F5}' 'Copies' "the Print box"
-  $t = Seen 'printer-settings'
+  Key '{F5}' 'Copies' "the Print box" -Fast
+  foreach ($n in 1..8) { $t = Seen 'printer-settings'; if ($t -match 'PrinterSettings') { break }; Start-Sleep -Milliseconds 300 }
   if ($t -notmatch 'PrinterSettings') { Stop-Here 'Printer Settings did not open - stopped, nothing printed.' }
   # The e-Way line is there only when the bill has an e-way bill (owner's screens, 750 vs 751).
-  if ($t -match 'copiesfore-?Way') { Key "$invCopies~"; Key '~'; Key "$ewbCopies"; Key '^a' }
-  else { Key "$invCopies"; Key '^a' }
-  Key 'p' 'Copies' "the Print box"
-  Start-Sleep -Seconds 4   # let the job reach the printer before the next screen
+  if ($t -match 'copiesfore-?Way') { Key "$invCopies~" -Fast; Key '~' -Fast; Key "$ewbCopies" -Fast; Key '^a' -Fast }
+  else { Key "$invCopies" -Fast; Key '^a' -Fast }
+  Key 'p' 'Copies' "the Print box" -Fast
+  # Tally now shows "Printing ... 0%" over the bill. While it is up the bill behind it is dimmed and OCR cannot read it
+  # (SSS-796: "Tally is not on SSS-796 any more"), and an Esc would cancel the print. So wait until that box is gone.
+  Start-Sleep -Milliseconds 500
+  foreach ($n in 1..60) { if ((Seen 'printing') -notmatch 'Printing') { break }; Start-Sleep -Milliseconds 300 }
 }
 
+Overlay-On 'Bill ka kaam shuru ho raha hai...'
+try {
 foreach ($v in $pending | Select-Object -First $Max) {
   $no = Txt $v.VOUCHERNUMBER; $script:no = $no
   $script:partyKey = ((Txt $v.PARTYLEDGERNAME) -replace '[^A-Za-z0-9]', '').ToUpper()
@@ -161,6 +301,7 @@ foreach ($v in $pending | Select-Object -First $Max) {
   if (-not $state) { Stop-Here "$no : Tally gave no party state - stopped before touching the bill." }
   $local = $state -eq 'Maharashtra'
   Write-Host "`n== $no  $(Txt $v.PARTYLEDGERNAME)  ($state) =="
+  Overlay-Text "$no  $(Txt $v.PARTYLEDGERNAME)  -  bill khola ja raha hai"
   # Open the bill: Go To > Day Book > its date > Ctrl+F "Look for" its number > Enter. Each step checks the screen first.
   # From the Gateway, K ("Day BooK") opens the Day Book directly. Elsewhere Go To (Alt+G), tried twice:
   # once the Alt+G reached Tally as nothing at all and it stayed on the Gateway.
@@ -171,18 +312,26 @@ foreach ($v in $pending | Select-Object -First $Max) {
     if ((Seen 'go-to') -notmatch 'SavedViews|CreateVoucher') { Key '%g' }
     Key 'Day Book~' 'SavedViews|CreateVoucher' 'the Go To box'
   }
-  Key '{F2}' 'VchNo' 'the Day Book'
-  Key "$date~"
-  Key '^f' 'VchNo' 'the Day Book'
-  Key "$no~" 'Lookfor' 'the "Look for" filter box'
-  $t = Seen 'filtered'
-  # Exactly one row left: one bill number on screen, and it is this one.
+  Key '{F2}' 'VchNo' 'the Day Book' -Fast
+  Key "$date~" -Fast
+  Key '^f' 'VchNo' 'the Day Book' -Fast
+  Key "$no~" 'Lookfor' 'the "Look for" filter box' -Fast
+  # Exactly one row left: one bill number on screen, and it is this one. (The filter takes a moment: look again.)
+  foreach ($n in 1..8) {
+    $t = Seen 'filtered'
+    if ((Is-ThisBill $t) -and $t -match 'VchNo' -and [regex]::Matches($t, '\d+/\d\d-\d\d').Count -eq 1) { break }
+    Start-Sleep -Milliseconds 300
+  }
   if (-not (Is-ThisBill $t) -or $t -notmatch 'VchNo' -or [regex]::Matches($t, '\d+/\d\d-\d\d').Count -ne 1) { Stop-Here "The Day Book is not showing $no alone - stopped before opening anything." }
-  Key '~'
+  Key '~' -Fast
   # Made by hand meanwhile? (SSS-752 was, while an old list still offered it.) Never re-save a bill that has an IRN.
   if (Txt (Ask-Tally $byNo).IRN) { Stop-Here "$no already has its e-invoice (made by hand?) - stopped, nothing saved. Press Esc in Tally." }
   # Save only if Tally really shows THIS bill open (a slipped step once opened SSS-738 instead of 752, another RAMSON's).
-  $t = Seen 'before-save'
+  foreach ($n in 1..10) {
+    $t = Seen 'before-save'
+    if ((Is-ThisBill $t) -and $t -match 'Party|ledger') { break }
+    Start-Sleep -Milliseconds 300
+  }
   if (-not (Is-ThisBill $t) -or $t -notmatch 'Party|ledger') { Stop-Here "$no is not open in Tally - stopped BEFORE saving anything. Press Esc in Tally (don't save)." }
   Key '^a'
   # Two wordings: "Do you want to generate e-Invoice?" and, with an e-way bill due, "Do you want to send
@@ -192,56 +341,70 @@ foreach ($v in $pending | Select-Object -First $Max) {
   # IRN. If Tally asks for the e-invoice portal login, type it ONCE (ID, Enter, password, Ctrl+A) - only when that
   # screen really shows. A wrong password tried again and again can lock the portal account, so never a second try.
   Write-Host 'Waiting for the IRN (up to 5 min)...'
-  $irn = $null; $typed = $false
-  foreach ($i in 1..100) {
-    Start-Sleep -Seconds 3
+  Overlay-Text "$no  -  e-Invoice (IRN) ban raha hai"
+  $irn = $null; $typed = $null
+  foreach ($i in 1..200) {
+    Start-Sleep -Milliseconds 1500
     # Tally doesn't answer while a screen of its own is open - just keep waiting.
     try { $irn = Txt (Ask-Tally $byNo).IRN } catch { }
     if ($irn) { break }
-    if ($i -le 5 -or $i % 3 -eq 0) {
+    if ($i -le 4 -or $i % 6 -eq 0) {
       try { $login = (Seen 'waiting') -match 'Password' } catch { $login = $false }
-      if ($login -and $typed) { Stop-Here "$no : the e-invoice portal login did not go through (wrong ID/password?) - stopped, not tried again. Fix it in Tally." }
-      if ($login -and -not ($cfg.eiuser -and $cfg.eipass)) { [console]::Beep(1000, 900); Write-Host '>>> Tally is asking for the e-invoice login: type the ID/password in Tally yourself. Waiting...' -ForegroundColor Yellow }
+      if ($login -and $typed -and ((Get-Date) - $typed).TotalSeconds -gt 12) { Stop-Here "$no : the e-invoice portal login did not go through (wrong ID/password?) - stopped, not tried again. Fix it in Tally." }
+      if ($login -and $typed) { }   # typed a moment ago: Tally is still sending it
+      elseif ($login -and -not ($cfg.eiuser -and $cfg.eipass)) { [console]::Beep(1000, 900); Write-Host '>>> Tally is asking for the e-invoice login: type the ID/password in Tally yourself. Waiting...' -ForegroundColor Yellow }
       elseif ($login) {
         Write-Host 'Tally asks for the e-invoice login - typing it once.'
-        Key ((Plain $cfg.eiuser) + '~') 'Password' 'the e-invoice login'
-        Key (Plain $cfg.eipass) 'Password' 'the e-invoice login'
+        Key ((Plain $cfg.eiuser) + '~') 'Password' 'the e-invoice login' -Fast
+        Key (Plain $cfg.eipass) 'Password' 'the e-invoice login' -Fast
         Key '^a' 'Password' 'the e-invoice login'
-        $typed = $true
+        $typed = Get-Date
       }
     }
   }
   if (-not $irn) { Stop-Here "$no : no IRN after 5 minutes (login not done, or an error in Tally). Not printed - stopped." }
   $ewb = ''
-  foreach ($i in 1..5) {
-    try { $ewb = Txt (Ask-Tally $byNo).'EWAYBILLDETAILS.LIST'.BILLNUMBER } catch { }
-    if ($ewb) { break }
-    Start-Sleep -Seconds 3
+  if (-not $local) {   # a Maharashtra bill never prints an e-way copy, so no waiting for one
+    foreach ($i in 1..4) {
+      try { $ewb = Txt (Ask-Tally $byNo).'EWAYBILLDETAILS.LIST'.BILLNUMBER } catch { }
+      if ($ewb) { break }
+      Start-Sleep -Milliseconds 1500
+    }
   }
   Write-Host "IRN ok: $irn   e-way: $(if ($ewb) { $ewb } else { 'none' })   $(if ($local) { 'Maharashtra: invoice x2, separately' } else { 'outside MH: invoice 2 + e-way 2' })"
   # Tally first shows "e-Invoice and e-Way Bill generated successfully ... Press any key to continue"
-  # (SSS-778); the Print box comes after it. Enter only while such a box is up and the Print box is not.
-  foreach ($i in 1..3) {
-    Start-Sleep -Seconds 2
+  # (SSS-778); the Print box comes after it. ONE Enter for that box, never more: the photo taken right after the Enter
+  # still showed the box (Tally had not redrawn), so the helper pressed Enter again - and that Enter landed on the Print
+  # box, whose default button is Print. One copy printed by accident and the real print stopped (SSS-795).
+  $pressed = $false
+  foreach ($i in 1..16) {
     $t = Seen 'after-irn'
-    if ($t -match 'Pressanykey' -and $t -notmatch 'Copies') { Key '~' } else { break }
+    if ($t -match 'Copies') { break }
+    if ($t -match 'Pressanykey' -and -not $pressed) { Key '~' -Fast; $pressed = $true; Start-Sleep -Milliseconds 800 }
+    else { Start-Sleep -Milliseconds 300 }
   }
 
+  Overlay-Text "$no  -  print ho raha hai"
   if (-not $local -and $ewb) { Print-Once 2 2 }
   else {
     if (-not $local) { [console]::Beep(800, 400); Write-Host ">>> $no : Maharashtra ke bahar, par e-way bill nahi bana (bill Rs 50,000 se kam ho to theek hai) - sirf invoice 2 baar print." -ForegroundColor Yellow }
     Print-Once 1 0
     # Second copy on its own sheet: open the bill again (Day Book still filtered to it) and print once more.
-    $t = Seen 'after-first-print'
+    foreach ($n in 1..10) { $t = Seen 'after-first-print'; if (Is-ThisBill $t) { break }; Start-Sleep -Milliseconds 300 }
     if (-not (Is-ThisBill $t)) { Stop-Here "First copy printed; Tally is not on $no any more - print the second copy by hand." }
-    if ($t -notmatch 'Party|ledger') { Key '~' }
-    Key '%p' 'Party|ledger' "bill $no open"
+    if ($t -notmatch 'Party|ledger') {
+      Key '~' -Fast
+      foreach ($n in 1..8) { $t = Seen 'reopened'; if ($t -match 'Party|ledger') { break }; Start-Sleep -Milliseconds 300 }
+      if ($t -notmatch 'Party|ledger') { Stop-Here "First copy printed; $no did not open again - print the second copy by hand." }
+    }
+    Key '%p' -Fast
     # Alt+P only opens the top-bar Print menu (Current highlighted, seen on SSS-784); Enter picks Current = the Print box.
-    Key '~' 'Current' 'the Print menu'
+    Key '~' 'Current' 'the Print menu' -Fast
     Print-Once 1 0
-    Key '{ESC}'
   }
+  Back-To-Gateway
 }
+} finally { Overlay-Off }
 Write-Host "`nDone."
 
 }
@@ -250,58 +413,111 @@ if ($Once -or $List) { Run-Helper -List:$List -Max $Max; return }
 
 # ---- start-up: tell OMS, open Tally, log in (was tally-autostart.ps1) ----
 Start-Transcript -Path "$PSScriptRoot\tally-pc-log.txt" -Force | Out-Null
-# Ask first, with a small animated window: fades in, a pulsing banner and a bar that runs down for $Seconds.
-# No answer in time = Yes. No = nothing is touched (no hello, no Tally, no keys).
-function Ask-Start([int]$Seconds = 20) {
+# One small window for every question to the person at this PC: white card, amber stripe, Segoe UI, buttons.
+# Returns the number of the button pressed (0 = first). $Seconds > 0: after that long the $Default button is taken for them.
+function Notice([string]$Heading, [string]$Body, [string[]]$Buttons, [int]$Seconds = 0, [int]$Default = 0) {
+  Win32
   Add-Type -AssemblyName System.Windows.Forms, System.Drawing
-  $ui = [System.Windows.Forms.Application]; $ui::EnableVisualStyles()
+  [System.Windows.Forms.Application]::EnableVisualStyles()
+  $C = [System.Drawing.Color]; $white = $C::White; $ink = $C::FromArgb(32, 33, 36); $grey = $C::FromArgb(95, 99, 104)
+  $bodyFont = New-Object System.Drawing.Font('Segoe UI', 10.5)
+  $textH = [System.Windows.Forms.TextRenderer]::MeasureText($Body, $bodyFont, (New-Object System.Drawing.Size(470, 2000)), 'WordBreak').Height + 8
+  $h = 24 + 34 + 12 + $textH + 16 + $(if ($Seconds) { 40 } else { 0 }) + 52 + 16
   $f = New-Object System.Windows.Forms.Form
-  $f.Text = 'Tally PC automation'; $f.StartPosition = 'CenterScreen'; $f.TopMost = $true; $f.Opacity = 0
-  $f.FormBorderStyle = 'FixedDialog'; $f.ControlBox = $false; $f.ClientSize = New-Object System.Drawing.Size(480, 250)
-  $f.Font = New-Object System.Drawing.Font('Segoe UI', 10); $f.BackColor = [System.Drawing.Color]::White
-  $band = New-Object System.Windows.Forms.Label
-  $band.Text = '  Tally Automation ON hone wali hai'; $band.Dock = 'Top'; $band.Height = 62; $band.TextAlign = 'MiddleLeft'
-  $band.ForeColor = [System.Drawing.Color]::White; $band.Font = New-Object System.Drawing.Font('Segoe UI', 14, [System.Drawing.FontStyle]::Bold)
-  $msg = New-Object System.Windows.Forms.Label
-  $msg.Text = "Tally khulega, company ka login hoga aur bills ke e-invoice apne aap banenge.`nAap kuch type mat karna jab tak chal raha ho."
-  $msg.SetBounds(20, 76, 440, 60)
-  $left = New-Object System.Windows.Forms.Label; $left.SetBounds(20, 140, 440, 24); $left.ForeColor = [System.Drawing.Color]::DimGray
-  $bar = New-Object System.Windows.Forms.ProgressBar; $bar.SetBounds(20, 168, 440, 10); $bar.Maximum = $Seconds * 10; $bar.Value = $bar.Maximum
-  $yes = New-Object System.Windows.Forms.Button; $yes.Text = 'Haan, shuru karo'; $yes.SetBounds(160, 196, 170, 38); $yes.DialogResult = 'Yes'
-  $yes.BackColor = [System.Drawing.Color]::FromArgb(0, 120, 212); $yes.ForeColor = [System.Drawing.Color]::White; $yes.FlatStyle = 'Flat'
-  $no = New-Object System.Windows.Forms.Button; $no.Text = 'Nahi'; $no.SetBounds(340, 196, 120, 38); $no.DialogResult = 'No'
-  $f.Controls.AddRange(@($msg, $left, $bar, $yes, $no, $band)); $f.AcceptButton = $yes; $f.CancelButton = $no
-  $t = New-Object System.Windows.Forms.Timer; $t.Interval = 100; $st = @{ n = 0 }
+  $f.Text = 'Tally PC automation'; $f.FormBorderStyle = 'FixedDialog'; $f.ControlBox = $false; $f.TopMost = $true; $f.BackColor = $white
+  $f.ClientSize = New-Object System.Drawing.Size(560, $h); $f.StartPosition = 'Manual'
+  $wa = [System.Windows.Forms.Screen]::PrimaryScreen.WorkingArea
+  $f.Location = New-Object System.Drawing.Point([int]($wa.Left + ($wa.Width - 560) / 2), [int]($wa.Top + ($wa.Height - $h) / 2))
+  $f.Add_Shown({ [Fg]::Front($f.Handle); $f.Activate() })
+  $stripe = New-Object System.Windows.Forms.Panel; $stripe.SetBounds(0, 0, 8, $h); $stripe.BackColor = $C::FromArgb(232, 160, 20)
+  $title = New-Object System.Windows.Forms.Label; $title.Text = $Heading; $title.SetBounds(30, 22, 510, 34); $title.ForeColor = $ink
+  $title.Font = New-Object System.Drawing.Font('Segoe UI Semibold', 15)
+  $txt = New-Object System.Windows.Forms.Label; $txt.Text = $Body; $txt.SetBounds(30, 68, 500, $textH + 4); $txt.Font = $bodyFont; $txt.ForeColor = $ink
+  $f.Controls.AddRange(@($stripe, $title, $txt))
+  $y = 68 + $textH + 20
+  if ($Seconds) {
+    $left = New-Object System.Windows.Forms.Label; $left.SetBounds(30, $y, 500, 20); $left.Font = New-Object System.Drawing.Font('Segoe UI', 9); $left.ForeColor = $grey
+    $track = New-Object System.Windows.Forms.Panel; $track.SetBounds(30, ($y + 24), 500, 3); $track.BackColor = $C::FromArgb(233, 235, 239)
+    $bar = New-Object System.Windows.Forms.Panel; $bar.SetBounds(0, 0, 500, 3); $bar.BackColor = $C::FromArgb(74, 90, 110); $track.Controls.Add($bar)
+    $f.Controls.AddRange(@($left, $track)); $y += 40
+  }
+  $st = @{ pick = $Default; n = 0 }
+  $gap = 8; $bw = [Math]::Min(150, [int]((500 - $gap * ($Buttons.Count - 1)) / $Buttons.Count)); $x = 530 - ($bw * $Buttons.Count + $gap * ($Buttons.Count - 1))
+  for ($i = 0; $i -lt $Buttons.Count; $i++) {
+    $b = New-Object System.Windows.Forms.Button; $b.Text = $Buttons[$i]; $b.SetBounds($x, $y, $bw, 36); $b.Tag = $i; $b.FlatStyle = 'Flat'
+    $b.Font = New-Object System.Drawing.Font('Segoe UI Semibold', 9.5)
+    if ($i -eq $Default) { $b.BackColor = $C::FromArgb(45, 62, 80); $b.ForeColor = $white; $b.FlatAppearance.BorderColor = $C::FromArgb(45, 62, 80); $f.AcceptButton = $b }
+    else { $b.BackColor = $white; $b.ForeColor = $ink; $b.FlatAppearance.BorderColor = $C::FromArgb(196, 200, 207) }
+    $b.Add_Click({ param($s, $e) $st.pick = $s.Tag; $f.Close() })
+    $f.Controls.Add($b); $x += $bw + $gap
+  }
+  $t = New-Object System.Windows.Forms.Timer; $t.Interval = 100
   $t.Add_Tick({
-    $st.n++; $n = $st.n
-    if ($f.Opacity -lt 1) { $f.Opacity = [Math]::Min(1, $f.Opacity + 0.1) }      # fade in
-    $k = [Math]::Abs([Math]::Sin($n / 6))                                         # pulsing banner
-    $band.BackColor = [System.Drawing.Color]::FromArgb(0, [int](100 + 40 * $k), [int](190 + 40 * $k))
-    $bar.Value = [Math]::Max(0, $bar.Maximum - $n)
-    $left.Text = "$([Math]::Ceiling(($bar.Maximum - $n) / 10)) second mein jawab nahi aaya to apne aap shuru ho jayega."
-    if ($n -ge $bar.Maximum) { $f.DialogResult = 'Yes' }
+    $st.n++
+    if (-not $Seconds) { return }
+    $rest = $Seconds - $st.n / 10
+    $left.Text = "$([int][Math]::Ceiling($rest)) second mein jawab nahi aaya to '$($Buttons[$Default])' maana jayega."
+    $bar.Width = [int](500 * [Math]::Max([double]0, $rest) / $Seconds)
+    if ($rest -le 0) { $f.Close() }
   })
   $t.Start(); [System.Media.SystemSounds]::Asterisk.Play()
-  $r = $f.ShowDialog(); $t.Stop(); $f.Dispose()
-  $r -eq 'Yes'
+  [void]$f.ShowDialog(); $t.Stop(); $f.Dispose()
+  $st.pick
 }
-if (-not (Ask-Start)) { Write-Host 'Cancelled by the user - nothing done.'; return }
+
+# Bills waiting in Tally (read from the helper's -List text) as a short list, and a rough time for them.
+$script:secPerBill = 70   # learned from real runs below
+function Parse-Bills($text) {
+  @($text -split "\r?\n" | ForEach-Object { if ($_ -match '^\s*\d{8}\s+(SSS-\S+)\s+(.*?)\s+\(([^)]*)\)\s*$') { [pscustomobject]@{ No = $Matches[1]; Party = $Matches[2]; State = $Matches[3] } } } | Sort-Object No -Unique)
+}
+function Bills-Text($bills) {
+  $lines = @($bills | Select-Object -First 8 | ForEach-Object { "  -  $($_.No)    $($_.Party)  ($($_.State))" })
+  if ($bills.Count -gt 8) { $lines += "  ...  aur $($bills.Count - 8) bill" }
+  $lines -join "`n"
+}
+function Eta($n) { "kareeb $([int][Math]::Ceiling(($n * $script:secPerBill + 25) / 60)) minute" }
+
+# Tally open but not on screen (behind other windows, or minimised)? Bring it to the front; Alt+Tab if that did not work.
+function Show-Tally {
+  $p = Tally-Proc; if (-not $p) { return }
+  Win32
+  [Fg]::Show($p.MainWindowHandle)
+  Start-Sleep -Milliseconds 400
+  if ([Fg]::Foreground() -ne $p.MainWindowHandle) { (New-Object -ComObject WScript.Shell).SendKeys('%{TAB}'); Start-Sleep -Milliseconds 500 }
+}
+if ((Notice 'Tally Automation ON hone wali hai' "Tally khulega, company ka login hoga aur bills ke e-invoice apne aap banenge.`nAap kuch type mat karna jab tak chal raha ho." @('Haan, shuru karo', 'Nahi') 20 0) -ne 0) { Write-Host 'Cancelled by the user - nothing done.'; return }
 
 # Make it start by itself at every logon: a shortcut in the Startup folder (no admin needed).
-try { schtasks /delete /tn TallyAutoStart /f *> $null } catch { }   # the old two-file set-up, if it was installed
 $lnk = Join-Path ([Environment]::GetFolderPath('Startup')) 'Tally PC.lnk'
 if (-not (Test-Path $lnk)) { $s = (New-Object -ComObject WScript.Shell).CreateShortcut($lnk); $s.TargetPath = "$PSScriptRoot\tally-pc.bat"; $s.WorkingDirectory = $PSScriptRoot; $s.Save(); Write-Host 'Added to Startup: it will run by itself at every logon.' }
 
+function Hello-Once {
+  try {
+    $r = Invoke-RestMethod -Method Post -Uri "$($cfg.oms)/api/tally/pc-hello" -Headers @{ 'x-tally-key' = $cfg.key } -ContentType 'application/json' -Body (@{ mac = (Pc-Net).Mac } | ConvertTo-Json) -TimeoutSec 10
+    $r.data.url
+  } catch { $null }
+}
 function Hello {
   foreach ($i in 1..20) {   # the network may still be coming up right after power-on
-    try { $r = Invoke-RestMethod -Method Post -Uri "$($cfg.oms)/api/tally/pc-hello" -Headers @{ 'x-tally-key' = $cfg.key } -TimeoutSec 10; Write-Host "OMS knows us as $($r.data.url)"; return }
-    catch { Write-Host "OMS not reachable yet ($($_.Exception.Message))"; Start-Sleep -Seconds 15 }
+    $u = Hello-Once
+    if ($u) { Write-Host "OMS knows us as $u"; return }
+    Write-Host 'OMS not reachable yet'; Start-Sleep -Seconds 15
   }
+}
+# Can OMS wake this PC from sleep? Say so in the window.
+function Wake-Check {
+  $n = Pc-Net
+  if (-not $n) { return }
+  if ($n.Wol -eq 'Enabled') { Write-Host "Wake-on-LAN taiyaar ($($n.Name)): sleep mein ho to OMS is PC ko jagaa sakta hai." -ForegroundColor Green }
+  elseif ($n.Wol -eq 'Disabled') { Write-Host ">>> Wake-on-LAN band hai: PC sleep mein ho to OMS use jagaa nahi payega. Ek baar chalao: tally-pc.bat -EnableWake" -ForegroundColor Yellow }
+  else { Write-Host 'Wake-on-LAN ki halat dikh nahi rahi (admin ke bina Windows batata nahi). Sleep se PC na jaage to ek baar chalao: tally-pc.bat -EnableWake' -ForegroundColor Yellow }
+  if ($n.Wifi) { Write-Host '>>> Ye PC Wi-Fi par hai: Wake-on-LAN Wi-Fi par aksar kaam nahi karta. LAN cable lagana behtar hai.' -ForegroundColor Yellow }
 }
 function Tally-Answers { try { [void](Invoke-WebRequest 'http://localhost:9000' -UseBasicParsing -TimeoutSec 5); $true } catch { $false } }
 function Tally-Proc { Get-Process | Where-Object { $_.ProcessName -like 'tally*' -and $_.MainWindowHandle -ne 0 } | Select-Object -First 1 }
 
-function Start-Tally {
+function Start-Tally { Overlay-On 'Tally khul raha hai aur login ho raha hai...'; try { Start-TallyKeys } finally { Overlay-Off } }
+function Start-TallyKeys {
   # ponytail: blind keystrokes (a startup screen has nothing dangerous to hit); if Tally's start screens change, fix here.
   # The owner's hand routine: drag the 'tally data' folder onto the Tally icon = start Tally with that folder as its argument.
   $desks = @([Environment]::GetFolderPath('Desktop'), [Environment]::GetFolderPath('CommonDesktopDirectory')) | Where-Object { $_ -and (Test-Path $_) }
@@ -321,6 +537,11 @@ function Start-Tally {
   [void]$sh.AppActivate($p.Id); Start-Sleep -Seconds 1
   $sh.SendKeys((Plain $cfg.user) + '~'); Start-Sleep -Seconds 1
   $sh.SendKeys((Plain $cfg.pass) + '~')
+  # Tally opens on the last date it was used: once the company is open, F2 on the Gateway sets today's date (like the owner does by hand).
+  foreach ($w in 1..40) { if (Tally-Answers) { break }; Start-Sleep -Seconds 3 }
+  Start-Sleep -Seconds 3; [void]$sh.AppActivate($p.Id); Start-Sleep -Seconds 1
+  $sh.SendKeys('{F2}'); Start-Sleep -Seconds 2
+  $sh.SendKeys((Get-Date).ToString('d-M-yyyy') + '~')
 }
 # "Start Tally" pressed in OMS? Asked every round of the watch below.
 function Start-Asked { try { (Invoke-RestMethod -Method Post -Uri "$($cfg.oms)/api/tally/pc-poll" -Headers @{ 'x-tally-key' = $cfg.key } -TimeoutSec 10).data.start } catch { $false } }
@@ -338,23 +559,61 @@ public static class Idle {
 }
 '@
 
+Wake-Check
 Write-Host "Watching Tally for bills without an e-invoice (every $EverySeconds s). Close this window to stop." -ForegroundColor Cyan
+$later = $null; $approved = $false   # $later: when the person said "start later"; $approved: they agreed, so the rest of the bills just go through
+$lastLoop = Get-Date; $loops = 0
 while ($true) {
   Start-Sleep -Seconds $EverySeconds
+  # Back from sleep (the loop was frozen) or every minute: tell OMS this PC's address again - DHCP may have given it a new one.
+  $loops++
+  if (((Get-Date) - $lastLoop).TotalSeconds -gt 45 -or $loops % 6 -eq 0) { [void](Hello-Once) }
+  $lastLoop = Get-Date
   if (Start-Asked) {
     if (Tally-Proc) { Write-Host 'Start Tally asked from OMS - Tally is already open.' }
     else { try { Start-Tally; Hello } catch { Write-Host "Start Tally failed: $($_.Exception.Message)" -ForegroundColor Red } }
   }
-  if ([Idle]::Seconds() -lt $IdleSeconds) { continue } # someone is using this PC
+  # Tally was closed (by someone, or it crashed)? Ask once; Yes (or no answer) reopens it, No = leave it
+  # closed until Tally is open again (a backup or update needs it closed).
+  if (Tally-Proc) { $declined = $false }
+  elseif (-not $declined) {
+    if ((Notice 'Tally band ho gaya hai' "Tally dobara kholna hai? Company ka login bhi apne aap hoga.`nNahi dabane par Tally band hi rahega." @('Haan, kholo', 'Nahi') 20 0) -eq 0) {
+      try { Start-Tally; Hello } catch { Write-Host "Reopening Tally failed: $($_.Exception.Message)" -ForegroundColor Red; $declined = $true }
+    } else { $declined = $true }
+  }
+  if ($later -and (Get-Date) -lt $later) { continue }   # they chose "later": wait, whatever is posted meanwhile
   try {
-    $list = Run-Helper -List 6>&1 | Out-String # read-only: asks Tally which bills are pending
+    $pendingText = Run-Helper -List 6>&1 | Out-String # read-only: asks Tally which bills are pending
   } catch {
     continue # Tally closed or busy - try again next round
   }
-  if ($list -match 'Koi bill') { continue }
-  Write-Host "`n$(Get-Date -Format 'HH:mm:ss')  Pending:`n$list" -ForegroundColor Yellow
+  if ($pendingText -match 'Koi bill') { $approved = $false; $later = $null; continue }
+  $bills = @(Parse-Bills $pendingText)   # @(): a single bill comes back as one object, which has no .Count
+  if (-not $bills.Count) { continue }
+  Write-Host "`n$(Get-Date -Format 'HH:mm:ss')  Pending:`n$pendingText" -ForegroundColor Yellow
+
+  if (-not $approved) {
+    if ($later) {
+      # The chosen time is up: warn, then start by itself.
+      $later = $null
+      [void](Notice 'Apna kaam save kar lijiye' "Tally automation ab shuru hone wali hai, kyunki Tally mein ye sales bill banane hain:`n`n$(Bills-Text $bills)`n`nLagne wala time: $(Eta $bills.Count).`nPlease save your work now." @('Abhi shuru karo') 20 0)
+    }
+    elseif ([Idle]::Seconds() -lt $IdleSeconds) {
+      # Someone is working at this PC: tell them what is waiting and let them choose.
+      $pick = Notice 'Tally mein sales bill banana hai' "OMS se ye bill post hue hain:`n`n$(Bills-Text $bills)`n`nLagne wala time: $(Eta $bills.Count).`nProceed dabane par automation shuru hogi, tab koi key ya mouse mat dabaiye." @('Proceed', 'Later') 60 0
+      if ($pick -eq 1) {
+        $mins = 0, 1, 5, 10, 15
+        $when = Notice 'Automation kab shuru karni hai?' "Jo bhi waqt chunoge, utne waqt baad pehle ek yaad dilane wala popup aayega, phir automation shuru hogi." @('Abhi (Now)', '1 min baad', '5 min baad', '10 min baad', '15 min baad') 60 2
+        if ($mins[$when] -gt 0) { $later = (Get-Date).AddMinutes($mins[$when]); Write-Host "Later: $($mins[$when]) min (till $($later.ToString('HH:mm')))"; continue }
+      }
+    }
+    $approved = $true
+  }
+  Show-Tally
+  $sw = [Diagnostics.Stopwatch]::StartNew(); $count = $bills.Count
   try {
-    Run-Helper
+    Run-Helper -Max 50   # all that are waiting, one after the other
+    $script:secPerBill = [int][Math]::Min([double]300, [Math]::Max([double]30, ($script:secPerBill + $sw.Elapsed.TotalSeconds / $count) / 2))
   } catch {
     [console]::Beep(600, 900)
     Write-Host "STOPPED: $($_.Exception.Message)" -ForegroundColor Red

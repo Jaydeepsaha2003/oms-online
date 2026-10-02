@@ -35,6 +35,10 @@ class TallyConfigDto {
   @IsOptional() @IsString() gstLockDate?: string | null;
 }
 
+class PcHelloDto {
+  @IsOptional() @IsString() mac?: string;
+}
+
 class MappingItemDto {
   @IsInt() customerId!: number;
   @IsOptional() @IsString() ledgerGuid!: string | null;
@@ -78,8 +82,9 @@ export class TallyController {
   @Public()
   @SkipThrottle()
   @Post('pc-hello')
-  async pcHello(@Req() req: Request, @Headers('x-tally-key') key = '') {
+  async pcHello(@Req() req: Request, @Headers('x-tally-key') key = '', @Body() body?: PcHelloDto) {
     const ip = pcCaller(req, key);
+    await this.svc.savePcMac(body?.mac); // for Wake-on-LAN
     const cfg = await this.svc.getConfig();
     const url = `http://${ip}:9000`;
     if (cfg.url !== url) await this.svc.saveConfig({ ...cfg, url });
@@ -92,6 +97,7 @@ export class TallyController {
   @Audit({ action: ACTIONS.UPDATE, resource: R, description: 'Asked the Tally PC to start Tally' })
   async start() {
     await this.svc.requestStart();
+    void this.svc.wake().catch(() => undefined); // the PC may be asleep: its script only sees the request once it is awake
     return { requested: true };
   }
 

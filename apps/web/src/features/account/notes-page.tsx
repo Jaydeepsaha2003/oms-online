@@ -7,6 +7,7 @@ import {
   Layers,
   Link2,
   Loader2,
+  Pencil,
   Plus,
   Printer,
   Send,
@@ -14,6 +15,7 @@ import {
   Shuffle,
   Trash2,
   Undo2,
+  X,
 } from 'lucide-react';
 import { toast } from 'sonner';
 import {
@@ -125,6 +127,8 @@ type Line = NoteItemInput & {
   productRate?: number | null;
   designRate?: number | null;
   dispatchRate?: number | null;
+  /** The picked sale's quantities, kept so an edited line is checked against them too. */
+  limits?: QtyLimits | null;
 };
 
 /** The quantity boxes on the add-line bar. */
@@ -242,6 +246,8 @@ export function NotesPage() {
   const [party, setParty] = useState('');
   const [lines, setLines] = useState<Line[]>([]);
   const [entry, setEntry] = useState({ ...EMPTY_ENTRY });
+  /** The line being edited in the add bar, if any. */
+  const [editing, setEditing] = useState<number | null>(null);
 
   // Header charges / rates.
   const [packing, setPacking] = useState('');
@@ -410,6 +416,7 @@ export function NotesPage() {
   const onPartyChange = (name: string) => {
     setParty(name);
     setLines([]);
+    setEditing(null);
     setEntry({ ...EMPTY_ENTRY });
     setInvoiceChoice({});
     setAskInvoice(null);
@@ -424,6 +431,7 @@ export function NotesPage() {
   const resetForNew = () => {
     setEditingCode(null);
     setLines([]);
+    setEditing(null);
     setEntry({ ...EMPTY_ENTRY });
     setOtherCharges('');
     // A fresh note asks about each invoice again — the previous note's answers
@@ -563,15 +571,14 @@ export function NotesPage() {
         `${over[1]} is more than the ${entry.limits![over[0]]} sold on ${entry.refInvNo || 'this sale'}.`,
       );
     const dup = lines.some(
-      (l) =>
+      (l, idx) =>
+        idx !== editing &&
         (l.refInvNo ?? '') === entry.refInvNo &&
         l.productName === entry.product &&
         (l.design ?? '') === entry.design,
     );
     if (dup) return toast.error('This item already exists (same Ref Inv + Product + Design).');
-    setLines((prev) => [
-      ...prev,
-      {
+    const line: Line = {
         dispatchId: entry.dispatchId || undefined,
         refInvNo: entry.refInvNo || undefined,
         productName: entry.product,
@@ -589,12 +596,51 @@ export function NotesPage() {
         designRate: entry.designRate,
         dispatchRate: entry.dispatchRate,
         invDate: entry.invDate,
-      },
-    ]);
+        limits: entry.limits,
+    };
+    setLines((prev) => (editing != null ? prev.map((l, idx) => (idx === editing ? line : l)) : [...prev, line]));
+    if (editing != null) toast.success('Line updated');
+    setEditing(null);
     setEntry({ ...EMPTY_ENTRY });
   };
 
-  const removeLine = (i: number) => setLines((prev) => prev.filter((_, idx) => idx !== i));
+  /** Open an added line in the add bar; ADD becomes UPDATE until saved or cancelled. */
+  const editLine = (i: number) => {
+    const l = lines[i];
+    const str = (v?: number | null) => (v == null ? '' : String(v));
+    setEditing(i);
+    setEntry({
+      ...EMPTY_ENTRY,
+      product: l.productName ?? '',
+      design: l.design ?? '',
+      unit: l.unit ?? '',
+      bags: str(l.bags),
+      pcs: str(l.pcs),
+      kgs: str(l.kgs),
+      box: str(l.box),
+      price: str(l.price),
+      comment: l.comment ?? '',
+      refInvNo: l.refInvNo ?? '',
+      dispatchId: l.dispatchId ?? 0,
+      pCategory: l.pCategory ?? '',
+      gstRate: l.gstRate ?? 0,
+      invDate: l.invDate ?? '',
+      productRate: l.productRate ?? null,
+      designRate: l.designRate ?? null,
+      dispatchRate: l.dispatchRate ?? null,
+      limits: l.limits ?? null,
+    });
+  };
+  const cancelEdit = () => {
+    setEditing(null);
+    setEntry({ ...EMPTY_ENTRY });
+  };
+
+  const removeLine = (i: number) => {
+    setLines((prev) => prev.filter((_, idx) => idx !== i));
+    if (editing === i) cancelEdit();
+    else if (editing != null && i < editing) setEditing(editing - 1);
+  };
 
   // ── save ──────────────────────────────────────────────────────────────────
 
@@ -640,7 +686,7 @@ export function NotesPage() {
         remarks: remarks || undefined,
         noBill,
         noBillWithoutGst,
-        items: lines.map((l) => ({ ...l, gstRate: l.gstRate })),
+        items: lines.map(({ limits: _limits, ...l }) => ({ ...l, gstRate: l.gstRate })),
       },
       {
         onSuccess: (res) => {
@@ -736,6 +782,7 @@ export function NotesPage() {
       setNoBill(n.noBill);
       setNoBillWithoutGst(false);
       setRemarks(n.remarks ?? '');
+      setEditing(null);
       setLines(
         n.items.map((it) => ({
           dispatchId: it.dispatchId,
@@ -1325,14 +1372,19 @@ export function NotesPage() {
                   )}
                 />
               </div>
-              <div className="flex items-end">
+              <div className="flex items-end gap-1.5">
                 <Button
                   type="button"
                   onClick={addLine}
-                  className="h-9 w-full rounded-[4px] font-bold"
+                  className="h-9 flex-1 rounded-[4px] font-bold"
                 >
-                  <Plus className="size-3.5" /> ADD
+                  {editing != null ? <Check className="size-3.5" /> : <Plus className="size-3.5" />} {editing != null ? 'UPDATE' : 'ADD'}
                 </Button>
+                {editing != null && (
+                  <Button type="button" variant="outline" onClick={cancelEdit} className="h-9 rounded-[4px]" aria-label="Cancel edit" title="Cancel edit">
+                    <X className="size-3.5" />
+                  </Button>
+                )}
               </div>
             </div>
             <Input
@@ -1476,6 +1528,16 @@ export function NotesPage() {
                         <Button
                           variant="ghost"
                           size="icon"
+                          className="size-7"
+                          onClick={() => editLine(i)}
+                          title="Edit this line"
+                          aria-label={`Edit line ${i + 1}`}
+                        >
+                          <Pencil className="size-4" />
+                        </Button>
+                        <Button
+                          variant="ghost"
+                          size="icon"
                           className="size-7 text-destructive hover:text-destructive"
                           onClick={() => removeLine(i)}
                           aria-label={`Remove line ${i + 1}`}
@@ -1560,6 +1622,15 @@ export function NotesPage() {
                           <ArrowUpRight className="size-4" />
                         </Button>
                       )}
+                      <Button
+                        variant="ghost"
+                        size="icon"
+                        className="size-8"
+                        onClick={() => editLine(i)}
+                        aria-label={`Edit line ${i + 1}`}
+                      >
+                        <Pencil className="size-4" />
+                      </Button>
                       <Button
                         variant="ghost"
                         size="icon"

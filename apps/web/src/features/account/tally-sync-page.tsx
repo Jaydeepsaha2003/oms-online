@@ -30,6 +30,7 @@ import { Combobox } from '@/components/ui/combobox';
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from '@/components/ui/dialog';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
+import { POST_WAIT_MS } from './use-tally-post';
 
 const KEY = ['tally', 'status'] as const;
 const MAP_KEY = ['tally', 'mapping'] as const;
@@ -282,7 +283,7 @@ function PostQueue({ canPost, canManage }: { canPost: boolean; canManage: boolea
     qc.invalidateQueries({ queryKey: QUEUE_KEY });
     qc.invalidateQueries({ queryKey: RECON_KEY });
   };
-  const post = useMutation({ mutationFn: (code: string) => http.post<TallyPostResult>('/tally/post', { code }), onSuccess: done, onError: (e) => toast.error(getApiErrorMessage(e)) });
+  const post = useMutation({ mutationFn: (code: string) => http.post<TallyPostResult>('/tally/post', { code }, { timeout: POST_WAIT_MS }), onSuccess: done, onError: (e) => toast.error(getApiErrorMessage(e)) });
   const resolve = useMutation({ mutationFn: (code: string) => http.post<TallyPostResult>('/tally/resolve', { code }), onSuccess: done, onError: (e) => toast.error(getApiErrorMessage(e)) });
   /** Ticked bills, by code, for "Post selected". */
   const [picked, setPicked] = useState<Set<string>>(new Set());
@@ -323,7 +324,7 @@ function PostQueue({ canPost, canManage }: { canPost: boolean; canManage: boolea
     try {
       for (let i = 0; i < list.length; i++) {
         setBulk({ done: i, total: list.length });
-        const r = await http.post<TallyPostResult>('/tally/post', { code: list[i].code });
+        const r = await http.post<TallyPostResult>('/tally/post', { code: list[i].code }, { timeout: POST_WAIT_MS });
         done(r);
         setPicked((prev) => {
           const next = new Set(prev);

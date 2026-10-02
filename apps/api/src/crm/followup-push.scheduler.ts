@@ -70,7 +70,10 @@ export class FollowupPushScheduler {
            * The key carries the promised date, so a genuinely re-promised
            * follow-up is a NEW event and still gets through.
            */
-          const key = `followup:${f.id}:${f.promisedAt ?? 'nodate'}`;
+          // …and the reminder interval it falls in, so each "remind every N
+          // mins" round is its own event rather than being swallowed as a repeat.
+          const gapMs = (f.reminderIntervalMins ?? settings.intervalMins) * 60_000;
+          const key = `followup:${f.id}:${f.promisedAt ?? 'nodate'}:${Math.floor(Date.now() / gapMs)}`;
           const untold = await this.ledger.filterUntold(key, awake);
           if (!untold.length) {
             // Everyone has already had this one; still mark it so the scheduler

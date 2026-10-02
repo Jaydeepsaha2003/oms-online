@@ -192,3 +192,12 @@ test('SSS-781: tax as Tally computes it - packing spread over lines by value, ea
   assert.equal(l['SGST'], 714.16);
   assert.equal(l['ROUND OFF'], -0.32);
 });
+
+test('final destination: the destination the accountant typed for the party wins; the fallback is the city alone, not "CITY,STATE" (BAJAJ: MANGOLPURI/DELHI, not DELHI,DELHI)', () => {
+  const { salesVoucherXml } = require('./tally-voucher.ts');
+  const v = { vchNo: 'SSS-791/26-27', date: new Date(2026, 9, 1), party: 'BAJAJ SALES CORPORATION', lines: [], ledgers: [], total: 14_700, shippedBy: null, deliveryNote: null };
+  const dest = (p: object) => /<BASICFINALDESTINATION>([^<]*)</.exec(salesVoucherXml(v, { name: 'BAJAJ SALES CORPORATION', state: 'Delhi', ...p }))?.[1];
+  assert.equal(dest({ city: 'Delhi', destination: 'MANGOLPURI/DELHI' }), 'MANGOLPURI/DELHI');
+  assert.equal(dest({ city: 'Delhi' }), 'DELHI');
+  assert.equal(dest({ city: null }), 'DELHI'); // no city either: the state, so the field is never empty
+});

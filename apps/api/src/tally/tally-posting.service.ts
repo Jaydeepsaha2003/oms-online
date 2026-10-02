@@ -155,13 +155,16 @@ export class TallyPostingService {
       ).map((c) => [c.id, c]),
     );
     const { gstLockDate } = await this.tally.getConfig();
+    // Party (Tally ledger name, upper case) -> the destination its own Tally bills carry. Written by scripts/set-tally-destinations.cjs.
+    const destRow = await this.prisma.appConfig.findUnique({ where: { key: 'TALLY_DESTINATIONS' } });
+    const destinations = new Map(Object.entries(destRow ? (JSON.parse(destRow.value) as Record<string, string>) : {}));
     // End of the filed day, local time: a bill dated that day is inside the filed period.
     const lockedUpTo = gstLockDate ? new Date(`${gstLockDate}T23:59:59.999`) : null;
     // Transporter name → GSTIN/TRANSIN, for the e-way bill details sent with each bill.
     const transporters = new Map(
       (await this.prisma.transporter.findMany({ where: { gstin: { not: null } }, select: { name: true, gstin: true } })).map((t) => [t.name.trim().toUpperCase(), t.gstin!]),
     );
-    return { company, companyState: company.state ?? '', ledgers, customers, lockedUpTo, transporters };
+    return { company, companyState: company.state ?? '', ledgers, customers, lockedUpTo, transporters, destinations };
   }
 
   /** The Tally party for an OMS customer, read live — or why there is none usable. */
@@ -183,6 +186,7 @@ export class TallyPostingService {
       address: ledger?.address,
       pincode: ledger?.pincode,
       city: cust?.city,
+      destination: ctx.destinations.get((ledger?.name ?? customerName).trim().toUpperCase()),
     };
     return { party, partyBlock };
   }
@@ -335,6 +339,7 @@ export class TallyPostingService {
     if (tv?.status === 'POSTING' || tv?.status === 'UNKNOWN') {
       throw new ConflictException(`An earlier attempt for ${c.code} has no clear answer yet. Press "Check again" — OMS looks in Tally first.`);
     }
+    await this.tally.wakeIfAsleep(); // the Tally PC may be asleep: wake it, then post
     const ctx = await this.context();
     const b = this.build(c, ctx);
     if (!b.built) throw new BadRequestException(b.blocks.join(' '));

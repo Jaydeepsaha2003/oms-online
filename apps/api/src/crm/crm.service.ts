@@ -419,16 +419,26 @@ export class CrmService {
     return rows.map((r) => this.toDto(r)).filter((f) => computeFollowupState(f, now, settings.leadDays).isActiveNudge);
   }
 
-  /** Same as due(), but only followups that haven't had a push sent for this cycle yet. */
+  /**
+   * Same as due(), but only follow-ups whose last push is at least their
+   * reminder interval old ("Remind every N mins"), and only in working hours.
+   * Pushing once per follow-up meant a reminder still open at noon went quiet
+   * for the rest of the day.
+   */
   async dueUnpushed(): Promise<FollowupDto[]> {
+    const settings = await this.getSettings();
+    const now = new Date();
+    const hour = now.getHours();
+    if (hour < settings.workStartHour || hour >= settings.workEndHour) return [];
     const rows = await this.prisma.followup.findMany({
-      where: { status: 'OPEN', pushSentAt: null },
+      where: { status: 'OPEN' },
       include: INCLUDE,
       orderBy: [{ promisedAt: 'asc' }],
     });
-    const settings = await this.getSettings();
-    const now = new Date();
-    return rows.map((r) => this.toDto(r)).filter((f) => computeFollowupState(f, now, settings.leadDays).isActiveNudge);
+    return rows
+      .filter((r) => !r.pushSentAt || now.getTime() - r.pushSentAt.getTime() >= (r.reminderIntervalMins ?? settings.intervalMins) * 60_000)
+      .map((r) => this.toDto(r))
+      .filter((f) => computeFollowupState(f, now, settings.leadDays).isActiveNudge);
   }
 
   /** Marks a followup as pushed for its current due-cycle. */

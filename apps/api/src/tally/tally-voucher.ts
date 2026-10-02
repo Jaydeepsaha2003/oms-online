@@ -55,8 +55,10 @@ export interface VoucherParty {
   registrationType?: string | null;
   address?: string[];
   pincode?: string | null;
-  /** OMS customer city, for "final destination" as the accountant types it. */
+  /** OMS customer city: the fallback "final destination" for a party the accountant never billed by hand. */
   city?: string | null;
+  /** What the accountant typed as "Destination" on this party's own bills in Tally (app_config TALLY_DESTINATIONS). Wins over the city. */
+  destination?: string | null;
 }
 
 export interface VoucherLine {
@@ -245,7 +247,9 @@ export function salesVoucherXml(v: SalesVoucher, p: VoucherParty, note?: { itemL
   const date = ymd(v.date);
   const sg = note ? -1 : 1;
   const dp = note ? 'Yes' : 'No';
-  const dest = [p.city, p.state].filter(Boolean).join(',').toUpperCase();
+  // The accountant types just the place (CHENNAI, VASAI; 49 of 52 parties) - not "CITY,STATE" - and some parties have their own wording
+  // (BAJAJ: MANGOLPURI/DELHI), so a stored destination wins; the city alone is only the fallback.
+  const dest = (p.destination || p.city || p.state || '').toUpperCase();
   // Place (Bill To / Ship To / e-way): the last address line, as the accountant types it (CHENNAI, DELHI…); 3+ letters or the state.
   const lastLine = (p.address?.at(-1) ?? p.city ?? '').replace(/[,\s]+$/, '').toUpperCase();
   const place = lastLine.length >= 3 ? lastLine : (p.state ?? '').toUpperCase();

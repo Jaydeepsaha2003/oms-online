@@ -1,11 +1,17 @@
+import { createSocket } from 'node:dgram';
+import { connect } from 'node:net';
 import { Injectable, ServiceUnavailableException } from '@nestjs/common';
 import type { TallyCompany, TallyConfig, TallyState, TallyStatus } from '@oms/shared';
 import { PrismaService } from '../prisma/prisma.service';
 import { decode, tag } from '../account-groups/tally-master.parser';
+import { magicPacket } from './tally-wake';
 
 const CONFIG_KEY = 'TALLY_CONFIG';
 const START_KEY = 'TALLY_START_REQUEST';
+const MAC_KEY = 'TALLY_PC_MAC';
 const DEFAULT_CONFIG: TallyConfig = { url: 'http://192.168.0.245:9000', companyGuid: null, gstLockDate: null };
+
+const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
 
 export const xmlEscape = (s: string) => s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
 
@@ -77,6 +83,58 @@ export class TallyService {
     });
     await this.prisma.appConfig.upsert({ where: { key: CONFIG_KEY }, update: { value }, create: { key: CONFIG_KEY, value } });
     return this.getConfig();
+  }
+
+  /** The Tally PC's network card address, reported by the PC's own script (pc-hello). Needed to wake it. */
+  async savePcMac(mac: string | undefined | null): Promise<void> {
+    if (!mac || !/^([0-9a-f]{2}[-:]?){5}[0-9a-f]{2}$/i.test(mac)) return;
+    const value = mac.replace(/[^0-9a-f]/gi, '').toUpperCase();
+    await this.prisma.appConfig.upsert({ where: { key: MAC_KEY }, update: { value }, create: { key: MAC_KEY, value } });
+  }
+
+  /** Wake-on-LAN: the magic packet goes out as a broadcast on the LAN (ports 9 and 7). False = no MAC known yet. */
+  async wake(): Promise<boolean> {
+    const row = await this.prisma.appConfig.findUnique({ where: { key: MAC_KEY } });
+    if (!row) return false;
+    const packet = magicPacket(row.value);
+    const host = new URL((await this.getConfig()).url).hostname;
+    const targets = ['255.255.255.255', ...(/^\d+\.\d+\.\d+\.\d+$/.test(host) ? [host.replace(/\.\d+$/, '.255')] : [])];
+    const sock = createSocket('udp4');
+    try {
+      await new Promise<void>((ok, bad) => { sock.once('error', bad); sock.bind(0, () => { sock.setBroadcast(true); ok(); }); });
+      for (const t of targets) for (const port of [9, 7]) await new Promise<void>((ok) => sock.send(packet, port, t, () => ok()));
+    } finally {
+      sock.close();
+    }
+    return true;
+  }
+
+  /** The Tally PC from outside: 'up' = port answers; 'awake' = refuses (PC on, Tally closed); 'silent' = no answer at all (asleep, off, or moved). */
+  private async probe(): Promise<'up' | 'awake' | 'silent'> {
+    const u = new URL((await this.getConfig()).url);
+    return new Promise((done) => {
+      const s = connect({ host: u.hostname, port: Number(u.port || 80), timeout: 3000 });
+      s.once('connect', () => { s.destroy(); done('up'); });
+      s.once('timeout', () => { s.destroy(); done('silent'); });
+      s.once('error', (e: NodeJS.ErrnoException) => done(e.code === 'ECONNREFUSED' ? 'awake' : 'silent'));
+    });
+  }
+
+  /**
+   * Before something is WRITTEN to Tally (a bill, a note) or Tally is asked to start: if the Tally PC is silent, wake it and wait
+   * (up to 90 s in all, packet repeated every ~20 s) until it answers. Never for the 15-second status check or background reads,
+   * or the PC would never sleep. A PC that is on but has Tally closed refuses at once, so nothing is woken for that.
+   */
+  async wakeIfAsleep(maxWaitMs = 90_000): Promise<void> {
+    if ((await this.probe()) !== 'silent') return;
+    if (!(await this.wake())) return;
+    const until = Date.now() + maxWaitMs;
+    let lastPacket = Date.now();
+    while (Date.now() < until) {
+      await sleep(2000);
+      if ((await this.probe()) !== 'silent') return; // the url is re-read: the PC's own hello may have given it a new address
+      if (Date.now() - lastPacket > 20_000) { await this.wake(); lastPacket = Date.now(); }
+    }
   }
 
   /** POST one XML envelope to Tally; returns the reply text. HTTP 200 only means Tally answered. */

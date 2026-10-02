@@ -120,6 +120,16 @@ export function FollowupNudge() {
   // stops a server restart (which is just a reload) from playing the reminder
   // sound for every still-open follow-up.
   const started = useRef(false);
+  /*
+   * A minute clock. `due` only changes when the server's answer changes, so an
+   * overdue follow-up that stays due all day never re-ran the check below — it
+   * nudged once per page load, which is why reminders came only on a restart.
+   */
+  const [clock, setClock] = useState(() => Date.now());
+  useEffect(() => {
+    const t = setInterval(() => setClock(Date.now()), 60_000);
+    return () => clearInterval(t);
+  }, []);
 
   // Ask for desktop-notification permission once (best-effort).
   useEffect(() => {
@@ -155,7 +165,13 @@ export function FollowupNudge() {
      */
     const lastNudgedAt = (f: FollowupDto) =>
       Math.max(log[f.id] ?? 0, f.lastRemindedAt ? new Date(f.lastRemindedAt).getTime() : 0);
-    const fresh = due.filter((f) => !seen.current.has(f.id) && now - lastNudgedAt(f) >= gapMs(f));
+    // Again every "Remind every N mins" while still due — but only in working
+    // hours, so an open tab does not chime at night.
+    const hour = new Date(now).getHours();
+    const workHours =
+      hour >= (settings?.workStartHour ?? DEFAULT_CRM_SETTINGS.workStartHour) &&
+      hour < (settings?.workEndHour ?? DEFAULT_CRM_SETTINGS.workEndHour);
+    const fresh = workHours ? due.filter((f) => now - lastNudgedAt(f) >= gapMs(f)) : [];
 
     let secondChime: ReturnType<typeof setTimeout> | undefined;
     // The sound decision is async now (it waits to hear whether the OS took the
@@ -251,7 +267,7 @@ export function FollowupNudge() {
       chimeCancelled = true;
       clearTimeout(secondChime);
     };
-  }, [due, dueFetched, settings?.sound, settings?.desktopNotifications, settings?.intervalMins]);
+  }, [due, dueFetched, clock, settings?.sound, settings?.desktopNotifications, settings?.intervalMins, settings?.workStartHour, settings?.workEndHour]);
 
   // Phones get the chime, the buzz and the OS notification — but nothing drawn
   // over the app. See the note on this component for why.

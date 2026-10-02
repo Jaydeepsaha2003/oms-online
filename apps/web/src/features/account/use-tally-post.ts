@@ -4,6 +4,9 @@ import type { TallyPostResult } from '@oms/shared';
 import { getApiErrorMessage, http } from '@/lib/api';
 import { useConfirm } from '@/components/common/confirm';
 
+/** A sleeping Tally PC is woken before the bill is posted (up to 90 s), so this call may take longer than the usual 15 s. */
+export const POST_WAIT_MS = 120_000;
+
 /**
  * "Post to Tally" from anywhere (challan list, after saving a challan, credit notes). Always
  * asks first; the server runs every check (SSS series, party mapping, GST
@@ -13,7 +16,7 @@ export function usePostToTally(path = '/tally/post', listKey = 'challans') {
   const qc = useQueryClient();
   const confirm = useConfirm();
   const m = useMutation({
-    mutationFn: (code: string) => http.post<TallyPostResult>(path, { code }),
+    mutationFn: (code: string) => http.post<TallyPostResult>(path, { code }, { timeout: POST_WAIT_MS }),
     onSuccess: (r) => {
       const say = r.status === 'POSTED' ? toast.success : r.status === 'FAILED' ? toast.error : toast.warning;
       say(r.message, { description: r.warnings.length ? `Check in Tally: ${r.warnings.join(' · ')}` : undefined, duration: 12_000 });

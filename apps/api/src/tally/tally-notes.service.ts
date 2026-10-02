@@ -145,6 +145,7 @@ export class TallyNotesService {
     if (row?.status === 'POSTING' || row?.status === 'UNKNOWN') {
       throw new ConflictException(`An earlier attempt for ${note.code} has no clear answer yet. Press "Check again" — OMS looks in Tally first.`);
     }
+    await this.tally.wakeIfAsleep(); // the Tally PC may be asleep: wake it, then post
     const ctx = await this.posting.context();
     const b = await this.build(note, ctx);
     if (!b.built) throw new BadRequestException(b.blocks.join(' '));
