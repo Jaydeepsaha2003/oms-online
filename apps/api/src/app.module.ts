@@ -35,6 +35,7 @@ import { BookingsModule } from './bookings/bookings.module';
 import { QuotationsModule } from './quotations/quotations.module';
 import { DispatchModule } from './dispatch/dispatch.module';
 import { DesignTrackModule } from './design-track/design-track.module';
+import { PendingProcessorModule } from './pending-processor/pending-processor.module';
 import { ChallansModule } from './challans/challans.module';
 import { SpecialRatesModule } from './special-rates/special-rates.module';
 import { CrmModule } from './crm/crm.module';
@@ -98,6 +99,7 @@ import { AgentCommissionModule } from './agent-commission/agent-commission.modul
     QuotationsModule,
     DispatchModule,
     DesignTrackModule,
+    PendingProcessorModule,
     ChallansModule,
     SpecialRatesModule,
     CrmModule,

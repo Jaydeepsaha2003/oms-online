@@ -42,6 +42,7 @@ const DispatchOrderPage = lazy(() => import('@/features/dispatch/dispatch-order-
 const ModifyDispatchPage = lazy(() => import('@/features/dispatch/modify-dispatch-page').then((m) => ({ default: m.ModifyDispatchPage })));
 const PartyOnHoldPage = lazy(() => import('@/features/dispatch/party-on-hold-page').then((m) => ({ default: m.PartyOnHoldPage })));
 const DesignTrackPage = lazy(() => import('@/features/design-track/design-track-page').then((m) => ({ default: m.DesignTrackPage })));
+const PendingProcessorPage = lazy(() => import('@/features/dispatch/pending-processor-page').then((m) => ({ default: m.PendingProcessorPage })));
 const SpecialRatesPage = lazy(() => import('@/features/special-rates/special-rates-page').then((m) => ({ default: m.SpecialRatesPage })));
 const PendingChallanPage = lazy(() => import('@/features/challans/pending-challan-page').then((m) => ({ default: m.PendingChallanPage })));
 const ChallanFormPage = lazy(() => import('@/features/challans/challan-form-page').then((m) => ({ default: m.ChallanFormPage })));
@@ -405,6 +406,14 @@ export function AppRoutes() {
             element={
               <RequirePermission permission={perm(RESOURCES.DESIGN_TRACK, ACTIONS.VIEW)}>
                 <DesignTrackPage />
+              </RequirePermission>
+            }
+          />
+          <Route
+            path="/dispatch/pending-processor"
+            element={
+              <RequirePermission permission={perm(RESOURCES.DISPATCH, ACTIONS.EXPORT)}>
+                <PendingProcessorPage />
               </RequirePermission>
             }
           />

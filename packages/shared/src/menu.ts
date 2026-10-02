@@ -400,6 +400,14 @@ export const MENU: MenuNode[] = [
         icon: 'PauseCircle',
         permission: perm(RESOURCES.DISPATCH, ACTIONS.VIEW),
       },
+      {
+        id: 'pending-processor',
+        label: 'Pending Order Processor',
+        to: '/dispatch/pending-processor',
+        icon: 'FileSpreadsheet',
+        // It hands out a file — the same right as the pending-lines export.
+        permission: perm(RESOURCES.DISPATCH, ACTIONS.EXPORT),
+      },
     ],
   },
   {

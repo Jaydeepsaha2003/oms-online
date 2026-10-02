@@ -52,3 +52,4 @@ export * from './types/party-ledger';
 export * from './types/daybook';
 export * from './types/tally-recon';
 export * from './types/tally';
+export * from './types/pending-processor';

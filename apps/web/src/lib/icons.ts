@@ -58,6 +58,7 @@ import {
   Sparkles,
   TrendingUp,
   PauseCircle,
+  FileSpreadsheet,
   type LucideIcon,
 } from 'lucide-react';
 
@@ -98,6 +99,7 @@ const ICONS: Record<string, LucideIcon> = {
   Sparkles,
   TrendingUp,
   PauseCircle,
+  FileSpreadsheet,
   BarChart3,
   Settings,
   UserCog,
