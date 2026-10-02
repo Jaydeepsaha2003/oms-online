@@ -66,29 +66,58 @@ const HEAD = '<?xml version="1.0" encoding="UTF-8" standalone="yes"?>\n';
 const FILL_DOWN =
   '<extLst><ext uri="{2946ED86-A175-432a-8AC1-64E0C546D7DE}" xmlns:x14="http://schemas.microsoft.com/office/spreadsheetml/2009/9/main"><x14:pivotField fillDownLabels="1"/></ext></extLst>';
 
-/** Cell styles (cellXfs) — the macro's: bold header, date, 14pt, pivot button, banner. */
-const S = { header: 1, date: 2, button: 3, big: 4, banner: 5, bannerDate: 6 } as const;
+/** Cell styles (cellXfs). The pivot sheets keep the macro's 14pt text and
+ *  banner; on top: a navy header bar with borders on PenOrderData, blue
+ *  header rows on the pivots, bold filter values. */
+const S = {
+  header: 1, date: 2, button: 3, big: 4, banner: 5, bannerDate: 6,
+  dataHeader: 7, dataDate: 8, dataCell: 9, headButton: 10, head: 11, pick: 12,
+} as const;
 /** dxfs: 14pt for the whole pivot, then the banner's red / yellow / green. */
 const DXF = { big: 0, red: 1, yellow: 2, green: 3 } as const;
 
+const font = (sz: number, bold: boolean, rgb = 'FF000000') => `<font>${bold ? '<b/>' : ''}<sz val="${sz}"/><color rgb="${rgb}"/><name val="Aptos Narrow"/><family val="2"/></font>`;
+const solid = (rgb: string) => `<fill><patternFill patternType="solid"><fgColor rgb="${rgb}"/><bgColor indexed="64"/></patternFill></fill>`;
+const thin = '<left style="thin"><color rgb="FFD0D7E5"/></left><right style="thin"><color rgb="FFD0D7E5"/></right><top style="thin"><color rgb="FFD0D7E5"/></top><bottom style="thin"><color rgb="FFD0D7E5"/></bottom><diagonal/>';
+const xf = (numFmt: number, fontId: number, fillId: number, borderId: number, extra = '', align = '') =>
+  `<xf numFmtId="${numFmt}" fontId="${fontId}" fillId="${fillId}" borderId="${borderId}" xfId="0"${extra} applyNumberFormat="1" applyFont="1" applyFill="1" applyBorder="1"${align ? ' applyAlignment="1">' + align + '</xf>' : '/>'}`;
+const CENTER = '<alignment horizontal="center" vertical="center"/>';
+const VCENTER = '<alignment vertical="center"/>';
+const XFS = [
+  xf(0, 0, 0, 0),
+  xf(0, 1, 0, 0),
+  xf(14, 0, 0, 0),
+  xf(0, 2, 0, 0, ' pivotButton="1"'),
+  xf(0, 2, 0, 0),
+  xf(0, 5, 0, 0, '', CENTER),
+  xf(15, 5, 0, 0, '', CENTER),
+  xf(0, 4, 2, 1, '', '<alignment horizontal="center" vertical="center" wrapText="1"/>'),
+  xf(164, 0, 0, 1, '', VCENTER),
+  xf(0, 0, 0, 1, '', VCENTER),
+  xf(0, 6, 3, 0, ' pivotButton="1"', VCENTER),
+  xf(0, 6, 3, 0, '', CENTER),
+  xf(0, 3, 0, 0),
+];
+
 const STYLES =
-  `${HEAD}<styleSheet ${NS}>` +
-  '<fonts count="4">' +
-  ['', '<b/>', '', '<b/>'].map((b, i) => `<font>${b}<sz val="${i < 2 ? 11 : 14}"/><color rgb="FF000000"/><name val="Aptos Narrow"/><family val="2"/></font>`).join('') +
-  '</fonts><fills count="2"><fill><patternFill patternType="none"/></fill><fill><patternFill patternType="gray125"/></fill></fills>' +
-  '<borders count="1"><border><left/><right/><top/><bottom/><diagonal/></border></borders>' +
-  '<cellStyleXfs count="1"><xf numFmtId="0" fontId="0" fillId="0" borderId="0"/></cellStyleXfs><cellXfs count="7">' +
-  '<xf numFmtId="0" fontId="0" fillId="0" borderId="0" xfId="0"/>' +
-  '<xf numFmtId="0" fontId="1" fillId="0" borderId="0" xfId="0" applyFont="1"/>' +
-  '<xf numFmtId="14" fontId="0" fillId="0" borderId="0" xfId="0" applyNumberFormat="1"/>' +
-  '<xf numFmtId="0" fontId="2" fillId="0" borderId="0" xfId="0" pivotButton="1" applyFont="1"/>' +
-  '<xf numFmtId="0" fontId="2" fillId="0" borderId="0" xfId="0" applyFont="1"/>' +
-  '<xf numFmtId="0" fontId="3" fillId="0" borderId="0" xfId="0" applyFont="1" applyAlignment="1"><alignment horizontal="center"/></xf>' +
-  '<xf numFmtId="15" fontId="3" fillId="0" borderId="0" xfId="0" applyNumberFormat="1" applyFont="1" applyAlignment="1"><alignment horizontal="center"/></xf>' +
-  '</cellXfs><cellStyles count="1"><cellStyle name="Normal" xfId="0" builtinId="0"/></cellStyles>' +
+  `${HEAD}<styleSheet ${NS}><numFmts count="1"><numFmt numFmtId="164" formatCode="dd-mm-yyyy"/></numFmts>` +
+  `<fonts count="7">${[font(11, false), font(11, true), font(14, false), font(14, true), font(11, true, 'FFFFFFFF'), font(16, true), font(14, true, 'FFFFFFFF')].join('')}</fonts>` +
+  `<fills count="4"><fill><patternFill patternType="none"/></fill><fill><patternFill patternType="gray125"/></fill>${solid('FF1F3864')}${solid('FF4472C4')}</fills>` +
+  `<borders count="2"><border><left/><right/><top/><bottom/><diagonal/></border><border>${thin}</border></borders>` +
+  `<cellStyleXfs count="1"><xf numFmtId="0" fontId="0" fillId="0" borderId="0"/></cellStyleXfs><cellXfs count="${XFS.length}">${XFS.join('')}</cellXfs>` +
+  '<cellStyles count="1"><cellStyle name="Normal" xfId="0" builtinId="0"/></cellStyles>' +
   '<dxfs count="4"><dxf><font><sz val="14"/></font></dxf>' +
   ['FFFF6666', 'FFFFFA99', 'FF90EE90'].map((c) => `<dxf><fill><patternFill><bgColor rgb="${c}"/></patternFill></fill></dxf>`).join('') +
-  '</dxfs><tableStyles count="0" defaultTableStyle="TableStyleMedium2" defaultPivotStyle="PivotStyleLight16"/></styleSheet>';
+  '</dxfs><tableStyles count="0" defaultTableStyle="TableStyleMedium2" defaultPivotStyle="PivotStyleMedium2"/></styleSheet>';
+
+/** Landscape, one page wide — the pivots are printed for the floor. */
+const PRINT =
+  '<pageMargins left="0.4" right="0.4" top="0.5" bottom="0.5" header="0.3" footer="0.3"/>' +
+  '<pageSetup paperSize="9" orientation="landscape" fitToWidth="1" fitToHeight="0"/>';
+/** Freeze everything above `row` (1-based, the first scrolling row). */
+const frozenView = (row: number, selected = false) =>
+  `<sheetViews><sheetView${selected ? ' tabSelected="1"' : ''} workbookViewId="0"><pane ySplit="${row - 1}" topLeftCell="A${row}" activePane="bottomLeft" state="frozen"/>` +
+  `<selection pane="bottomLeft" activeCell="A${row}" sqref="A${row}"/></sheetView></sheetViews>`;
 
 /** Builds the shared-strings table as cells are written. */
 class Strings {
@@ -190,6 +219,8 @@ function recordValue(v: Cell, f: CacheField) {
 interface RenderedPivot {
   sheetXml: string;
   tableXml: string;
+  /** The column-header row, repeated on every printed page. */
+  headerRow: number;
 }
 
 function renderPivot(spec: PivotSpec, rows: Cell[][], fields: CacheField[], strings: Strings, today: Date, cacheId: number): RenderedPivot {
@@ -230,7 +261,7 @@ function renderPivot(spec: PivotSpec, rows: Cell[][], fields: CacheField[], stri
 
   spec.pages.forEach((p, i) => {
     const caption = PEN_ORDER_HEADERS[p.fld];
-    xml.push(rowXml(strings, i + 1, [caption, picks[i] ?? '(All)'], (c) => (c === 0 ? S.button : S.big)));
+    xml.push(rowXml(strings, i + 1, [caption, picks[i] ?? '(All)'], (c) => (c === 0 ? S.button : S.pick)));
   });
   if (spec.banner) {
     // The macro's DUE ORDERS banner: follows the DUE TYPE filter (B6), coloured below.
@@ -242,11 +273,11 @@ function renderPivot(spec: PivotSpec, rows: Cell[][], fields: CacheField[], stri
       : c === nCol - 3 ? `<c r="${colName(c)}${r}" s="${S.bannerDate}"><v>${serial(today)}</v></c>`
       : `<c r="${colName(c)}${r}" s="${S.banner}"/>`,
     );
-    xml.push(`<row r="${r}">${cells.join('')}</row>`);
+    xml.push(`<row r="${r}" ht="30" customHeight="1">${cells.join('')}</row>`);
   }
   xml.push(rowXml(strings, top, Array.from({ length: nCol }, (_, c) => (c === nRow ? 'Values' : null)), (c) => (c === nRow ? S.button : undefined), spec.banner ? ' hidden="1"' : ''));
   const headers = [...spec.rows.map((r) => r.caption ?? PEN_ORDER_HEADERS[r.fld]), ...spec.data.map((d) => d.caption)];
-  xml.push(rowXml(strings, top + 1, headers, (c) => (c < nRow ? S.button : S.big)));
+  xml.push(rowXml(strings, top + 1, headers, (c) => (c < nRow ? S.headButton : S.head), ' ht="24" customHeight="1"'));
   lines.forEach((g, i) => xml.push(rowXml(strings, top + 2 + i, [...g.keys.map(label), ...g.sums.map((n) => Math.round(n * 1000) / 1000)], st(S.big))));
   const last = top + 1 + Math.max(lines.length, 1);
 
@@ -270,9 +301,9 @@ function renderPivot(spec: PivotSpec, rows: Cell[][], fields: CacheField[], stri
       '</conditionalFormatting>'
     : '';
   const sheetXml =
-    `${HEAD}<worksheet ${NS}><dimension ref="A1:${colName(nCol - 1)}${last}"/><sheetViews><sheetView workbookViewId="0"/></sheetViews>` +
+    `${HEAD}<worksheet ${NS}><sheetPr><pageSetUpPr fitToPage="1"/></sheetPr><dimension ref="A1:${colName(nCol - 1)}${last}"/>${frozenView(top + 2)}` +
     `<sheetFormatPr defaultRowHeight="18.75"/><cols>${cols}<col min="${nCol + 1}" max="16384" width="9.140625" style="${S.big}"/></cols>` +
-    `<sheetData>${xml.join('')}</sheetData>${bannerParts}<pageMargins left="0.7" right="0.7" top="0.75" bottom="0.75" header="0.3" footer="0.3"/></worksheet>`;
+    `<sheetData>${xml.join('')}</sheetData>${bannerParts}${PRINT}</worksheet>`;
 
   // The definition: which fields sit where, plus the rendered row items.
   const pivotFields = PEN_ORDER_HEADERS.map((_, fld) => {
@@ -319,10 +350,10 @@ function renderPivot(spec: PivotSpec, rows: Cell[][], fields: CacheField[], stri
     `<colFields count="1"><field x="-2"/></colFields><colItems count="${spec.data.length}">${colItems}</colItems>` +
     `<pageFields count="${pageRows}">${pageFields}</pageFields><dataFields count="${spec.data.length}">${dataFields}</dataFields>` +
     `<formats count="1"><format dxfId="${DXF.big}"><pivotArea type="all" dataOnly="0" outline="0" fieldPosition="0"/></format></formats>` +
-    '<pivotTableStyleInfo name="PivotStyleLight16" showRowHeaders="1" showColHeaders="1" showRowStripes="0" showColStripes="0" showLastColumn="1"/>' +
+    '<pivotTableStyleInfo name="PivotStyleMedium2" showRowHeaders="0" showColHeaders="1" showRowStripes="1" showColStripes="0" showLastColumn="1"/>' +
     '<extLst><ext uri="{962EF5D1-5CA2-4c93-8EF4-DBF5C05439D2}" xmlns:x14="http://schemas.microsoft.com/office/spreadsheetml/2009/9/main"><x14:pivotTableDefinition fillDownLabelsDefault="1"/></ext></extLst>' +
     '</pivotTableDefinition>';
-  return { sheetXml, tableXml };
+  return { sheetXml, tableXml, headerRow: top + 1 };
 }
 
 /** The macro's workbook for these PenOrderData rows (already processed). */
@@ -346,15 +377,21 @@ export async function buildPendingWorkbook(rows: Cell[][], today = new Date()): 
     return { shared, index, order };
   });
 
-  // PenOrderData: the processed rows, bold header, dates as dates.
+  // PenOrderData: the processed rows under a navy header bar, with filter
+  // buttons, a frozen header and dd-mm-yyyy dates.
+  const lastRef = `AB${rows.length + 1}`;
   const dataRows = [
-    rowXml(strings, 1, [...PEN_ORDER_HEADERS], () => S.header),
-    ...rows.map((r, i) => rowXml(strings, i + 2, r, (_, v) => (v instanceof Date ? S.date : undefined))),
+    rowXml(strings, 1, [...PEN_ORDER_HEADERS], () => S.dataHeader, ' ht="32" customHeight="1"'),
+    ...rows.map((r, i) => rowXml(strings, i + 2, r, (_, v) => (v instanceof Date ? S.dataDate : S.dataCell))),
   ];
+  const dataCols = PEN_ORDER_HEADERS.map((h, c) => {
+    const longest = Math.max(h.length * 0.85, ...cols[c].map((v) => (v instanceof Date ? 10 : blank(v) ? 0 : String(v).length)));
+    return `<col min="${c + 1}" max="${c + 1}" width="${Math.min(42, Math.max(8, longest + 2.5)).toFixed(2)}" customWidth="1"/>`;
+  }).join('');
   const dataSheet =
-    `${HEAD}<worksheet ${NS}><dimension ref="A1:AB${rows.length + 1}"/><sheetViews><sheetView workbookViewId="0"/></sheetViews>` +
-    `<sheetFormatPr defaultRowHeight="15"/><sheetData>${dataRows.join('')}</sheetData>` +
-    '<pageMargins left="0.7" right="0.7" top="0.75" bottom="0.75" header="0.3" footer="0.3"/></worksheet>';
+    `${HEAD}<worksheet ${NS}><sheetPr><pageSetUpPr fitToPage="1"/></sheetPr><dimension ref="A1:${lastRef}"/>${frozenView(2, true)}` +
+    `<sheetFormatPr defaultRowHeight="15"/><cols>${dataCols}</cols><sheetData>${dataRows.join('')}</sheetData>` +
+    `<autoFilter ref="A1:${lastRef}"/>${PRINT}</worksheet>`;
 
   const cacheId = 1;
   const pivots = specs.map((s) => renderPivot(s, rows, fields, strings, today, cacheId));
@@ -391,7 +428,11 @@ export async function buildPendingWorkbook(rows: Cell[][], today = new Date()): 
     'xl/workbook.xml',
     `${HEAD}<workbook ${NS}><bookViews><workbookView/></bookViews><sheets>` +
       sheets.map((n, i) => `<sheet name="${n}" sheetId="${i + 1}" r:id="rId${i + 1}"/>`).join('') +
-      `</sheets><calcPr calcId="191029" fullCalcOnLoad="1"/><pivotCaches><pivotCache cacheId="${cacheId}" r:id="rId${sheets.length + 3}"/></pivotCaches></workbook>`,
+      // The data sheet's filter, and the header row each sheet repeats when printed.
+      `</sheets><definedNames><definedName name="_xlnm._FilterDatabase" localSheetId="0" hidden="1">'PenOrderData'!$A$1:$AB$${rows.length + 1}</definedName>` +
+      `<definedName name="_xlnm.Print_Titles" localSheetId="0">'PenOrderData'!$1:$1</definedName>` +
+      pivots.map((p, i) => `<definedName name="_xlnm.Print_Titles" localSheetId="${i + 1}">'${specs[i].sheet}'!$${p.headerRow}:$${p.headerRow}</definedName>`).join('') +
+      `</definedNames><calcPr calcId="191029" fullCalcOnLoad="1"/><pivotCaches><pivotCache cacheId="${cacheId}" r:id="rId${sheets.length + 3}"/></pivotCaches></workbook>`,
   );
   zip.file(
     'xl/_rels/workbook.xml.rels',
