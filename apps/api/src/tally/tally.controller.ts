@@ -5,7 +5,7 @@ import type { Request } from 'express';
 import { Public } from '../common/decorators/public.decorator';
 import { ApiBearerAuth, ApiTags } from '@nestjs/swagger';
 import { Type } from 'class-transformer';
-import { ArrayMinSize, IsArray, IsInt, IsOptional, IsString, IsUrl, MinLength, ValidateNested } from 'class-validator';
+import { ArrayMinSize, IsArray, IsBoolean, IsInt, IsOptional, IsString, IsUrl, MinLength, ValidateNested } from 'class-validator';
 import { ACTIONS, perm, RESOURCES } from '@oms/shared';
 import { Audit } from '../common/decorators/audit.decorator';
 import { CurrentUser } from '../common/decorators/current-user.decorator';
@@ -50,6 +50,15 @@ class AcceptDto {
 
 class CodeDto {
   @IsString() @MinLength(3) code!: string;
+}
+
+class PostDto extends CodeDto {
+  /** The person has read the "this party needs an e-way bill" notice. */
+  @IsOptional() @IsBoolean() ewayAck?: boolean;
+}
+
+class EwayAskDto {
+  @IsArray() @IsString({ each: true }) vchNos!: string[];
 }
 
 class SaveMappingDto {
@@ -97,8 +106,10 @@ export class TallyController {
   @Audit({ action: ACTIONS.UPDATE, resource: R, description: 'Asked the Tally PC to start Tally' })
   async start() {
     await this.svc.requestStart();
-    void this.svc.wake().catch(() => undefined); // the PC may be asleep: its script only sees the request once it is awake
-    return { requested: true };
+    // The PC may be asleep: wake it and wait (up to 90 s) until it answers. pc = 'up' (Tally answers), 'awake' (PC on, Tally closed:
+    // its script opens Tally within ~10 s), 'silent' (no answer: still asleep / off / not wakeable).
+    const pc = await this.svc.wakeIfAsleep();
+    return { requested: true, pc };
   }
 
   /** The Tally PC script asks every ~20 s whether someone pressed "Start Tally". Same key + LAN rule as pc-hello. */
@@ -108,6 +119,15 @@ export class TallyController {
   async pcPoll(@Req() req: Request, @Headers('x-tally-key') key = '') {
     pcCaller(req, key);
     return { start: await this.svc.takeStart() };
+  }
+
+  /** The Tally PC script asks which of its pending bills need an e-way bill whatever the amount. Same key + LAN rule as pc-hello. */
+  @Public()
+  @SkipThrottle()
+  @Post('pc-eway')
+  async pcEway(@Req() req: Request, @Headers('x-tally-key') key = '', @Body() dto?: EwayAskDto) {
+    pcCaller(req, key);
+    return { required: await this.posting.ewayFor(dto?.vchNos ?? []) };
   }
 
   @Put('config')
@@ -177,8 +197,8 @@ export class TallyController {
   @Post('post')
   @Permissions(perm(R, ACTIONS.CREATE))
   @Audit({ action: ACTIONS.CREATE, resource: R, description: 'Posted an invoice to Tally' })
-  post(@Body() dto: CodeDto, @CurrentUser('name') name?: string) {
-    return this.posting.post(dto.code, name ?? null);
+  post(@Body() dto: PostDto, @CurrentUser('name') name?: string) {
+    return this.posting.post(dto.code, name ?? null, !!dto.ewayAck);
   }
 
   /** Settle an unclear post by looking in Tally. */

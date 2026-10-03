@@ -201,3 +201,18 @@ test('final destination: the destination the accountant typed for the party wins
   assert.equal(dest({ city: 'Delhi' }), 'DELHI');
   assert.equal(dest({ city: null }), 'DELHI'); // no city either: the state, so the field is never empty
 });
+
+test('a party / transporter that needs an e-way bill gets the e-way details even under Rs 50,000; others do not', () => {
+  const { salesVoucherXml } = require('./tally-voucher.ts');
+  const v = { vchNo: 'SSS-801/26-27', date: new Date(2026, 9, 3), party: 'WINCHEF INTERNATIONAL', lines: [], ledgers: [], total: 14_700, shippedBy: 'VNMS', deliveryNote: null, transporterId: '27AAAAA0000A1Z5' };
+  const p = { name: 'WINCHEF INTERNATIONAL', state: 'Haryana', address: ['58, BEHIND PNB,', 'AMBALA CITY,'], pincode: '134003' };
+  assert.doesNotMatch(salesVoucherXml(v, p), /<EWAYBILLDETAILS\.LIST>/);
+  assert.match(salesVoucherXml({ ...v, ewayRequired: true }, p), /<EWAYBILLDETAILS\.LIST>[^]*<TRANSPORTERID>27AAAAA0000A1Z5<\/TRANSPORTERID>/);
+});
+
+test('prevVoucherNo: the number Tally would hand out before this one', () => {
+  const { prevVoucherNo } = require('./tally-voucher.ts');
+  assert.equal(prevVoucherNo('SSS-806/26-27'), 'SSS-805/26-27');
+  assert.equal(prevVoucherNo('SSS-10/26-27'), 'SSS-09/26-27');
+  assert.equal(prevVoucherNo('SSS-01/26-27'), null);
+});

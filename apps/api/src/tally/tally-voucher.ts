@@ -83,6 +83,8 @@ export interface SalesVoucher {
   deliveryNote: string | null;
   /** Transporter GSTIN/TRANSIN from the OMS Transporter master — pre-fills the e-way bill. */
   transporterId?: string | null;
+  /** The party or the transporter needs an e-way bill on every bill: the details go with it whatever the amount. */
+  ewayRequired?: boolean;
 }
 
 /** For ordinary Sales bills, prefill e-way details only above the ₹50,000 invoice value. */
@@ -316,7 +318,7 @@ export function salesVoucherXml(v: SalesVoucher, p: VoucherParty, note?: { itemL
     (!note && v.deliveryNote ? `<INVOICEDELNOTES.LIST><BASICSHIPPINGDATE>${date}</BASICSHIPPINGDATE>${el('BASICSHIPDELIVERYNOTE', v.deliveryNote)}</INVOICEDELNOTES.LIST>` : '') +
     // E-way bill Part-A, laid out as on Tally-entered bills (SSS-713) — the
     // accountant then only generates. No bill number: Tally/NIC fill that in.
-    (!note && shouldPrefillEWayBill(v.total)
+    (!note && (v.ewayRequired || shouldPrefillEWayBill(v.total))
       ? '<EWAYBILLDETAILS.LIST>' +
         list('CONSIGNORADDRESS', [SHIP_FROM.address.join(', ')]) +
         list('CONSIGNEEADDRESS', p.address?.length ? [p.address.join(', ')] : undefined) +
@@ -331,4 +333,10 @@ export function salesVoucherXml(v: SalesVoucher, p: VoucherParty, note?: { itemL
     ledgers +
     '</VOUCHER>'
   );
+}
+
+/** The Tally number just before this one ("SSS-806/26-27" → "SSS-805/26-27"); null for the first of a series. */
+export function prevVoucherNo(no: string): string | null {
+  const m = /^([A-Z0-9]+)-(\d+)\/(\d{2}-\d{2})$/i.exec(no);
+  return m && +m[2] > 1 ? `${m[1]}-${String(+m[2] - 1).padStart(2, '0')}/${m[3]}` : null;
 }

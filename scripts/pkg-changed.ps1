@@ -27,7 +27,9 @@
 #  Comparing against the NEWEST file in dist (not a fixed one) is what makes the
 #  test honest for both compilers. *.tsbuildinfo is excluded because a plain
 #  `tsc --noEmit` typecheck rewrites it without emitting any JS, which would make
-#  "did I typecheck?" indistinguishable from "did I build?".
+#  "did I typecheck?" indistinguishable from "did I build?". *.spec.ts is excluded because
+#  tsconfig.build.json does not compile it: editing a test left src newer than dist for good, and
+#  auto-apply rebuilt and restarted the API every minute (killing posts in flight).
 # ============================================================
 param(
   [Parameter(Mandatory = $true)]
@@ -60,7 +62,7 @@ function Newest([string[]]$paths) {
   $newest = [datetime]::MinValue
   foreach ($p in $paths) {
     if (Test-Path $p -PathType Container) {
-      $items = Get-ChildItem $p -Recurse -File -Exclude '*.tsbuildinfo' -EA SilentlyContinue
+      $items = Get-ChildItem $p -Recurse -File -Exclude '*.tsbuildinfo', '*.spec.ts' -EA SilentlyContinue
     } elseif (Test-Path $p) {
       $items = Get-Item $p -EA SilentlyContinue
     } else { $items = @() }

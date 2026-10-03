@@ -10,6 +10,6 @@ import { TallyNotesService } from './tally-notes.service';
 @Module({
   controllers: [TallyController],
   providers: [TallyService, TallyPartiesService, TallyBillsService, TallyPostingService, TallySyncScheduler, TallyNotesService],
-  exports: [TallyService],
+  exports: [TallyService, TallyBillsService],
 })
 export class TallyModule {}

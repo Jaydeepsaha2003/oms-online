@@ -358,6 +358,13 @@ export function getAdvanceOffer(error: unknown): AdvanceOffer | null {
   return data?.error === 'ADVANCE_CHOICE' && data.advance ? data.advance : null;
 }
 
+/** The "this party needs an e-way bill" notice (409 EWAY_NOTICE) a Tally post answers first, or null for any other error. */
+export function getEwayNotice(error: unknown): string | null {
+  if (!axios.isAxiosError(error) || error.response?.status !== 409) return null;
+  const data = error.response?.data as { error?: string; message?: string } | undefined;
+  return data?.error === 'EWAY_NOTICE' ? (data.message ?? 'This party needs an e-way bill on every bill. Post it?') : null;
+}
+
 /** The dispatch a duplicate attempt collided with, or null for any other error. */
 export function getDuplicateDispatch(error: unknown): DuplicateDispatch | null {
   if (!axios.isAxiosError(error) || error.response?.status !== 409) return null;

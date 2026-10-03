@@ -5,7 +5,7 @@ import { PrismaService } from '../prisma/prisma.service';
 import { tag } from '../account-groups/tally-master.parser';
 import { TallyService } from './tally.service';
 import { currentFy, DEBTORS_TDL, parseLedgers, TALLY_PREFIX, tallyVoucherNo } from './tally-parties.service';
-import { buildSalesVoucher, salesVoucherXml, shouldPrefillEWayBill, type SalesVoucher, type VoucherParty } from './tally-voucher';
+import { buildSalesVoucher, prevVoucherNo, salesVoucherXml, shouldPrefillEWayBill, type SalesVoucher, type VoucherParty } from './tally-voucher';
 import { eWayBillNo } from './tally-eway';
 
 /** Sales vouchers with their stock and ledger lines (cancelled ones included). */
@@ -151,7 +151,7 @@ export class TallyPostingService {
     const ledgers = new Map(parseLedgers(await this.tally.exportFromCompany('OmsDebtors', DEBTORS_TDL)).map((l) => [l.guid, l]));
     const customers = new Map(
       (
-        await this.prisma.customer.findMany({ where: { tallyLedgerGuid: { not: null } }, select: { id: true, tallyLedgerGuid: true, tallyGstin: true, city: true, ewayTransporter: true, ewayTransporterGstin: true } })
+        await this.prisma.customer.findMany({ where: { tallyLedgerGuid: { not: null } }, select: { id: true, tallyLedgerGuid: true, tallyGstin: true, city: true, ewayMandatory: true, ewayTransporter: true, ewayTransporterGstin: true } })
       ).map((c) => [c.id, c]),
     );
     const { gstLockDate } = await this.tally.getConfig();
@@ -164,7 +164,9 @@ export class TallyPostingService {
     const transporters = new Map(
       (await this.prisma.transporter.findMany({ where: { gstin: { not: null } }, select: { name: true, gstin: true } })).map((t) => [t.name.trim().toUpperCase(), t.gstin!]),
     );
-    return { company, companyState: company.state ?? '', ledgers, customers, lockedUpTo, transporters, destinations };
+    // Transporters that need an e-way bill on every bill (upper-case names).
+    const ewayTransporters = new Set((await this.prisma.transporter.findMany({ where: { ewayMandatory: true }, select: { name: true } })).map((t) => t.name.trim().toUpperCase()));
+    return { company, companyState: company.state ?? '', ledgers, customers, lockedUpTo, transporters, destinations, ewayTransporters };
   }
 
   /** The Tally party for an OMS customer, read live — or why there is none usable. */
@@ -191,7 +193,7 @@ export class TallyPostingService {
     return { party, partyBlock };
   }
 
-  private build(c: ChallanRow, ctx: Ctx): TallyPreview & { party: VoucherParty; built: SalesVoucher | null } {
+  private build(c: ChallanRow, ctx: Ctx): TallyPreview & { party: VoucherParty; built: SalesVoucher | null; ewayRequired: boolean } {
     const { party, partyBlock } = this.partyFor(c.customerId, c.customerName, ctx);
     const vchNo = tallyVoucherNo(c.code);
     const { voucher, blocks } = buildSalesVoucher(c, party, ctx.companyState, vchNo ?? c.code);
@@ -204,7 +206,10 @@ export class TallyPostingService {
         : partyBlock
           ? [partyBlock, ...blocks]
           : blocks;
-    const built = all.length ? null : voucher;
+    let built = all.length ? null : voucher;
+    const custRow = c.customerId != null ? ctx.customers.get(c.customerId) : undefined;
+    // E-way bill needed on every bill of this party or transporter (the one the e-way bill really uses).
+    const ewayRequired = !!custRow?.ewayMandatory || ctx.ewayTransporters.has((custRow?.ewayTransporter || c.transName || '').trim().toUpperCase());
     if (built) {
       // The party's own e-way transporter wins (a booking agent's onward carrier, e.g.
       // MUMBAI CAIRRES → SACHDEVA ROADLINES for FRIENDS); else the challan transporter's GSTIN.
@@ -213,6 +218,12 @@ export class TallyPostingService {
         built.transporterId = cust.ewayTransporterGstin;
         built.shippedBy = cust.ewayTransporter || built.shippedBy;
       } else built.transporterId = ctx.transporters.get((c.transName ?? '').trim().toUpperCase()) ?? null;
+      // E-way bill needed on every bill of this party or transporter (the one the e-way bill really uses).
+      built.ewayRequired = ewayRequired;
+      if (ewayRequired && !built.transporterId) {
+        all.push('An e-way bill is mandatory for this party / transporter, but no transporter GSTIN / ID is set - fill it in Masters → Transporters (or the party\'s E-way Transporter GSTIN) first.');
+        built = null;
+      }
     }
     return {
       challanId: c.id,
@@ -225,7 +236,34 @@ export class TallyPostingService {
       differences: null,
       party,
       built,
+      ewayRequired,
     };
+  }
+
+  /** Does this bill need an e-way bill whatever the amount? The party says so, or the transporter the e-way bill really uses does. DB only. */
+  private async ewayNeeded(c: { customerId: number | null; transName: string | null }): Promise<boolean> {
+    const cust = c.customerId != null ? await this.prisma.customer.findUnique({ where: { id: c.customerId }, select: { ewayMandatory: true, ewayTransporter: true } }) : null;
+    if (cust?.ewayMandatory) return true;
+    const name = (cust?.ewayTransporter || c.transName || '').trim().toUpperCase();
+    return name ? !!(await this.prisma.transporter.findUnique({ where: { name }, select: { ewayMandatory: true } }))?.ewayMandatory : false;
+  }
+
+  /**
+   * For the Tally PC script: which of these Tally bill numbers (SSS-801/26-27) need an e-way bill whatever the amount. DB only.
+   */
+  async ewayFor(vchNos: string[]): Promise<string[]> {
+    const wanted = new Map<string, string>(); // OMS code -> Tally number
+    for (const v of vchNos) {
+      const m = /^SSS-0*(\d+)\/(\d\d-\d\d)$/.exec(v.trim().toUpperCase());
+      if (!m) continue;
+      wanted.set(`SSS/${m[2]}/${m[1]}`, v);
+      wanted.set(`SSS/${m[2]}/${m[1].padStart(2, '0')}`, v);
+    }
+    if (!wanted.size) return [];
+    const rows = await this.prisma.challan.findMany({ where: { code: { in: [...wanted.keys()] } }, select: { code: true, customerId: true, transName: true } });
+    const out: string[] = [];
+    for (const r of rows) if (await this.ewayNeeded(r)) out.push(wanted.get(r.code)!);
+    return out;
   }
 
   /** Look a voucher up in Tally by its number (this FY). */
@@ -319,7 +357,10 @@ export class TallyPostingService {
       amount: c.b,
       status: (c.tallyVoucher?.status ?? 'NOT_POSTED') as TallyPostStatus,
       lastError: c.tallyVoucher?.lastError ?? null,
-      blocks: this.build(c, ctx).blocks,
+      ...(() => {
+        const b = this.build(c, ctx);
+        return { blocks: b.blocks, ewayRequired: b.ewayRequired };
+      })(),
     }));
   }
 
@@ -330,10 +371,17 @@ export class TallyPostingService {
    *   5. send;  6. read the voucher back from Tally — only that makes it POSTED.
    * No clear answer at 5 → UNKNOWN, resolved only by looking in Tally.
    */
-  async post(code: string, by: string | null): Promise<TallyPostResult> {
+  async post(code: string, by: string | null, ewayAck = false): Promise<TallyPostResult> {
     await this.expireStale();
     const c = await this.prisma.challan.findUnique({ where: { code: code.trim().toUpperCase() }, select: CHALLAN_SELECT });
     if (!c) throw new NotFoundException(`No invoice ${code.trim()} in OMS.`);
+    // The person posting is told first (before anything is sent, before the PC is woken): this party / transporter needs an e-way bill.
+    if (!ewayAck && (await this.ewayNeeded(c))) {
+      throw new ConflictException({
+        message: `${c.customerName} (or its transporter) needs an E-WAY BILL on every bill. ${c.code} is ₹${(c.b ?? 0).toLocaleString('en-IN')}, so Tally would not ask for one by itself: the Tally PC will make it anyway, with the e-invoice. Post it?`,
+        error: 'EWAY_NOTICE',
+      });
+    }
     const tv = c.tallyVoucher;
     if (tv?.status === 'POSTED') throw new ConflictException(`${c.code} is already in Tally as ${tv.vchNo}.`);
     if (tv?.status === 'POSTING' || tv?.status === 'UNKNOWN') {
@@ -354,6 +402,13 @@ export class TallyPostingService {
         vchNo: b.built.vchNo,
         warnings: diffs,
       };
+    }
+
+    // Tally numbers Sales bills by itself (next number, whatever OMS sends): 806 sent while 805 is missing comes back as 805 and no longer
+    // pairs with its OMS bill (it happened to MANOHAR). So the bill before this one must already be in Tally.
+    const prev = prevVoucherNo(b.built.vchNo);
+    if (prev && !(await this.findInTally(prev))) {
+      throw new BadRequestException(`${prev} is not in Tally yet. Tally numbers bills by itself, so ${b.built.vchNo} would be saved as ${prev}. Post (or enter) ${prev} first.`);
     }
 
     // The claim. Only NOT_POSTED/FAILED can become POSTING, and the unique
@@ -401,10 +456,10 @@ export class TallyPostingService {
       const warnings = [...diffs];
       if (found.vchNo !== b.built.vchNo) warnings.unshift(`Tally gave it number ${found.vchNo}, not ${b.built.vchNo}. Do not make the e-invoice — tell the developer.`);
       if (b.party.gstin && !found.partyGstin) warnings.push('The party GSTIN is not on the Tally voucher — open it in Tally and check before the e-invoice.');
-      if (shouldPrefillEWayBill(b.built.total) && b.built.transporterId && found.transporterId !== b.built.transporterId) {
+      if ((b.built.ewayRequired || shouldPrefillEWayBill(b.built.total)) && b.built.transporterId && found.transporterId !== b.built.transporterId) {
         warnings.push(`Transporter ID ${b.built.transporterId} did not reach Tally's e-way bill details — fill it in there before the e-way bill.`);
       }
-      if (shouldPrefillEWayBill(b.built.total) && !b.built.transporterId && b.built.shippedBy) {
+      if ((b.built.ewayRequired || shouldPrefillEWayBill(b.built.total)) && !b.built.transporterId && b.built.shippedBy) {
         warnings.push(`Transporter ${b.built.shippedBy} has no GSTIN in OMS (Masters → Transporters) — fill it in Tally's e-way bill screen this time.`);
       }
       await this.prisma.tallyPostLog.update({ where: { id: log.id }, data: { finishedAt: new Date(), outcome: 'POSTED', responseXml } });

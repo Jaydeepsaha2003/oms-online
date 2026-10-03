@@ -6,6 +6,7 @@ import { CurrentUser } from '../common/decorators/current-user.decorator';
 import { Permissions } from '../common/decorators/permissions.decorator';
 import { Audit } from '../common/decorators/audit.decorator';
 import { buildChallanReport } from './challan-report.builder';
+import { TallyBillsService } from '../tally/tally-bills.service';
 import { ChallansService } from './challans.service';
 import {
   ChallanQueryDto,
@@ -25,7 +26,10 @@ const R = RESOURCES.CHALLAN;
 @ApiBearerAuth()
 @Controller('challans')
 export class ChallansController {
-  constructor(private readonly challans: ChallansService) {}
+  constructor(
+    private readonly challans: ChallansService,
+    private readonly tallyBills: TallyBillsService,
+  ) {}
 
   @Get('pending')
   @Permissions(perm(R, ACTIONS.VIEW))
@@ -161,6 +165,13 @@ export class ChallansController {
   @Permissions(perm(R, ACTIONS.CREATE))
   nextCode(@Query('prefix') prefix?: string, @Query('date') date?: string) {
     return this.challans.previewNextCode(prefix, date);
+  }
+
+  /** Latest SSS bill number in Tally, shown beside the new challan's number. Never an error: `latest` is null when Tally cannot be read. */
+  @Get('tally-latest')
+  @Permissions(perm(R, ACTIONS.CREATE))
+  tallyLatest() {
+    return this.tallyBills.latestInvoice();
   }
 
   @Get('missing/fys')

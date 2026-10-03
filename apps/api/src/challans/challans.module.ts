@@ -4,6 +4,7 @@ import { SettingsModule } from '../settings/settings.module';
 import { AgentCommissionModule } from '../agent-commission/agent-commission.module';
 import { DispatchModule } from '../dispatch/dispatch.module';
 import { PaymentsModule } from '../payments/payments.module';
+import { TallyModule } from '../tally/tally.module';
 import { ChallansController } from './challans.controller';
 import { ChallansService } from './challans.service';
 
@@ -14,7 +15,7 @@ import { ChallansService } from './challans.service';
   // Order screen uses, so it can warn a line is mid-dispatch elsewhere. Neither
   // module imports ChallansModule back, so there's no cycle. PaymentsModule →
   // a saved bill is settled from the party's money on account.
-  imports: [NotificationsModule, SettingsModule, AgentCommissionModule, DispatchModule, PaymentsModule],
+  imports: [NotificationsModule, SettingsModule, AgentCommissionModule, DispatchModule, PaymentsModule, TallyModule],
   controllers: [ChallansController],
   providers: [ChallansService],
 })

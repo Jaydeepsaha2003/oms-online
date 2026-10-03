@@ -78,6 +78,8 @@ export interface TallyQueueRow {
   lastError: string | null;
   /** Why it cannot be posted; empty = ready. */
   blocks: string[];
+  /** The party or the transporter needs an e-way bill on every bill. */
+  ewayRequired: boolean;
 }
 
 export interface TallyPostResult {
@@ -201,4 +203,11 @@ export interface TallyStatus {
   /** Plain-language reason when state is OFFLINE. */
   error: string | null;
   checkedAt: string;
+}
+
+/** The highest SSS bill number Tally holds this financial year - shown beside the new challan's own number. */
+export interface TallyLatestResult {
+  /** Null when Tally could not be read (see `reason`) or holds no SSS bill in the last 60 days. */
+  latest: { vchNo: string; n: number; fy: string; date: string | null; party: string | null } | null;
+  reason: string | null;
 }

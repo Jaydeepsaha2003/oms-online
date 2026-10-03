@@ -229,6 +229,8 @@ model Transporter {
   freight   Float?
   /// Transporter GSTIN / TRANSIN — the e-way bill Part-A transporter ID, sent on every Tally invoice.
   gstin     String?
+  /// Every bill sent with this transporter needs an e-way bill, whatever the amount.
+  ewayMandatory Boolean @default(false)
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 
@@ -389,6 +391,8 @@ model Customer {
   /// ROADLINES and KAMALA STORES to VNMS). Empty = the challan transporter's GSTIN.
   ewayTransporter      String?
   ewayTransporterGstin String?
+  /// Every bill of this party needs an e-way bill, whatever the amount (Tally only asks above its threshold).
+  ewayMandatory        Boolean  @default(false)
 
   /// Tally "Under" — the account group this ledger belongs to.
   groupId          Int?

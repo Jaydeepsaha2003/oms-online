@@ -18,6 +18,7 @@ import type {
   PendingChallanFilterOptions,
   PendingChallanList,
   PendingChallanQuery,
+  TallyLatestResult,
   UpdateChallanStatusInput,
 } from '@oms/shared';
 import { http } from '@/lib/api';
@@ -122,6 +123,18 @@ export function useChallanNextCode(prefix: string | undefined, date: string | un
     queryFn: () => http.get<{ code: string }>('/challans/next-code', { params: { prefix, date } }),
     enabled: enabled && !!prefix,
     staleTime: 30_000,
+  });
+}
+
+/** The latest SSS bill number in Tally, for the new-challan screen. Never an error: `latest` is null when Tally cannot be read. */
+export function useTallyLatestInvoice(enabled = true) {
+  return useQuery({
+    queryKey: [...KEY, 'tally-latest'],
+    queryFn: () => http.get<TallyLatestResult>('/challans/tally-latest', { timeout: 20_000 }),
+    enabled,
+    staleTime: 15_000,
+    refetchInterval: 30_000,
+    retry: false,
   });
 }
 

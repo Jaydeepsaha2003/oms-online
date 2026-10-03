@@ -125,16 +125,19 @@ export class TallyService {
    * (up to 90 s in all, packet repeated every ~20 s) until it answers. Never for the 15-second status check or background reads,
    * or the PC would never sleep. A PC that is on but has Tally closed refuses at once, so nothing is woken for that.
    */
-  async wakeIfAsleep(maxWaitMs = 90_000): Promise<void> {
-    if ((await this.probe()) !== 'silent') return;
-    if (!(await this.wake())) return;
+  async wakeIfAsleep(maxWaitMs = 90_000): Promise<'up' | 'awake' | 'silent'> {
+    const first = await this.probe();
+    if (first !== 'silent') return first;
+    if (!(await this.wake())) return 'silent';
     const until = Date.now() + maxWaitMs;
     let lastPacket = Date.now();
     while (Date.now() < until) {
       await sleep(2000);
-      if ((await this.probe()) !== 'silent') return; // the url is re-read: the PC's own hello may have given it a new address
+      const now = await this.probe(); // the url is re-read: the PC's own hello may have given it a new address
+      if (now !== 'silent') return now;
       if (Date.now() - lastPacket > 20_000) { await this.wake(); lastPacket = Date.now(); }
     }
+    return 'silent';
   }
 
   /** POST one XML envelope to Tally; returns the reply text. HTTP 200 only means Tally answered. */

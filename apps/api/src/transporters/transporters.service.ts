@@ -56,7 +56,7 @@ export class TransportersService {
     await this.assertNotCustomerName(name);
     try {
       const created = await this.prisma.transporter.create({
-        data: { name, packing: dto.packing ?? null, freight: dto.freight ?? null, gstin: uc(dto.gstin) || null },
+        data: { name, packing: dto.packing ?? null, freight: dto.freight ?? null, gstin: uc(dto.gstin) || null, ewayMandatory: dto.ewayMandatory ?? false },
         include: INCLUDE,
       });
       return this.toDto(await this.ensureCode(created));
@@ -79,6 +79,7 @@ export class TransportersService {
           ...(dto.packing !== undefined ? { packing: dto.packing } : {}),
           ...(dto.freight !== undefined ? { freight: dto.freight } : {}),
           ...(dto.gstin !== undefined ? { gstin: uc(dto.gstin) || null } : {}),
+          ...(dto.ewayMandatory !== undefined ? { ewayMandatory: dto.ewayMandatory } : {}),
         },
         include: INCLUDE,
       });
@@ -237,6 +238,7 @@ export class TransportersService {
       packing: t.packing,
       freight: t.freight,
       gstin: t.gstin,
+      ewayMandatory: t.ewayMandatory,
       customerCount: t._count.customers,
       createdAt: t.createdAt.toISOString(),
       updatedAt: t.updatedAt.toISOString(),

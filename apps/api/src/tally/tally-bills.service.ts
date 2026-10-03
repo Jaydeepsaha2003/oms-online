@@ -1,6 +1,6 @@
 import { Injectable, NotFoundException } from '@nestjs/common';
 import type { Prisma } from '@prisma/client';
-import type { TallyRecon, TallyReconResult, TallyReconRow } from '@oms/shared';
+import type { TallyLatestResult, TallyRecon, TallyReconResult, TallyReconRow } from '@oms/shared';
 import { PrismaService } from '../prisma/prisma.service';
 import { tag } from '../account-groups/tally-master.parser';
 import { TallyService } from './tally.service';
@@ -10,6 +10,11 @@ import { eWayBillNo } from './tally-eway';
 /** This FY's Sales vouchers, cancelled ones included — explicit fields only. */
 const SALES_TDL =
   '<COLLECTION NAME="OmsSales"><TYPE>Voucher</TYPE><FETCH>GUID,MasterId,AlterId,VoucherNumber,Date,PartyLedgerName,Amount,IsCancelled,IRNAckNo,EWayBillDetails.BillNumber,EWayBillDetails.IsCancelled</FETCH>' +
+  '<FILTER>OmsIsSale</FILTER></COLLECTION><SYSTEM TYPE="Formulae" NAME="OmsIsSale">$VoucherTypeName = "Sales"</SYSTEM>';
+
+/** Sales bill numbers only (cancelled ones included: Tally keeps their number) - for the "latest in Tally" check. */
+const LATEST_TDL =
+  '<COLLECTION NAME="OmsLatest"><TYPE>Voucher</TYPE><FETCH>VoucherNumber,Date,PartyLedgerName</FETCH>' +
   '<FILTER>OmsIsSale</FILTER></COLLECTION><SYSTEM TYPE="Formulae" NAME="OmsIsSale">$VoucherTypeName = "Sales"</SYSTEM>';
 
 /** This FY's credit / debit notes and purchases — matched to OMS by party + amount + date, as their numbers never paired. */
@@ -33,6 +38,46 @@ export class TallyBillsService {
     private readonly prisma: PrismaService,
     private readonly tally: TallyService,
   ) {}
+
+  private latestCache: { at: number; value: TallyLatestResult } | null = null;
+
+  /**
+   * The highest SSS bill number Tally holds this financial year, for the new-challan screen to show beside OMS's own next number.
+   * One small read (the last 60 days), kept 15 s - a failure too, so an open form does not keep asking a sleeping Tally PC.
+   * Never throws and never wakes the PC: the form must work without Tally.
+   */
+  async latestInvoice(): Promise<TallyLatestResult> {
+    if (this.latestCache && Date.now() - this.latestCache.at < 15_000) return this.latestCache.value;
+    const value = await this.readLatestInvoice();
+    this.latestCache = { at: Date.now(), value };
+    return value;
+  }
+
+  private async readLatestInvoice(): Promise<TallyLatestResult> {
+    const now = new Date();
+    const y = now.getMonth() >= 3 ? now.getFullYear() : now.getFullYear() - 1;
+    const fy = `${String(y).slice(2)}-${String(y + 1).slice(2)}`;
+    const ymd = (d: Date) => `${d.getFullYear()}${String(d.getMonth() + 1).padStart(2, '0')}${String(d.getDate()).padStart(2, '0')}`;
+    try {
+      const xml = await this.tally.exportFromCompany(
+        'OmsLatest',
+        LATEST_TDL,
+        `<SVFROMDATE TYPE="Date">${ymd(new Date(now.getTime() - 60 * 864e5))}</SVFROMDATE><SVTODATE TYPE="Date">${ymd(now)}</SVTODATE>`,
+        8_000,
+      );
+      let best: TallyLatestResult['latest'] = null;
+      for (const [, v] of xml.matchAll(/<VOUCHER [^>]*>([^]*?)<\/VOUCHER>/g)) {
+        const no = tag(v, 'VOUCHERNUMBER') ?? '';
+        const m = /^SSS-0*(\d+)\/(\d\d-\d\d)$/.exec(no);
+        if (!m || m[2] !== fy || (best && +m[1] <= best.n)) continue;
+        const d = tag(v, 'DATE');
+        best = { vchNo: no, n: +m[1], fy, date: d && /^\d{8}$/.test(d) ? `${d.slice(0, 4)}-${d.slice(4, 6)}-${d.slice(6, 8)}` : null, party: tag(v, 'PARTYLEDGERNAME') };
+      }
+      return { latest: best, reason: best ? null : 'Tally holds no SSS bill in the last 60 days.' };
+    } catch (e) {
+      return { latest: null, reason: e instanceof Error ? e.message : 'Tally did not answer.' };
+    }
+  }
 
   /**
    * Link every OMS invoice of this FY to its Tally voucher (by the paired

@@ -6,6 +6,7 @@ import {
   type TradingNoteRow,
   type TradingAccount,
   type ChallanDraft,
+  type ChallanEditContext,
   type ChallanDraftItem,
   type ChallanDto,
   type ChallanItemHistoryRow,
@@ -244,8 +245,9 @@ export class ChallansService {
     const byId = new Map(dispatches.map((d) => [d.id, d]));
     const ordered = ids.map((id) => byId.get(id)).filter((d): d is (typeof dispatches)[number] => !!d);
 
-    const transName = customer?.transportName ?? null;
-    const { gstFor, rateFor } = await this.rateMaps(customerName, transName);
+    // The transporter shown on the challan is the one Tally will get (the party's e-way transporter if it has one); rates stay tied to its own transporter.
+    const transName = customer?.ewayTransporter || customer?.transportName || null;
+    const { gstFor, rateFor } = await this.rateMaps(customerName, customer?.transportName ?? null);
 
     const items = ordered.map((d) => {
       const cat = (d.pCategory ?? '').toUpperCase();
@@ -513,6 +515,38 @@ export class ChallansService {
         `${code} has its e-invoice in Tally (${tv.vchNo}). Cancel it in Tally first (or give a credit note), press "Check now" in Tally Sync Center, then ${action}.`,
       );
     }
+  }
+
+  /** The e-invoice (IRN) a bill already has in Tally, if any - a cancelled voucher's IRN is cancelled too, so it does not count. */
+  private async irnLock(challanId: number): Promise<{ vchNo: string | null; amount: number | null; irnAckNo: string } | null> {
+    const tv = await this.prisma.tallyVoucher.findUnique({ where: { challanId }, select: { vchNo: true, amount: true, irnAckNo: true, cancelled: true } });
+    return tv?.irnAckNo && !tv.cancelled ? { vchNo: tv.vchNo, amount: tv.amount, irnAckNo: tv.irnAckNo } : null;
+  }
+
+  /**
+   * An e-invoice (IRN) is final: what the government portal holds - party, invoice number, date, B amount and its GST - can no longer
+   * change here. Only C (the part that is not billed), transport and remarks may. B is compared with what Tally holds (OMS may still be
+   * corrected TO it); with no Tally amount, with the saved B. Applies to every bill that has an IRN, typed in Tally or posted by OMS.
+   */
+  private async assertIrnLock(
+    existing: { id: number; code: string; customerName: string; invDate: Date; b: number | null; tax: number | null },
+    dto: CreateChallanDto,
+  ): Promise<void> {
+    const lock = await this.irnLock(existing.id);
+    if (!lock) return;
+    const keepB = lock.amount ?? existing.b;
+    const rs = (v: number) => `₹${v.toLocaleString('en-IN')}`;
+    const changed: string[] = [];
+    if (keepB != null && Math.abs(n(dto.b) - keepB) > 1) changed.push(`B amount (${rs(keepB)} → ${rs(n(dto.b))})`);
+    if (existing.tax != null && dto.tax != null && Math.abs(dto.tax - existing.tax) > 1) changed.push(`GST amount (${rs(existing.tax)} → ${rs(dto.tax)})`);
+    if (dto.customerName.trim() !== existing.customerName) changed.push('party');
+    const typed = dto.code?.trim().toUpperCase();
+    if (typed && typed !== existing.code) changed.push('invoice number');
+    if (dto.invDate && new Date(dto.invDate).toDateString() !== existing.invDate.toDateString()) changed.push('invoice date');
+    if (!changed.length) return;
+    throw new BadRequestException(
+      `${existing.code} already has its e-invoice (IRN) in Tally${lock.vchNo ? ` (${lock.vchNo})` : ''}, so these cannot change: ${changed.join(', ')}. Only the C amount (and transport / remarks) can be edited.`,
+    );
   }
 
   /** Advance money applied to a bill, lifted off before the bill changes. */
@@ -1113,7 +1147,7 @@ export class ChallansService {
   /** Everything the form needs to EDIT a saved challan: the stored challan, the
    *  customer's still-available pool (to add more), and the saved lines re-priced
    *  with per-line rates (Form14 SearchBtn load). */
-  async editContext(id: number): Promise<{ challan: ChallanDto; draft: ChallanDraft; rows: ChallanDraftItem[] }> {
+  async editContext(id: number): Promise<ChallanEditContext> {
     const challan = await this.findOne(id);
     const draft = await this.draft({ customerName: challan.customerName });
     const customer = await this.prisma.customer.findFirst({ where: { partyName: challan.customerName } });
@@ -1149,16 +1183,17 @@ export class ChallansService {
         packingRate: rateFor(cat, 'PACKING'),
       };
     });
-    return { challan, draft, rows };
+    return { challan, draft, rows, irnLock: await this.irnLock(id) };
   }
 
   /** Replace a saved challan's header + lines (invoice no is preserved). */
   async update(id: number, dto: CreateChallanDto): Promise<ChallanDto> {
     const existing = await this.prisma.challan.findUnique({
       where: { id },
-      select: { id: true, code: true, customerId: true, customerName: true, invDate: true, b: true, c: true, challanStatus: true, transaction: true },
+      select: { id: true, code: true, customerId: true, customerName: true, invDate: true, b: true, c: true, tax: true, challanStatus: true, transaction: true },
     });
     if (!existing) throw new NotFoundException('Challan not found');
+    await this.assertIrnLock(existing, dto);
     await this.assertNotInTally(id, existing.code, 'edit it', false, dto.b ?? null);
     const scrap = isScrapCategory(dto.category);
     const { tcsPercent } = await this.settings.getTcsPercent();

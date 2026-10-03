@@ -30,7 +30,7 @@ import { Combobox } from '@/components/ui/combobox';
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from '@/components/ui/dialog';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
-import { POST_WAIT_MS } from './use-tally-post';
+import { postBill } from './use-tally-post';
 
 const KEY = ['tally', 'status'] as const;
 const MAP_KEY = ['tally', 'mapping'] as const;
@@ -283,7 +283,8 @@ function PostQueue({ canPost, canManage }: { canPost: boolean; canManage: boolea
     qc.invalidateQueries({ queryKey: QUEUE_KEY });
     qc.invalidateQueries({ queryKey: RECON_KEY });
   };
-  const post = useMutation({ mutationFn: (code: string) => http.post<TallyPostResult>('/tally/post', { code }, { timeout: POST_WAIT_MS }), onSuccess: done, onError: (e) => toast.error(getApiErrorMessage(e)) });
+  const askEway = (message: string) => confirm({ title: 'E-way bill needed', description: message, confirmText: 'Post it' });
+  const post = useMutation({ mutationFn: (code: string) => postBill('/tally/post', code, askEway), onSuccess: (r) => r && done(r), onError: (e) => toast.error(getApiErrorMessage(e)) });
   const resolve = useMutation({ mutationFn: (code: string) => http.post<TallyPostResult>('/tally/resolve', { code }), onSuccess: done, onError: (e) => toast.error(getApiErrorMessage(e)) });
   /** Ticked bills, by code, for "Post selected". */
   const [picked, setPicked] = useState<Set<string>>(new Set());
@@ -324,7 +325,11 @@ function PostQueue({ canPost, canManage }: { canPost: boolean; canManage: boolea
     try {
       for (let i = 0; i < list.length; i++) {
         setBulk({ done: i, total: list.length });
-        const r = await http.post<TallyPostResult>('/tally/post', { code: list[i].code }, { timeout: POST_WAIT_MS });
+        const r = await postBill('/tally/post', list[i].code, askEway);
+        if (!r) {
+          toast.warning(`Stopped at ${list[i].code} — ${list.length - i} bill(s) not posted.`);
+          break;
+        }
         done(r);
         setPicked((prev) => {
           const next = new Set(prev);
@@ -438,6 +443,7 @@ function PostQueue({ canPost, canManage }: { canPost: boolean; canManage: boolea
                         <div className="font-semibold">{r.code}</div>
                         <div className="text-muted-foreground text-xs">
                           {formatDate(r.date)} · {r.customerName} · B {rs(r.amount)}
+                          {r.ewayRequired && <span className="ml-1 rounded bg-amber-100 px-1.5 py-0.5 text-[10px] font-bold text-amber-800 dark:bg-amber-400/15 dark:text-amber-200" title="This party / transporter needs an e-way bill on every bill">E-WAY</span>}
                         </div>
                       </td>
                       <td className="py-2 pr-2">
@@ -800,10 +806,28 @@ export function TallySyncPage() {
     onError: (e) => toast.error(getApiErrorMessage(e)),
   });
 
+  // Wake the PC if it sleeps, ask its script to open Tally, then watch (up to 90 s) until Tally really answers.
   const start = useMutation({
-    mutationFn: () => http.post('/tally/start'),
-    onSuccess: () => toast.success('Asked the Tally PC to start Tally. It picks this up within ~20 seconds, then Tally opens and logs in by itself.'),
-    onError: (e) => toast.error(getApiErrorMessage(e)),
+    mutationFn: async () => {
+      toast.loading('Tally PC ko jagaa raha hoon...', { id: 'tally-start' });
+      const r = await http.post<{ requested: boolean; pc: 'up' | 'awake' | 'silent' }>('/tally/start', undefined, { timeout: 150_000 });
+      if (r.pc === 'silent') return { pc: r.pc, state: 'OFFLINE' as const };
+      toast.loading(r.pc === 'up' ? 'PC jaaga hai. Tally check kar raha hoon...' : 'PC jaaga hai. Tally khul raha hai aur login ho raha hai...', { id: 'tally-start' });
+      let state: TallyStatus['state'] = 'OFFLINE';
+      for (let i = 0; i < 30 && state !== 'OK'; i++) {
+        await new Promise((ok) => setTimeout(ok, 3000));
+        state = (await http.get<TallyStatus>('/tally/status')).state;
+      }
+      return { pc: r.pc, state };
+    },
+    onSuccess: ({ pc, state }) => {
+      if (state === 'OK') toast.success('Tally chalu hai aur company khuli hai.', { id: 'tally-start', duration: 8000 });
+      else if (pc === 'silent') toast.error('Tally PC network par dikh hi nahi raha: wo band/sleep hai, ya Wi-Fi se juda nahi hai, ya Wi-Fi par sleep se jaag nahi paya. Tally PC par Wi-Fi icon dekho (OMS wale router se juda ho), ya PC ko haath se jagaao.', { id: 'tally-start', duration: 15000 });
+      else if (state === 'OFFLINE') toast.warning('PC jaaga hai par Tally abhi tak nahi khula. Tally PC ki screen dekho (koi box ya login ruka ho sakta hai).', { id: 'tally-start', duration: 15000 });
+      else toast.warning('Tally khula hai par sahi company nahi khuli. Tally PC ki screen dekho.', { id: 'tally-start', duration: 15000 });
+      qc.invalidateQueries({ queryKey: KEY });
+    },
+    onError: (e) => toast.error(getApiErrorMessage(e), { id: 'tally-start' }),
   });
 
   const [url, setUrl] = useState('');
@@ -845,7 +869,7 @@ export function TallySyncPage() {
               {canManage && data.state !== 'OK' && (
                 <Button size="sm" onClick={() => start.mutate()} disabled={start.isPending}>
                   {start.isPending ? <Loader2 className="size-3.5 animate-spin" /> : <Power className="size-3.5" />}
-                  Start Tally on the Tally PC
+                  {start.isPending ? 'Tally PC ko jagaa kar check kar raha hoon...' : 'Start Tally on the Tally PC'}
                 </Button>
               )}
             </>

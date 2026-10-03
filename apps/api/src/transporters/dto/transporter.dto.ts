@@ -1,6 +1,6 @@
 import { PartialType } from '@nestjs/swagger';
 import { Type } from 'class-transformer';
-import { IsArray, IsNumber, IsOptional, IsString, Matches, MaxLength, MinLength } from 'class-validator';
+import { IsArray, IsBoolean, IsNumber, IsOptional, IsString, Matches, MaxLength, MinLength } from 'class-validator';
 import { PaginationDto } from '../../common/dto/pagination.dto';
 
 export class CreateTransporterDto {
@@ -24,6 +24,11 @@ export class CreateTransporterDto {
   @IsString()
   @Matches(/^([0-9A-Za-z]{15})?$/, { message: 'Transporter GSTIN / ID must be 15 letters and digits.' })
   gstin?: string;
+
+  /** An e-way bill is needed on every bill sent with this transporter. */
+  @IsOptional()
+  @IsBoolean()
+  ewayMandatory?: boolean;
 }
 
 export class UpdateTransporterDto extends PartialType(CreateTransporterDto) {}

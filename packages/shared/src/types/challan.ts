@@ -498,6 +498,8 @@ export interface ChallanEditContext {
   challan: ChallanDto;
   draft: ChallanDraft;
   rows: ChallanDraftItem[];
+  /** The bill already has its e-invoice (IRN) in Tally: B, its GST, party, number and date are final; only C may change. */
+  irnLock?: { vchNo: string | null; amount: number | null; irnAckNo: string } | null;
 }
 
 /* ── Missing Challan (legacy MissingChallanForm): gaps in a prefix/FY invoice-

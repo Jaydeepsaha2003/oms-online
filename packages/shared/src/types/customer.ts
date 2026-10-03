@@ -94,6 +94,8 @@ export interface CustomerDto {
   /** E-way bill transporter for this party when not the challan's own (e.g. a booking agent's onward carrier). */
   ewayTransporter: string | null;
   ewayTransporterGstin: string | null;
+  /** An e-way bill is needed on every bill of this party, whatever the amount. */
+  ewayMandatory: boolean;
   /** Tally "Under" account group. */
   groupId: number | null;
   bagName: string | null;
@@ -143,6 +145,7 @@ export interface CustomerInput {
   transportName?: string | null;
   ewayTransporter?: string | null;
   ewayTransporterGstin?: string | null;
+  ewayMandatory?: boolean;
   groupId?: number | null;
   bagName?: string | null;
   packing?: number | null;

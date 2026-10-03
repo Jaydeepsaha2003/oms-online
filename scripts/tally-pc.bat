@@ -1,4 +1,13 @@
 @echo off
-rem Tally PC, all in one: tells OMS this PC address, opens Tally + logs in if needed, then e-invoices every posted bill. Runs by itself at logon after the first double-click. Leave the window open.
-powershell -NoProfile -ExecutionPolicy Bypass -File "%~dp0tally-pc.ps1" %*
-pause
+rem Tally PC automation, hidden in the background (a tray icon + the desktop icon show its details).
+rem   no argument : starts it - or, if it already runs, only shows its details window
+rem   "auto"      : what the Startup shortcut runs at logon (starts quietly, no window)
+rem   anything else (-EnableWake, -List, -Once): runs visibly and waits for a key
+if "%~1"=="" (
+  start "" /min powershell -NoProfile -WindowStyle Hidden -ExecutionPolicy Bypass -File "%~dp0tally-pc.ps1" -Show
+) else if /i "%~1"=="auto" (
+  start "" /min powershell -NoProfile -WindowStyle Hidden -ExecutionPolicy Bypass -File "%~dp0tally-pc.ps1"
+) else (
+  powershell -NoProfile -ExecutionPolicy Bypass -File "%~dp0tally-pc.ps1" %*
+  pause
+)

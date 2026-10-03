@@ -15,6 +15,7 @@ import { ExportButton, ImportButton } from '@/components/common/excel-actions';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
+import { Switch } from '@/components/ui/switch';
 import {
   Dialog,
   DialogContent,
@@ -393,6 +394,7 @@ function TransporterDialog({
 
   const [name, setName] = useState(transporter?.name ?? '');
   const [gstin, setGstin] = useState(transporter?.gstin ?? '');
+  const [ewayMandatory, setEwayMandatory] = useState(transporter?.ewayMandatory ?? false);
 
   /*
    * Packing / Freight are deliberately NOT edited here any more.
@@ -409,7 +411,7 @@ function TransporterDialog({
    */
   const submit = () => {
     if (!name.trim()) return toast.error('Transporter name is required');
-    const input = { name: name.trim(), gstin: gstin.trim().toUpperCase() };
+    const input = { name: name.trim(), gstin: gstin.trim().toUpperCase(), ewayMandatory };
     const opts = {
       onSuccess: () => {
         toast.success(isEdit ? 'Transporter updated' : 'Transporter created');
@@ -462,6 +464,14 @@ function TransporterDialog({
             <Label>Transporter GSTIN / ID (e-way bill)</Label>
             <Input className="font-mono uppercase" maxLength={15} value={gstin} onChange={(e) => setGstin(e.target.value)} placeholder="27AQPPA8387D1ZJ" />
             <p className="text-muted-foreground text-xs">Sent to Tally with every bill, so the e-way bill has the transporter already filled.</p>
+          </div>
+          <div className="space-y-2">
+            <Label>E-way bill mandatory</Label>
+            <div className="flex h-9 items-center gap-2">
+              <Switch checked={ewayMandatory} onCheckedChange={setEwayMandatory} />
+              <span className="text-muted-foreground text-[12.5px] font-medium">{ewayMandatory ? 'Yes' : 'No'}</span>
+            </div>
+            <p className="text-muted-foreground text-xs">Yes = every bill sent with this transporter gets an e-way bill, even under Tally's ₹50,000 limit.</p>
           </div>
           <DialogFooter>
             <Button type="button" variant="outline" onClick={onClose}>

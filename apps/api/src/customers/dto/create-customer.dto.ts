@@ -69,6 +69,11 @@ export class CreateCustomerDto {
   @Matches(/^([0-9A-Za-z]{15})?$/, { message: 'E-way transporter GSTIN / ID must be 15 letters and digits.' })
   ewayTransporterGstin?: string;
 
+  /** An e-way bill is needed on every bill of this party. */
+  @IsOptional()
+  @IsBoolean()
+  ewayMandatory?: boolean;
+
   @IsOptional()
   @Type(() => Number)
   @IsInt()

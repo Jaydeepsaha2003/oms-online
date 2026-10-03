@@ -63,6 +63,7 @@ import {
   useChallanNextCode,
   useChallanPrefixSettings,
   useCreateChallan,
+  useTallyLatestInvoice,
   useUpdateChallan,
 } from './use-challans';
 import { clearChallanDraft, loadChallanDraft, saveChallanDraft, type ChallanDraftData } from './challan-draft';
@@ -198,6 +199,7 @@ export function ChallanFormPage() {
 
   const draft = isEdit ? editQ.data?.draft : createDraftQ.data;
   const savedChallan = editQ.data?.challan;
+  const irnLock = isEdit ? (editQ.data?.irnLock ?? null) : null; // e-invoice (IRN) already in Tally: only C may change
   const isError = isEdit ? editQ.isError : createDraftQ.isError;
 
   // Tracks which screen the one-time init below has already run for. Declared
@@ -615,6 +617,32 @@ export function ChallanFormPage() {
     [rows, freight, packing, pouch, gstPct, billingRate, noBill, noBillRemoveGst, draft, manualTax, manualB, manualC],
   );
 
+  // E-invoice (IRN) already issued in Tally: B, its GST, the party, the number and the date are final - only C may change.
+  const lockedB = irnLock ? (irnLock.amount ?? savedChallan?.b ?? null) : null;
+  const irnBlock = useMemo(() => {
+    const out: string[] = [];
+    if (!irnLock || !savedChallan) return out;
+    if (lockedB != null && Math.abs(totals.b - lockedB) > 1) out.push(`B amount ${inr(lockedB)} → ${inr(totals.b)}`);
+    if (savedChallan.tax != null && Math.abs(totals.tax - savedChallan.tax) > 1) out.push(`GST amount ${inr(savedChallan.tax)} → ${inr(totals.tax)}`);
+    if (manualCode.trim() && manualCode.trim().toUpperCase() !== savedChallan.code) out.push('invoice number');
+    if (invDate && new Date(invDate).toDateString() !== new Date(savedChallan.invDate).toDateString()) out.push('invoice date');
+    return out;
+  }, [irnLock, savedChallan, lockedB, totals.b, totals.tax, manualCode, invDate]);
+  // A bill whose saved B / GST were typed in by hand (not what its lines work out to) keeps those values, so the check above starts
+  // from the bill as it is. Once per bill, right after its lines are loaded.
+  const irnSeeded = useRef<number | null>(null);
+  useEffect(() => {
+    if (!irnLock || !savedChallan || irnSeeded.current === savedChallan.id || rows.length === 0) return;
+    irnSeeded.current = savedChallan.id;
+    const auto = computeChallanTotals({
+      items: rows, freight: numOr(freight), packing: numOr(packing), pouch: numOr(pouch), gstRatePct: numOr(gstPct), billingRate: numOr(billingRate), noBill, noBillRemoveGst,
+      isScrap: draft?.isScrap ?? false, tcsPercent: draft?.tcsPercent ?? 1, tdsApplicable: draft?.tdsApplicable ?? false, tdsPercent: draft?.tdsPercent ?? 0,
+      taxOverride: null, bOverride: null, cOverride: null,
+    });
+    if (savedChallan.tax != null && Math.abs(auto.tax - savedChallan.tax) > 1) setManualTax(String(savedChallan.tax));
+    if (lockedB != null && Math.abs(auto.b - lockedB) > 1) setManualB(String(lockedB));
+  }, [irnLock, savedChallan, rows, lockedB]); // eslint-disable-line react-hooks/exhaustive-deps
+
   const resetForm = () => {
     initedRef.current = '';
     clearChallanDraft();
@@ -674,6 +702,7 @@ export function ChallanFormPage() {
    */
   const save = async ({ thenPrint = false }: { thenPrint?: boolean } = {}) => {
     if (!draft || rows.length === 0) return toast.error('Add at least one item.');
+    if (irnBlock.length > 0) return toast.error(`E-invoice (IRN) already issued: ${irnBlock.join('; ')} cannot change. Only C amount can.`);
     // An unpriced line silently inherits the highest GST rate on the challan
     // (the server takes Math.max across lines), so a wrong rate is invisible in
     // the totals. Block rather than let that ship.
@@ -1052,7 +1081,7 @@ export function ChallanFormPage() {
               {/* Settlement — B/C Amount (pencil to override) + No Bill, on the party card. */}
               {draft && (
                 <div className="mt-1.5 flex flex-wrap items-center gap-x-4 gap-y-1.5 border-t border-border/50 pt-1.5">
-                  <EditableAmount label="B Amount" computed={totals.b} manual={manualB} onManual={setManualB} />
+                  <EditableAmount label="B Amount" computed={totals.b} manual={manualB} onManual={setManualB} locked={!!irnLock} />
                   <EditableAmount label="C Amount" computed={totals.c} manual={manualC} onManual={setManualC} />
                   <label
                     className={cn(
@@ -1117,9 +1146,12 @@ export function ChallanFormPage() {
                   {isEdit ? (
                     <NativeSelect value={status} onChange={setStatus} options={[...CHALLAN_STATUSES]} className="bg-background h-8 w-full rounded-[4px] text-[13px]" />
                   ) : (
-                    <span className="inline-flex items-center gap-1.5 rounded-[4px] bg-emerald-100 px-2 py-1 text-[13px] font-bold text-emerald-700 dark:bg-emerald-500/15 dark:text-emerald-300">
-                      <span className="size-1.5 rounded-full bg-emerald-500" /> CONFIRMED
-                    </span>
+                    <div className="flex flex-wrap items-center gap-1.5">
+                      <span className="inline-flex items-center gap-1.5 rounded-[4px] bg-emerald-100 px-2 py-1 text-[13px] font-bold text-emerald-700 dark:bg-emerald-500/15 dark:text-emerald-300">
+                        <span className="size-1.5 rounded-full bg-emerald-500" /> CONFIRMED
+                      </span>
+                      <TallyLatestChip code={effectiveCode} />
+                    </div>
                   )}
                 </MetaCell>
                 <MetaCell label="Due Date" icon={CalendarCheck2}>
@@ -1144,6 +1176,26 @@ export function ChallanFormPage() {
             </div>
           </div>
         </div>
+
+        {irnLock && (
+          <div
+            className={cn(
+              'flex items-start gap-2 border-t px-4 py-2.5 text-[13px]',
+              irnBlock.length > 0
+                ? 'border-red-200 bg-red-50 text-red-800 dark:border-red-400/25 dark:bg-red-500/10 dark:text-red-200'
+                : 'border-amber-200 bg-amber-50 text-amber-900 dark:border-amber-400/25 dark:bg-amber-400/10 dark:text-amber-100',
+            )}
+          >
+            <Lock className="mt-0.5 size-4 shrink-0" />
+            <div>
+              <b>E-invoice (IRN) already issued</b> in Tally{irnLock.vchNo ? ` (${irnLock.vchNo})` : ''}. B amount{lockedB != null ? ` ${inr(lockedB)}` : ''}, its GST, the party,
+              the invoice number and the date are locked — only the <b>C amount</b> (and transport / remarks) can change.
+              {irnBlock.length > 0 && (
+                <div className="mt-1 font-semibold">Cannot save yet: {irnBlock.join('; ')}. Undo that change, or change only C.</div>
+              )}
+            </div>
+          </div>
+        )}
 
         {!isEdit && !customer && (
           <div className="text-muted-foreground border-t p-6 text-center text-sm sm:p-8">Choose a customer to begin.</div>
@@ -1513,8 +1565,8 @@ export function ChallanFormPage() {
           {draft && (
             <Button
               onClick={() => void save()}
-              disabled={saving || rows.length === 0}
-              title={`${isEdit ? 'Update' : 'Create'} challan (Ctrl+S) — Ctrl+P saves and prints`}
+              disabled={saving || rows.length === 0 || irnBlock.length > 0}
+              title={irnBlock.length > 0 ? `E-invoice (IRN) already issued: ${irnBlock.join('; ')} cannot change` : `${isEdit ? 'Update' : 'Create'} challan (Ctrl+S) — Ctrl+P saves and prints`}
               className="flex-[2] sm:flex-none"
             >
               {saving ? <Loader2 className="animate-spin" /> : <Check />} {isEdit ? 'Update Challan' : 'Create Challan'}
@@ -1541,6 +1593,52 @@ export function ChallanFormPage() {
         onSaved={applyFreshRates}
       />
     </div>
+  );
+}
+
+/**
+ * Beside CONFIRMED on a new challan: the latest SSS bill number Tally holds, so the person can see at a glance that OMS's next
+ * number follows Tally's. Green = it follows directly. Amber = bills in between are not in Tally yet. Red = Tally is already at or
+ * past this number. Grey = Tally could not be read (the form works without it). Other series (NB...) never go to Tally: no chip.
+ */
+function TallyLatestChip({ code }: { code: string }) {
+  const q = useTallyLatestInvoice();
+  const m = /^SSS\/(\d\d-\d\d)\/(\d+)$/i.exec(code.trim());
+  if (!m) return null;
+  const chip = 'inline-flex items-center gap-1 rounded-[4px] px-2 py-1 text-[11px] font-semibold whitespace-nowrap';
+  if (q.isPending) return <span className={cn(chip, 'text-muted-foreground')}>Tally…</span>;
+  const latest = q.data?.latest;
+  if (!latest) {
+    return (
+      <span className={cn(chip, 'bg-muted text-muted-foreground')} title={q.data?.reason ?? 'No answer from Tally'}>
+        Tally: —
+      </span>
+    );
+  }
+  const gap = Number(m[2]) - latest.n;
+  const detail = `Latest bill in Tally: ${latest.vchNo}${latest.party ? ` — ${latest.party}` : ''}${latest.date ? `, ${formatDate(latest.date)}` : ''}.`;
+  let tone = 'bg-muted text-muted-foreground';
+  let text = `Tally last ${latest.vchNo}`;
+  let note = '';
+  if (latest.fy === m[1]) {
+    if (gap === 1) {
+      tone = 'bg-emerald-100 text-emerald-700 dark:bg-emerald-500/15 dark:text-emerald-300';
+      text += ' ✓';
+      note = ` This challan (${code}) is the next number.`;
+    } else if (gap > 1) {
+      tone = 'bg-amber-100 text-amber-800 dark:bg-amber-400/15 dark:text-amber-200';
+      text += ` · ${gap - 1} not in Tally yet`;
+      note = ` ${gap - 1} OMS bill(s) before ${code} are not posted to Tally yet (Tally Sync Center).`;
+    } else {
+      tone = 'bg-red-100 text-red-700 dark:bg-red-500/15 dark:text-red-300';
+      text += gap === 0 ? ' · already used in Tally' : ' · Tally is ahead';
+      note = ` Tally is not behind ${code}: check the number before saving.`;
+    }
+  }
+  return (
+    <span className={cn(chip, tone)} title={detail + note}>
+      {text}
+    </span>
   );
 }
 
@@ -1600,11 +1698,14 @@ function EditableAmount({
   computed,
   manual,
   onManual,
+  locked,
 }: {
   label: string;
   computed: number;
   manual: string;
   onManual: (v: string) => void;
+  /** E-invoice (IRN) issued: the amount is final, no editing. */
+  locked?: boolean;
 }) {
   const [editing, setEditing] = useState(false);
   const inputRef = useRef<HTMLInputElement>(null);
@@ -1630,10 +1731,14 @@ function EditableAmount({
       ) : (
         <div className="flex items-center gap-1.5">
           <span className="text-[15px] leading-tight font-bold tabular-nums">₹{Number(display || 0).toLocaleString('en-IN')}</span>
-          <button type="button" onClick={() => setEditing(true)} title={`Edit ${label}`} className="text-muted-foreground hover:text-primary">
-            <Pencil className="size-3.5" />
-          </button>
-          {isManual && (
+          {locked ? (
+            <Lock className="text-muted-foreground size-3.5" aria-label="Locked" />
+          ) : (
+            <button type="button" onClick={() => setEditing(true)} title={`Edit ${label}`} className="text-muted-foreground hover:text-primary">
+              <Pencil className="size-3.5" />
+            </button>
+          )}
+          {isManual && !locked && (
             <button type="button" onClick={() => onManual('')} title="Reset to auto" className="text-amber-600 hover:text-amber-700">
               <RotateCcw className="size-3" />
             </button>

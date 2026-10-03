@@ -45,6 +45,7 @@ const EMPTY = {
   transportName: '',
   ewayTransporter: '',
   ewayTransporterGstin: '',
+  ewayMandatory: false,
   bagName: '',
   packing: '',
   freight: '',
@@ -117,6 +118,7 @@ export function CustomerFormPage() {
       transportName: existing.transportName ?? '',
       ewayTransporter: existing.ewayTransporter ?? '',
       ewayTransporterGstin: existing.ewayTransporterGstin ?? '',
+      ewayMandatory: existing.ewayMandatory ?? false,
       bagName: existing.bagName ?? '',
       packing: existing.packing?.toString() ?? '',
       freight: existing.freight?.toString() ?? '',
@@ -232,6 +234,7 @@ export function CustomerFormPage() {
       transportName: form.transportName || null,
       ewayTransporter: form.ewayTransporter.trim() || null,
       ewayTransporterGstin: form.ewayTransporterGstin.trim() || null,
+      ewayMandatory: form.ewayMandatory,
       bagName: form.bagName || null,
       packing: numOrNull(form.packing),
       freight: numOrNull(form.freight),
@@ -471,6 +474,13 @@ export function CustomerFormPage() {
               Empty = the e-way bill uses the Transport Name's own GSTIN. */}
           <Field label="E-way Transporter">
             <Input value={form.ewayTransporter} onChange={(e) => set('ewayTransporter', e.target.value)} placeholder="Same as Transport Name" />
+          </Field>
+          {/* Yes = every bill of this party gets an e-way bill, even under Tally's threshold (50,000 / 1,00,000). */}
+          <Field label="E-way Bill Mandatory">
+            <div className="flex h-9 items-center gap-2">
+              <Switch checked={form.ewayMandatory} onCheckedChange={(v) => setForm((f) => ({ ...f, ewayMandatory: v }))} />
+              <span className="text-muted-foreground text-[12.5px] font-medium">{form.ewayMandatory ? 'Yes' : 'No'}</span>
+            </div>
           </Field>
           <Field label="E-way Transporter GSTIN">
             <Input value={form.ewayTransporterGstin} maxLength={15} onChange={(e) => set('ewayTransporterGstin', e.target.value.toUpperCase())} placeholder="15 letters and digits" />

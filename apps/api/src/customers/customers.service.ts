@@ -628,6 +628,7 @@ export class CustomersService {
       // Only when sent, so a caller that doesn't know these fields never clears them.
       ...(dto.ewayTransporter !== undefined ? { ewayTransporter: uc(dto.ewayTransporter) } : {}),
       ...(dto.ewayTransporterGstin !== undefined ? { ewayTransporterGstin: uc(dto.ewayTransporterGstin) } : {}),
+      ...(dto.ewayMandatory !== undefined ? { ewayMandatory: dto.ewayMandatory } : {}),
       groupId: dto.groupId,
       bagName: uc(dto.bagName),
       packing: dto.packing ?? transporter?.packing ?? null,
@@ -706,6 +707,7 @@ export class CustomersService {
       transportName: r.transportName,
       ewayTransporter: r.ewayTransporter,
       ewayTransporterGstin: r.ewayTransporterGstin,
+      ewayMandatory: r.ewayMandatory,
       groupId: r.groupId,
       bagName: r.bagName,
       packing: r.packing,
