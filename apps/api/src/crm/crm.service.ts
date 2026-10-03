@@ -336,7 +336,7 @@ export class CrmService {
       this.prisma.followup.findMany({ where, include: INCLUDE, orderBy: this.listOrder(), skip: q.skip, take: q.pageSize }),
       this.prisma.followup.count({ where }),
     ]);
-    const items = rows.map((r) => this.toDto(r)).filter((f) => this.matchesBucket(f, q.bucket));
+    const items = await this.withReceived(rows.map((r) => this.toDto(r)).filter((f) => this.matchesBucket(f, q.bucket)));
     return { items, total, page: q.page, pageSize: q.pageSize, totalPages: Math.max(1, Math.ceil(total / q.pageSize)) };
   }
 
@@ -380,6 +380,7 @@ export class CrmService {
       groups.set(key, g);
     }
     const out = [...groups.values()];
+    await this.withReceived(out.flatMap((g) => g.items));
     // Completed work reads best newest-first (what was just finished); open work
     // leads with whoever is most overdue / actively nudging.
     if (!isOpen) {
@@ -390,6 +391,37 @@ export class CrmService {
     return out.sort(
       (a, b) => b.overdueCount - a.overdueCount || b.activeNudges - a.activeNudges || (a.nextPromiseAt ?? '9999') < (b.nextPromiseAt ?? '9999') ? -1 : 1,
     );
+  }
+
+  /**
+   * Fill `receivedSince` on payment follow-ups: the party's receipts from the
+   * day the follow-up was logged up to the day it was closed (or today), so the
+   * card can show what was promised against what actually came in. One query
+   * for the whole page, summed here.
+   */
+  private async withReceived(items: FollowupDto[]): Promise<FollowupDto[]> {
+    const pay = items.filter((f) => f.kind === 'PAYMENT' && f.customerId != null);
+    if (!pay.length) return items;
+    const dayOf = (iso: string) => {
+      const d = new Date(iso);
+      d.setHours(0, 0, 0, 0);
+      return d;
+    };
+    const from = new Date(Math.min(...pay.map((f) => dayOf(f.createdAt).getTime())));
+    const receipts = await this.prisma.acctLedger.findMany({
+      where: { voucherType: 'RECEIPT', custId: { in: [...new Set(pay.map((f) => f.customerId!))] }, transDate: { gte: from } },
+      select: { custId: true, transDate: true, bankCredit: true, cashCredit: true },
+    });
+    for (const f of pay) {
+      const start = dayOf(f.createdAt).getTime();
+      const end = f.resolvedAt ? dayOf(f.resolvedAt).getTime() + 86_400_000 : Infinity;
+      f.receivedSince = Math.round(
+        receipts
+          .filter((r) => r.custId === f.customerId && r.transDate.getTime() >= start && r.transDate.getTime() < end)
+          .reduce((sum, r) => sum + r.bankCredit + r.cashCredit, 0),
+      );
+    }
+    return items;
   }
 
   async summary(kind?: string): Promise<FollowupSummary> {

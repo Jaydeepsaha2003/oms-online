@@ -31,7 +31,7 @@ export function usePostToTally(path = '/tally/post', listKey = 'challans') {
   const qc = useQueryClient();
   const confirm = useConfirm();
   const m = useMutation({
-    mutationFn: (code: string) => postBill(path, code, (message) => confirm({ title: 'E-way bill needed', description: message, confirmText: 'Post it' })),
+    mutationFn: (code: string) => postBill(path, code, (message) => confirm({ title: 'Check before posting', description: message, confirmText: 'Post it' })),
     onSuccess: (r) => {
       if (!r) return; // said no to the e-way notice
       const say = r.status === 'POSTED' ? toast.success : r.status === 'FAILED' ? toast.error : toast.warning;

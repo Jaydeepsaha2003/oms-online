@@ -592,7 +592,8 @@ export class ChallansService {
     const [rows, total] = await this.prisma.$transaction([
       this.prisma.challan.findMany({
         where,
-        orderBy: [{ invDate: 'desc' }, { id: 'desc' }],
+        // Newest bill number first within a day (id order broke when two numbers were swapped). ponytail: text order, "…/1000" sorts below "…/999" on the day it is reached.
+        orderBy: [{ invDate: 'desc' }, { code: 'desc' }],
         skip: q.skip,
         take: q.pageSize,
         include: { items: true, tallyVoucher: { select: { status: true, vchNo: true, irnAckNo: true, eWayBillNo: true } } },
@@ -962,7 +963,7 @@ export class ChallansService {
   async exportAll(q: ChallanQueryDto): Promise<{ items: ChallanDto[] }> {
     const rows = await this.prisma.challan.findMany({
       where: this.listWhere(q, await this.agentScope(q)),
-      orderBy: [{ invDate: 'desc' }, { id: 'desc' }],
+      orderBy: [{ invDate: 'desc' }, { code: 'desc' }],
       include: { items: true },
     });
     return { items: rows.map((r) => this.map(r)) };

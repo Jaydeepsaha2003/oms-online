@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from 'react';
-import { useSearchParams } from 'react-router-dom';
+import { useNavigate, useSearchParams } from 'react-router-dom';
 import { AlarmClock, Bell, Building2, EllipsisVertical, CalendarDays, Check, ChevronDown, CircleCheck, Clock, Eye, Factory, Flag, HandCoins, Handshake, Info, ListChecks, Loader2, MessageSquare, MessageSquarePlus, Mic, Package, PackageCheck, Pencil, Plus, RotateCcw, Search, SlidersHorizontal, Sparkles, Trash2, TriangleAlert, Truck, Wallet, type LucideIcon } from 'lucide-react';
 import { toast } from 'sonner';
 import { type FollowupDto, type FollowupKind, type FollowupPartyGroup } from '@oms/shared';
@@ -543,7 +543,12 @@ function FollowupRow({ f, canEdit, onEdit, done }: { f: FollowupDto; canEdit: bo
   const reopen = useReopenFollowup();
   const del = useDeleteFollowup();
   const { can } = usePermissions();
+  const navigate = useNavigate();
   const line = itemLine(f);
+  /** Promised vs actually paid since this follow-up was logged (payment only). */
+  const promised = f.kind === 'PAYMENT' ? (f.promisedAmount ?? 0) : 0;
+  const received = f.receivedSince ?? 0;
+  const short = Math.max(0, promised - received);
   const doSnooze = () =>
     snooze.mutate(f.id, {
       onSuccess: () => toast.success('Snoozed — will nudge again later'),
@@ -630,6 +635,23 @@ function FollowupRow({ f, canEdit, onEdit, done }: { f: FollowupDto; canEdit: bo
         </div>
       )}
 
+      {/* What was promised against what actually came in — a short payment
+          stands out, since that is what a party is put on hold for. */}
+      {promised > 0 && f.receivedSince != null && (
+        <div
+          className={cn(
+            'mt-1.5 flex flex-wrap items-center gap-x-2 gap-y-0.5 rounded-lg border px-2.5 py-1.5 text-xs',
+            short > 0
+              ? 'border-rose-200 bg-rose-50 text-rose-900 dark:border-rose-500/30 dark:bg-rose-500/10 dark:text-rose-200'
+              : 'border-emerald-200 bg-emerald-50 text-emerald-900 dark:border-emerald-500/30 dark:bg-emerald-500/10 dark:text-emerald-200',
+          )}
+        >
+          <span>Promised <b className="tabular-nums">{inrFull(promised)}</b></span>
+          <span>· Received <b className="tabular-nums">{inrFull(received)}</b> since {formatDate(f.createdAt)}</span>
+          <span className="font-extrabold">{short > 0 ? `· ${inrFull(short)} short` : '· Promise kept'}</span>
+        </div>
+      )}
+
       {/* Checklist — tick tasks off as they're finished */}
       {(f.checklist ?? []).length > 0 && <ChecklistProgress f={f} canEdit={canEdit} />}
 
@@ -674,6 +696,18 @@ function FollowupRow({ f, canEdit, onEdit, done }: { f: FollowupDto; canEdit: bo
               <Button size="sm" variant="outline" className="rp-act rp-act-ghost pd-btn h-8 cursor-pointer text-xs" onClick={() => setLogOpen(true)}>
                 <MessageSquarePlus className="size-3.5" /> Update
               </Button>
+              {/* Receive the payment: Receive Payment opens on this party with
+                  what is still owed on the promise (or the promise) filled in. */}
+              {f.kind === 'PAYMENT' && can('payment:create') && (
+                <Button
+                  size="sm"
+                  variant="outline"
+                  className="rp-act rp-act-ghost pd-btn h-8 cursor-pointer text-xs text-emerald-700"
+                  onClick={() => navigate('/account/payment', { state: { party: f.partyName, amount: short || promised || undefined } })}
+                >
+                  <HandCoins className="size-3.5" /> Receive
+                </Button>
+              )}
               {/* Desktop has room for Snooze as a button, as in the mockup; on a
                   phone it stays in the menu so the row keeps two buttons. */}
               <Button

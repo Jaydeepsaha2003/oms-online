@@ -375,12 +375,22 @@ export class TallyPostingService {
     await this.expireStale();
     const c = await this.prisma.challan.findUnique({ where: { code: code.trim().toUpperCase() }, select: CHALLAN_SELECT });
     if (!c) throw new NotFoundException(`No invoice ${code.trim()} in OMS.`);
-    // The person posting is told first (before anything is sent, before the PC is woken): this party / transporter needs an e-way bill.
-    if (!ewayAck && (await this.ewayNeeded(c))) {
-      throw new ConflictException({
-        message: `${c.customerName} (or its transporter) needs an E-WAY BILL on every bill. ${c.code} is ₹${(c.b ?? 0).toLocaleString('en-IN')}, so Tally would not ask for one by itself: the Tally PC will make it anyway, with the e-invoice. Post it?`,
-        error: 'EWAY_NOTICE',
-      });
+    // The person posting is told first (before anything is sent, before the PC is woken): this party's note (app_config TALLY_BILL_NOTES,
+    // {"PARTY NAME": "text"}) and / or that it needs an e-way bill whatever the amount. One yes ("ewayAck") covers both.
+    if (!ewayAck) {
+      const noteRow = await this.prisma.appConfig.findUnique({ where: { key: 'TALLY_BILL_NOTES' } });
+      const note = noteRow ? (JSON.parse(noteRow.value) as Record<string, string>)[c.customerName.trim().toUpperCase()] : undefined;
+      const eway = await this.ewayNeeded(c);
+      if (note || eway) {
+        throw new ConflictException({
+          message: [
+            note && `NOTE for ${c.customerName}: ${note}`,
+            eway && `${c.customerName} (or its transporter) needs an E-WAY BILL on every bill. ${c.code} is ₹${(c.b ?? 0).toLocaleString('en-IN')}, so Tally would not ask for one by itself: the Tally PC will make it anyway, with the e-invoice.`,
+            'Post it?',
+          ].filter(Boolean).join(' '),
+          error: 'EWAY_NOTICE',
+        });
+      }
     }
     const tv = c.tallyVoucher;
     if (tv?.status === 'POSTED') throw new ConflictException(`${c.code} is already in Tally as ${tv.vchNo}.`);

@@ -95,6 +95,9 @@ export interface FollowupDto {
   promisedAt: string | null;
   /** Promise-to-pay amount (₹) for PAYMENT follow-ups. */
   promisedAmount: number | null;
+  /** PAYMENT only: what the party actually paid from the day this follow-up was
+   *  logged (to the day it was closed, if closed) — to set against the promise. */
+  receivedSince?: number | null;
   /** Per-follow-up reminder overrides (fall back to CRM defaults when null). */
   reminderIntervalMins: number | null;
   maxRemindersPerDay: number | null;

@@ -283,7 +283,7 @@ function PostQueue({ canPost, canManage }: { canPost: boolean; canManage: boolea
     qc.invalidateQueries({ queryKey: QUEUE_KEY });
     qc.invalidateQueries({ queryKey: RECON_KEY });
   };
-  const askEway = (message: string) => confirm({ title: 'E-way bill needed', description: message, confirmText: 'Post it' });
+  const askEway = (message: string) => confirm({ title: 'Check before posting', description: message, confirmText: 'Post it' });
   const post = useMutation({ mutationFn: (code: string) => postBill('/tally/post', code, askEway), onSuccess: (r) => r && done(r), onError: (e) => toast.error(getApiErrorMessage(e)) });
   const resolve = useMutation({ mutationFn: (code: string) => http.post<TallyPostResult>('/tally/resolve', { code }), onSuccess: done, onError: (e) => toast.error(getApiErrorMessage(e)) });
   /** Ticked bills, by code, for "Post selected". */
