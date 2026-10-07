@@ -205,6 +205,22 @@ model AuditLog {
   @@map("audit_logs")
 }
 
+/// Party Ledger "saved ranges": a period a party's ledger was checked / settled
+/// for. The latest `toDate` decides where the ledger's date filter starts the
+/// next time that party is opened. Dates are YYYY-MM-DD, as the filter holds them.
+model PartyLedgerPeriod {
+  id         Int      @id @default(autoincrement())
+  customerId Int
+  fromDate   String
+  toDate     String
+  note       String?
+  createdBy  String?
+  createdAt  DateTime @default(now())
+
+  @@index([customerId])
+  @@map("party_ledger_periods")
+}
+
 // ── App settings (key/value, surfaced on the Settings screen) ───────────────
 
 model Setting {

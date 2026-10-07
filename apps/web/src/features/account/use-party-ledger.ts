@@ -1,6 +1,6 @@
-import { useQuery } from '@tanstack/react-query';
+import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import type {
-  LedgerClearedResult, LedgerReceiptLine, PartyLedgerLookups, PartyLedgerQuery, PartyLedgerResult } from '@oms/shared';
+  LedgerClearedResult, LedgerReceiptLine, PartyLedgerLookups, PartyLedgerPeriodDto, PartyLedgerQuery, PartyLedgerResult } from '@oms/shared';
 import { http } from '@/lib/api';
 
 const KEY = ['party-ledger'] as const;
@@ -32,4 +32,30 @@ export function fetchLedgerCleared(voucherNo: string): Promise<LedgerClearedResu
  *  from the side the user is not looking at. */
 export function fetchLedgerReceipts(invNo: string, mode?: string): Promise<LedgerReceiptLine[]> {
   return http.get<LedgerReceiptLine[]>('/party-ledger/receipts', { params: { invNo, mode } });
+}
+
+/** A party's saved ranges (newest end date first). */
+export function usePartyLedgerPeriods(customerId: number | undefined) {
+  return useQuery({
+    queryKey: [...KEY, 'periods', customerId],
+    queryFn: () => http.get<PartyLedgerPeriodDto[]>('/party-ledger/periods', { params: { customerId } }),
+    enabled: customerId != null,
+  });
+}
+
+export function useSavePartyLedgerPeriod() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (body: { customerId: number; from: string; to: string; note?: string }) =>
+      http.post<PartyLedgerPeriodDto[]>('/party-ledger/periods', body),
+    onSuccess: (list, body) => qc.setQueryData([...KEY, 'periods', body.customerId], list),
+  });
+}
+
+export function useDeletePartyLedgerPeriod() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (p: { id: number; customerId: number }) => http.delete<PartyLedgerPeriodDto[]>(`/party-ledger/periods/${p.id}`),
+    onSuccess: (list, p) => qc.setQueryData([...KEY, 'periods', p.customerId], list),
+  });
 }
