@@ -1,7 +1,7 @@
 import { Body, Controller, Delete, Get, Param, ParseIntPipe, Patch, Post, Query, Res, StreamableFile } from '@nestjs/common';
 import type { Response } from 'express';
 import { ApiBearerAuth, ApiTags } from '@nestjs/swagger';
-import { ACTIONS, ALL_PERMISSIONS, ORDER_LINE_EXPORT_COLUMNS, perm, RESOURCES } from '@oms/shared';
+import { ACTIONS, ALL_PERMISSIONS, hasPermission, ORDER_LINE_EXPORT_COLUMNS, perm, RESOURCES } from '@oms/shared';
 import { Audit } from '../common/decorators/audit.decorator';
 import { CurrentUser } from '../common/decorators/current-user.decorator';
 import { AnyPermission, Permissions } from '../common/decorators/permissions.decorator';
@@ -60,10 +60,24 @@ export class OrdersController {
     return new StreamableFile(await this.excel.jsonToBuffer(rows, { sheetName: 'Order Lines', headers }));
   }
 
+  /**
+   * Also open to the dispatch floor: Booking Dispatch picks its items, design
+   * names and parties from here, and an operator has dispatch rights only.
+   * Someone who can neither see orders nor dispatch rates gets no prices —
+   * the same rule the Dispatch screens apply (`dispatch:viewrates`).
+   */
   @Get('lookups')
-  @Permissions(perm(R, ACTIONS.VIEW))
-  lookups() {
-    return this.orders.lookups();
+  @AnyPermission(perm(R, ACTIONS.VIEW), perm(RESOURCES.DISPATCH, ACTIONS.CREATE))
+  async lookups(@CurrentUser() user: AuthenticatedUser) {
+    const data = await this.orders.lookups();
+    const p = user.permissions;
+    if (hasPermission(p, perm(R, ACTIONS.VIEW)) || hasPermission(p, perm(RESOURCES.DISPATCH, ACTIONS.VIEWRATES))) return data;
+    return {
+      ...data,
+      products: data.products.map((x) => ({ ...x, rate: null })),
+      designs: data.designs.map((x) => ({ ...x, rate: null })),
+      productRows: data.productRows.map((x) => ({ ...x, rate: null })),
+    };
   }
 
   /** This party's earlier orders of the same item — the design name and photos

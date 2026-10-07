@@ -1,10 +1,11 @@
 import { Body, Controller, Delete, Get, Param, ParseIntPipe, Patch, Post, Query, Res } from '@nestjs/common';
 import type { Response } from 'express';
 import { ApiBearerAuth, ApiTags } from '@nestjs/swagger';
-import { ACTIONS, perm, RESOURCES } from '@oms/shared';
+import { ACTIONS, hasPermission, perm, RESOURCES } from '@oms/shared';
 import { Audit } from '../common/decorators/audit.decorator';
 import { Permissions } from '../common/decorators/permissions.decorator';
 import { CurrentUser } from '../common/decorators/current-user.decorator';
+import type { AuthenticatedUser } from '../common/types/authenticated-user';
 import { BookingsService } from './bookings.service';
 import {
   BookingQueryDto,
@@ -63,8 +64,15 @@ export class BookingsController {
   // caller is the dispatch floor, who are not necessarily allowed to browse
   // bookings.
   @Permissions(perm(RESOURCES.DISPATCH, ACTIONS.CREATE))
-  dispatchOptions(@Query('customerName') customerName?: string, @Query('pCategory') pCategory?: string) {
-    return this.bookings.dispatchOptions(customerName ?? null, pCategory ?? null);
+  async dispatchOptions(
+    @CurrentUser() user: AuthenticatedUser,
+    @Query('customerName') customerName?: string,
+    @Query('pCategory') pCategory?: string,
+  ) {
+    const options = await this.bookings.dispatchOptions(customerName ?? null, pCategory ?? null);
+    // Rates only for `dispatch:viewrates` — the server prices the lines itself.
+    if (hasPermission(user.permissions, perm(RESOURCES.DISPATCH, ACTIONS.VIEWRATES))) return options;
+    return { ...options, frozenRates: [], items: options.items.map((i) => ({ ...i, rate: null })) };
   }
 
   @Get(':id')
