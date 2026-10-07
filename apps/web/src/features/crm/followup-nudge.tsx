@@ -10,7 +10,7 @@ import { showSystemNotifications } from '@/lib/system-notification';
 import { formatDate } from '@/lib/date-format';
 import { Button } from '@/components/ui/button';
 import { useCrmSettings, useFollowupDue, useResolveFollowup, useSeenFollowup, useSnoozeFollowup } from './use-crm';
-import { Chip, itemLine, UrgencyChip } from './crm-shared';
+import { Chip, itemLine, SnoozeMenu, UrgencyChip } from './crm-shared';
 
 /**
  * When each follow-up last raised a banner, per browser.
@@ -171,7 +171,11 @@ export function FollowupNudge() {
     const workHours =
       hour >= (settings?.workStartHour ?? DEFAULT_CRM_SETTINGS.workStartHour) &&
       hour < (settings?.workEndHour ?? DEFAULT_CRM_SETTINGS.workEndHour);
-    const fresh = workHours ? due.filter((f) => now - lastNudgedAt(f) >= gapMs(f)) : [];
+    // A follow-up rescheduled AFTER its last nudge — snoozed for 15 min, or
+    // marked Seen until tomorrow — is due again the moment that time passes,
+    // whatever the general "remind every N mins" gap says.
+    const rescheduled = (f: FollowupDto) => !!f.nextRemindAt && new Date(f.nextRemindAt).getTime() > lastNudgedAt(f);
+    const fresh = workHours ? due.filter((f) => rescheduled(f) || now - lastNudgedAt(f) >= gapMs(f)) : [];
 
     let secondChime: ReturnType<typeof setTimeout> | undefined;
     // The sound decision is async now (it waits to hear whether the OS took the
@@ -200,8 +204,12 @@ export function FollowupNudge() {
         });
       }
 
-      // Add new followups to active banners list
-      setActiveBanners((prev) => {
+      // Banners only for reminders that come due while the app is open. The
+      // first batch after a (re)start is what was ALREADY pending: it is
+      // recorded above (so its gap starts now) but not popped up — the bell and
+      // the dashboard list it. Popping it on every launch is what made a
+      // restart look like a reminder.
+      if (started.current) setActiveBanners((prev) => {
         const existingIds = new Set(prev.map((b) => b.id));
         const toAdd = fresh
           .filter((f) => !existingIds.has(f.id))
@@ -374,20 +382,23 @@ function FollowupBannerNotification({
         >
           View
         </Button>
-        <Button
-          size="sm"
-          variant="ghost"
-          className="h-8 flex-1 text-xs justify-center text-amber-600 dark:text-amber-500 hover:bg-amber-50/50 dark:hover:bg-amber-950/20 font-semibold transition-colors"
-          disabled={snooze.isPending}
-          onClick={() =>
-            snooze.mutate(f.id, {
+        <SnoozeMenu
+          onPick={(minutes) =>
+            snooze.mutate({ id: f.id, minutes }, {
               onSuccess: onDismiss,
               onError: (e) => toast.error(getApiErrorMessage(e, 'Failed')),
             })
           }
         >
-          {snooze.isPending ? <Loader2 className="size-3 animate-spin" /> : <AlarmClock className="size-3.5 mr-1" />} Snooze
-        </Button>
+          <Button
+            size="sm"
+            variant="ghost"
+            className="h-8 flex-1 text-xs justify-center text-amber-600 dark:text-amber-500 hover:bg-amber-50/50 dark:hover:bg-amber-950/20 font-semibold transition-colors"
+            disabled={snooze.isPending}
+          >
+            {snooze.isPending ? <Loader2 className="size-3 animate-spin" /> : <AlarmClock className="size-3.5 mr-1" />} Snooze
+          </Button>
+        </SnoozeMenu>
         {/* Seen just acknowledges the nudge — the follow-up stays open. */}
         <Button
           size="sm"

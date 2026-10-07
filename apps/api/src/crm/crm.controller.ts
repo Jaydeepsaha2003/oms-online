@@ -12,6 +12,7 @@ import {
   CrmSettingsDto,
   FollowupQueryDto,
   ResolveFollowupDto,
+  SnoozeFollowupDto,
   UpdateChecklistItemDto,
   UpdateFollowupDto,
 } from './dto/crm.dto';
@@ -124,8 +125,8 @@ export class CrmController {
 
   @Post(':id/snooze')
   @Permissions(perm(R, ACTIONS.UPDATE))
-  snooze(@Param('id', ParseIntPipe) id: number, @CurrentUser('name') userName: string) {
-    return this.crm.snooze(id, userName);
+  snooze(@Param('id', ParseIntPipe) id: number, @Body() dto: SnoozeFollowupDto, @CurrentUser('name') userName: string) {
+    return this.crm.snooze(id, userName, dto.minutes);
   }
 
   @Post(':id/seen')

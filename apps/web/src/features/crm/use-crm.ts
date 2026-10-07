@@ -205,7 +205,10 @@ export function useAddFollowupLog() {
 }
 export function useSnoozeFollowup() {
   const qc = useQueryClient();
-  return useMutation({ mutationFn: (id: number) => http.post<FollowupDto>(`/crm/followups/${id}/snooze`, {}), onSuccess: () => invalidate(qc) });
+  return useMutation({
+    mutationFn: ({ id, minutes }: { id: number; minutes?: number }) => http.post<FollowupDto>(`/crm/followups/${id}/snooze`, minutes ? { minutes } : {}),
+    onSuccess: () => invalidate(qc),
+  });
 }
 /** Acknowledge a nudge — goes quiet until it's due again, but stays open. */
 export function useSeenFollowup() {

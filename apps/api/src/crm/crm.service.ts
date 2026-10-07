@@ -218,18 +218,19 @@ export class CrmService {
 
   /** Acknowledge without resolving — re-arms the reminder after the interval
    *  (clamped to working hours) and counts against the daily cap. */
-  async snooze(id: number, userName?: string): Promise<FollowupDto> {
+  async snooze(id: number, userName?: string, minutes?: number): Promise<FollowupDto> {
     const f = await this.ensure(id);
     if (f.status !== 'OPEN') throw new BadRequestException('Only an open follow-up can be snoozed.');
     const settings = await this.getSettings();
     const now = new Date();
-    const intervalMins = f.reminderIntervalMins ?? settings.intervalMins;
+    // The length the user picked (15 min … 4 h), else the reminder interval.
+    const intervalMins = minutes ?? f.reminderIntervalMins ?? settings.intervalMins;
     const next = this.clampToWorkHours(new Date(now.getTime() + intervalMins * 60_000), settings);
     const todayStr = this.dayStr(now);
     const remindersToday = (f.remindersDate === todayStr ? f.remindersToday : 0) + 1;
 
     await this.prisma.$transaction([
-      this.prisma.followupLog.create({ data: { followupId: id, kind: 'SNOOZE', note: `Snoozed ${intervalMins} min`, userName: userName ?? null } }),
+      this.prisma.followupLog.create({ data: { followupId: id, kind: 'SNOOZE', note: `Snoozed ${intervalMins % 60 ? `${intervalMins} min` : `${intervalMins / 60} h`}`, userName: userName ?? null } }),
       this.prisma.followup.update({
         where: { id },
         data: { nextRemindAt: next, lastRemindedAt: now, remindersToday, remindersDate: todayStr, pushSentAt: null },

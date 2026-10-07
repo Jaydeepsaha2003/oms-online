@@ -1,6 +1,6 @@
 import { PartialType } from '@nestjs/swagger';
 import { Transform, Type } from 'class-transformer';
-import { ArrayMaxSize, IsArray, IsBoolean, IsIn, IsInt, IsNumber, IsOptional, IsString, MaxLength, Min, ValidateNested } from 'class-validator';
+import { ArrayMaxSize, IsArray, IsBoolean, IsIn, IsInt, IsNumber, IsOptional, IsString, Max, MaxLength, Min, ValidateNested } from 'class-validator';
 import { PaginationDto } from '../../common/dto/pagination.dto';
 
 export class ChecklistItemInputDto {
@@ -54,6 +54,11 @@ export class AddFollowupLogDto {
   @IsOptional() @IsString() @MaxLength(64) stage?: string | null;
   @IsOptional() @IsString() newPromisedAt?: string | null;
   @IsOptional() @IsNumber() @Min(0) newPromisedAmount?: number | null;
+}
+
+/** Snooze for this many minutes (the reminder interval when omitted). */
+export class SnoozeFollowupDto {
+  @IsOptional() @IsInt() @Min(5) @Max(24 * 60) minutes?: number;
 }
 
 /** Closing a follow-up: an optional note on how it was settled. */

@@ -2,7 +2,7 @@ import { useCallback, useEffect, useRef, useState } from 'react';
 import { Navigate, useLocation, useNavigate } from 'react-router-dom';
 import { KeyRound, Loader2, Lock, Mail } from 'lucide-react';
 import { toast } from 'sonner';
-import { getApiErrorMessage } from '@/lib/api';
+import { getApiErrorMessage, SIGNED_OUT_REASON_KEY } from '@/lib/api';
 import { isInstalledApp } from '@/lib/app-session';
 import { isTouchPrimary } from '@/lib/device';
 import { useLogin, usePinLogin } from '@/hooks/use-auth';
@@ -36,6 +36,24 @@ export function LoginPage() {
     reapplyTheme();
     return reapplyTheme;
   }, []);
+
+  // "Signed in on another device". Kept until the next sign-in, not dropped on
+  // first read — the login screen can mount twice on the way here.
+  const [signedOutReason] = useState(() => {
+    try {
+      return sessionStorage.getItem(SIGNED_OUT_REASON_KEY);
+    } catch {
+      return null;
+    }
+  });
+  useEffect(() => {
+    if (!user) return;
+    try {
+      sessionStorage.removeItem(SIGNED_OUT_REASON_KEY);
+    } catch {
+      /* storage blocked */
+    }
+  }, [user]);
 
   const login = useLogin();
   const pinLogin = usePinLogin();
@@ -243,6 +261,12 @@ export function LoginPage() {
               </span>
             </p>
           </div>
+
+          {signedOutReason && (
+            <p role="alert" className="mt-3 rounded-xl border border-amber-300 bg-amber-50 px-3 py-2 text-[12.5px] font-medium text-amber-900">
+              {signedOutReason}
+            </p>
+          )}
 
           {/* Mode toggle */}
           <div style={{ animationDelay: '320ms' }} className="oms-rise relative mt-4 sm:mt-6 flex rounded-full border border-white/60 bg-slate-900/10 backdrop-blur-md p-1">
