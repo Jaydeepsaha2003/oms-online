@@ -18,6 +18,7 @@ import type {
   PriceHistoryQuery,
   UpdateBookingInput,
 } from '@oms/shared';
+import { isBookingDispatchOnly } from '@oms/shared';
 import { http } from '@/lib/api';
 
 const KEY = ['bookings'] as const;
@@ -38,9 +39,14 @@ export function useActiveCustomerBookings(customerName: string) {
     queryKey: [...KEY, 'active-for', customerName],
     queryFn: () => http.get<BookingList>('/bookings', { params: { page: 1, pageSize: 200, customer: customerName } }),
     enabled: !!customerName,
+    // A booking with nothing but CUP lines is not offered: CUP is dispatched
+    // from Booking Dispatch, never drawn into New Order.
     select: (list) =>
       list.items.filter(
-        (b) => (b.status === 'OPEN' || b.status === 'PARTIALLY_CONVERTED') && (b.remainingBags > 0 || b.remainingKgs > 0),
+        (b) =>
+          (b.status === 'OPEN' || b.status === 'PARTIALLY_CONVERTED') &&
+          (b.remainingBags > 0 || b.remainingKgs > 0) &&
+          b.items.some((i) => !isBookingDispatchOnly(i.pCategory)),
       ),
     staleTime: 30_000,
   });
