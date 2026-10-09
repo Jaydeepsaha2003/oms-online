@@ -132,8 +132,8 @@ export function useTallyLatestInvoice(enabled = true) {
     queryKey: [...KEY, 'tally-latest'],
     queryFn: () => http.get<TallyLatestResult>('/challans/tally-latest', { timeout: 20_000 }),
     enabled,
-    staleTime: 15_000,
-    refetchInterval: 30_000,
+    staleTime: 2_000,
+    refetchInterval: 3_000,
     retry: false,
   });
 }
@@ -271,6 +271,16 @@ export function useUpdateChallanStatus() {
     mutationFn: ({ id, ...body }: { id: number } & UpdateChallanStatusInput) => http.patch<ChallanDto>(`/challans/${id}/status`, body),
     onSuccess: () => invalidateChallans(qc),
   });
+}
+
+/** Print was pressed for these challans — the list's Printed ×N / Not printed. Fire-and-forget. */
+export function useMarkPrinted() {
+  const qc = useQueryClient();
+  const m = useMutation({
+    mutationFn: (ids: number[]) => http.post<{ updated: number }>('/challans/printed', { ids }),
+    onSuccess: () => qc.invalidateQueries({ queryKey: KEY }),
+  });
+  return (ids: number[]) => ids.length && m.mutate(ids);
 }
 
 export function useDeleteChallan() {

@@ -407,8 +407,12 @@ export interface BankStatementRunDto {
   fileName: string;
   /** Our receiving bank account, as named in Bank Accounts. */
   bankName: string | null;
+  /** The range chosen at upload (the bank's declared period by default). */
   fromDate: string;
   toDate: string;
+  /** First / last transaction the file actually has in that range — what the screen shows. */
+  firstEntry: string | null;
+  lastEntry: string | null;
   uploadedAt: string;
   userName: string | null;
   status: BankRunStatus;

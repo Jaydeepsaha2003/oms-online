@@ -11,6 +11,8 @@ function Invoke-WebRequest { param($Uri, $Method, $Body, [switch]$UseBasicParsin
   [pscustomobject]@{ Content = "<ENVELOPE><BODY><DATA><COLLECTION><VOUCHER><DATE TYPE=`"Date`">20260924</DATE><VOUCHERNUMBER>SSS-747/26-27</VOUCHERNUMBER><PARTYLEDGERNAME TYPE=`"String`">ANIL METAL</PARTYLEDGERNAME><MASTERID TYPE=`"Number`"> 23928</MASTERID><AMOUNT TYPE=`"Amount`">-$(if ($env:DRY_AMOUNT) { $env:DRY_AMOUNT } else { '14700.00' })</AMOUNT><STATENAME>$(if ($env:DRY_STATE) { $env:DRY_STATE } else { 'Maharashtra' })</STATENAME>$irn</VOUCHER></COLLECTION></DATA></BODY></ENVELOPE>" }
 }
 function Start-Sleep {}
+# OMS is not called in a dry run: the bill-ready report is printed instead, anything else fails as if OMS were unreachable.
+function Invoke-RestMethod { param($Method, $Uri, $Headers, $ContentType, $Body, $TimeoutSec) if ($Uri -like '*pc-printed') { Write-Host "OMS BILL READY: $Body"; return }; throw 'no OMS in a dry run' }
 function Start-Process { [pscustomobject]@{ Id = 4243 } }   # the Automation-ON overlay is a second process: not started in a dry run
 function Get-Process { [pscustomobject]@{ ProcessName = 'tally'; MainWindowHandle = 1; Id = 4242 } }
 function Is-TallyFront { $true }
@@ -83,6 +85,9 @@ function Highlight-Box($png) {
   $row = if ($global:scr -in 'features', 'features2') { $global:F11[$global:cur] } elseif ($global:scr -eq 'gst') { $global:GST[$global:cur] } else { $null }
   if ($row) { [pscustomobject]@{ L = $row[4]; R = $row[5]; T = $row[1] - 7; B = $row[1] + 7; Y = $row[1] } }
 }
+# The print record is a real file next to the script: start clean (DRY_KEEPREC=1 keeps the last run's, to prove a bill is never printed again).
+if (-not $env:DRY_KEEPREC) { Remove-Item "$PSScriptRoot\print-record.json" -ErrorAction SilentlyContinue }
 & "$PSScriptRoot\tally-pc.ps1" -Once
+if (Test-Path "$PSScriptRoot\print-record.json") { Write-Host ("PRINT RECORD: " + ((Get-Content "$PSScriptRoot\print-record.json" -Raw) -replace '\s+', ' ')) }
 if ($global:ewayLog.Count) { Write-Host ("EWAY LIMIT CHANGES: " + ($global:ewayLog -join " | ")) }
 Write-Host ("EWAY MARKER LEFT BEHIND: " + (Test-Path "$PSScriptRoot\eway-limit-low.json"))

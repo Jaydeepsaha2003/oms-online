@@ -26,6 +26,7 @@ import { DispatchService } from '../dispatch/dispatch.service';
 import { CreateChallanDto, DraftChallanDto, ItemHistoryQueryDto, PendingChallanQueryDto, ChallanQueryDto } from './dto/challan.dto';
 import { isDebitNote, type ChallanReportNotes, type NoteReportRow } from './challan-report.builder';
 import { tallyVoucherNo } from '../tally/tally-parties.service';
+import { BillReadyService } from '../tally/bill-ready.service';
 
 const PREFIX_KEY = 'CHALLAN_PREFIXES';
 const FALLBACK_PREFIX = 'SSS';
@@ -56,6 +57,7 @@ export class ChallansService {
     private readonly commission: AgentCommissionService,
     private readonly dispatch: DispatchService,
     private readonly payments: PaymentsService,
+    private readonly billReady: BillReadyService,
   ) {}
 
   /** Dispatch lines still awaiting a challan (mirrors the legacy PendChallan query:
@@ -465,6 +467,10 @@ export class ChallansService {
     this.notifications.emitPendingChallansChanged();
     await this.priceCommission(row.id);
     if (dto.useAdvance !== false) await this.settleOnAccount(row.customerId);
+    // A bill outside the Tally series (NB...) is never printed by the Tally PC, so its "Bill ready" alert goes out here.
+    if (row.challanStatus === 'CONFIRMED' && !tallyVoucherNo(row.code)) {
+      void this.billReady.created({ code: row.code, party: row.customerName, amount: row.total }).catch(() => undefined);
+    }
     return this.map(row);
   }
 
@@ -612,9 +618,21 @@ export class ChallansService {
         balance: r2(Math.max(0, amount - received - discount)),
         tally: r.tallyVoucher as ChallanDto['tally'],
         tallyEligible: r.transaction === 'SALES INVOICE' && tallyVoucherNo(r.code) != null,
+        printCount: r.printCount,
+        lastPrintedAt: r.lastPrintedAt?.toISOString() ?? null,
+        lastPrintedBy: r.lastPrintedBy,
       };
     });
     return { items, total, page: q.page, pageSize: q.pageSize, totalPages: Math.max(1, Math.ceil(total / q.pageSize)) };
+  }
+
+  /** Print was pressed for these challans — counts one print each. */
+  async markPrinted(ids: number[], userName: string | null): Promise<{ updated: number }> {
+    const { count } = await this.prisma.challan.updateMany({
+      where: { id: { in: ids } },
+      data: { printCount: { increment: 1 }, lastPrintedAt: new Date(), lastPrintedBy: userName },
+    });
+    return { updated: count };
   }
 
   /**
@@ -1424,6 +1442,7 @@ export class ChallansService {
     const and: Prisma.ChallanWhereInput[] = [];
     if (q.status) and.push({ challanStatus: q.status.toUpperCase() });
     if (q.category?.trim()) and.push({ category: q.category.trim() });
+    if (q.notPrinted) and.push({ printCount: 0 });
     if (scope) {
       and.push({ OR: [{ customerId: { in: scope.ids } }, { customerName: { in: scope.names } }] });
     }

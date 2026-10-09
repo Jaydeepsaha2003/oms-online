@@ -1038,6 +1038,11 @@ model Challan {
   transaction     String    @default("SALES INVOICE")
   // CONFIRMED / CANCELLED.
   challanStatus   String    @default("CONFIRMED")
+  // Times the Print button was pressed for it (a browser can't tell whether paper
+  // actually came out, so a press counts) — Challans list's Printed / Not printed.
+  printCount      Int       @default(0)
+  lastPrintedAt   DateTime?
+  lastPrintedBy   String?
   userName        String?
   createdAt       DateTime  @default(now())
   updatedAt       DateTime  @updatedAt
@@ -2546,6 +2551,10 @@ model BankStatementRun {
   /// The range the user reconciled. Lines outside it are dropped at upload.
   fromDate   DateTime
   toDate     DateTime
+  /// First and last transaction (credit or debit) the file actually has inside
+  /// that range — the bank's declared period can run past the last entry.
+  firstEntry DateTime?
+  lastEntry  DateTime?
   uploadedAt DateTime @default(now())
   userName   String?
 

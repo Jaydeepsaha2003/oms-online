@@ -53,18 +53,28 @@ const dupe = (overridable) => (e) => {
 const tests = [];
 const test = (name, fn) => tests.push([name, fn]);
 
-test('edit into an EXACT copy of another same-day dispatch is refused', async () => {
+test('edit into an EXACT copy of another same-day dispatch warns first', async () => {
   const it = await line();
   await dispatch(it, { bags: 1, gram: 70 });
   const b = await dispatch(it, { bags: 2, gram: 140 });
-  await assert.rejects(svc.update(b.id, { bags: 1, gram: 70 }), dupe(false));
+  await assert.rejects(svc.update(b.id, { bags: 1, gram: 70 }), dupe(true));
 });
 
-test('exact refusal cannot be overridden with confirmSimilar', async () => {
+test('an EXACT copy saves once the operator carries on past the warning', async () => {
   const it = await line();
   await dispatch(it, { bags: 1, gram: 70 });
   const b = await dispatch(it, { bags: 2, gram: 140 });
-  await assert.rejects(svc.update(b.id, { bags: 1, gram: 70, confirmSimilar: true }), dupe(false));
+  const saved = await svc.update(b.id, { bags: 1, gram: 70, confirmSimilar: true });
+  assert.equal(saved.bags, 1);
+});
+
+test('same Kgs and Pcs with different bags warns, and can be saved', async () => {
+  const it = await line();
+  await dispatch(it, { bags: 1, pcs: 720, gram: 78.7 });
+  const b = await dispatch(it, { bags: 2, pcs: 100, gram: 10 });
+  await assert.rejects(svc.update(b.id, { bags: 0.5, pcs: 720, gram: 78.7 }), dupe(true));
+  const saved = await svc.update(b.id, { bags: 0.5, pcs: 720, gram: 78.7, confirmSimilar: true });
+  assert.equal(saved.bags, 0.5);
 });
 
 test('edit into a SIMILAR dispatch warns, and confirmSimilar lets it through', async () => {
@@ -80,7 +90,7 @@ test('moving the DATE onto a day with an identical dispatch is refused', async (
   const it = await line();
   await dispatch(it, { bags: 1, gram: 70 }, DAY);
   const b = await dispatch(it, { bags: 1, gram: 70 }, OTHER_DAY);
-  await assert.rejects(svc.update(b.id, { dispatchDate: DAY.toISOString() }), dupe(false));
+  await assert.rejects(svc.update(b.id, { dispatchDate: DAY.toISOString() }), dupe(true));
 });
 
 test('same quantity on a DIFFERENT day is allowed', async () => {

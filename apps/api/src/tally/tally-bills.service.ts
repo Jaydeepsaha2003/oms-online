@@ -40,14 +40,25 @@ export class TallyBillsService {
   ) {}
 
   private latestCache: { at: number; value: TallyLatestResult } | null = null;
+  private wokeAt = 0;
+
+  /**
+   * Tally did not answer while someone has the new-challan form open: wake the Tally PC if it is silent, or have Tally started if the
+   * PC is on with Tally closed. At most every 3 min, in the background; the form's next refresh (30 s) finds it.
+   */
+  private tryWake(): void {
+    if (Date.now() - this.wokeAt < 180_000) return;
+    this.wokeAt = Date.now();
+    void this.tally.wakeIfAsleep(60_000).then((s) => (s === 'awake' ? this.tally.requestStart() : undefined)).catch(() => undefined);
+  }
 
   /**
    * The highest SSS bill number Tally holds this financial year, for the new-challan screen to show beside OMS's own next number.
-   * One small read (the last 60 days), kept 15 s - a failure too, so an open form does not keep asking a sleeping Tally PC.
-   * Never throws and never wakes the PC: the form must work without Tally.
+   * One small read (the last 60 days), kept 2.5 s (the form asks every 3 s) - a failure too, so an open form does not keep asking a sleeping Tally PC.
+   * Never throws and never waits for the PC: the form must work without Tally (a failed read only starts a background wake, see tryWake).
    */
   async latestInvoice(): Promise<TallyLatestResult> {
-    if (this.latestCache && Date.now() - this.latestCache.at < 15_000) return this.latestCache.value;
+    if (this.latestCache && Date.now() - this.latestCache.at < 2_500) return this.latestCache.value;
     const value = await this.readLatestInvoice();
     this.latestCache = { at: Date.now(), value };
     return value;
@@ -75,7 +86,8 @@ export class TallyBillsService {
       }
       return { latest: best, reason: best ? null : 'Tally holds no SSS bill in the last 60 days.' };
     } catch (e) {
-      return { latest: null, reason: e instanceof Error ? e.message : 'Tally did not answer.' };
+      this.tryWake();
+      return { latest: null, reason: `${e instanceof Error ? e.message : 'Tally did not answer.'} OMS is trying to wake the Tally PC / start Tally.` };
     }
   }
 

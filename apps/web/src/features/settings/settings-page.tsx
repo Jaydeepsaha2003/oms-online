@@ -26,6 +26,7 @@ import { TestNotificationCard } from './test-notification-card';
 import { DatabaseBackupCard } from './database-backup-card';
 import { DesignTrackCard } from './design-track-card';
 import { DispatchAlertsCard } from './dispatch-alerts-card';
+import { BillReadyAlertsCard } from './bill-ready-alerts-card';
 import {
   useChallanFields,
   useClearNotificationDnd,
@@ -163,6 +164,7 @@ export function SettingsPage() {
         <div className="space-y-4">
           <DispatchBagThresholdCard canEdit={canEdit} />
           <DispatchAlertsCard canEdit={canEdit} />
+          <BillReadyAlertsCard canEdit={canEdit} />
           <DesignTrackCard canEdit={canEdit} />
         </div>
       )}

@@ -33,6 +33,12 @@ export function SnoozeMenu({ onPick, children }: { onPick: (minutes: number) => 
 }
 
 /** Tone + label for a follow-up's urgency, from the shared state engine. */
+/** The page that shows this follow-up, opened on it — where a reminder leads. */
+export function followupUrl(f: { id: number; kind?: string | null }): string {
+  const page = f.kind === 'PAYMENT' ? '/crm/payments' : f.kind === 'INQUIRY' ? '/crm/inquiries' : '/crm';
+  return `${page}?followup=${f.id}`;
+}
+
 export function urgencyMeta(f: FollowupDto) {
   const st = computeFollowupState(f);
   const d = st.daysToPromise;

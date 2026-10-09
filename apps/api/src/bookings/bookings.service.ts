@@ -28,6 +28,7 @@ import {
 import { PrismaService } from '../prisma/prisma.service';
 import { assertPartyNotOnHold } from '../customers/party-hold.util';
 import { PdfService } from '../pdf/pdf.service';
+import { ActivityNotifier } from '../notifications/activity-notifier.service';
 import { toNum, toStr, uc } from '../common/coerce';
 import {
   BookingQueryDto,
@@ -67,6 +68,7 @@ export class BookingsService {
   constructor(
     private readonly prisma: PrismaService,
     private readonly pdf: PdfService,
+    private readonly activity: ActivityNotifier,
   ) {}
 
   /* ── List / read ─────────────────────────────────────────────────────────── */
@@ -103,7 +105,7 @@ export class BookingsService {
 
   /* ── Create / update ─────────────────────────────────────────────────────── */
 
-  async create(dto: CreateBookingDto, userName?: string | null): Promise<BookingDto> {
+  async create(dto: CreateBookingDto, userName?: string | null, actorId?: string | null): Promise<BookingDto> {
     const customerName = (uc(dto.customerName) ?? '') as string;
     if (!customerName) throw new BadRequestException('Customer is required.');
     const customer = await this.prisma.customer.findFirst({ where: { partyName: customerName } });
@@ -140,7 +142,11 @@ export class BookingsService {
       },
       include: INCLUDE,
     });
-    return this.toDto(await this.ensureCode(row), new Map());
+    const saved = await this.ensureCode(row);
+    if (items.some((it) => (it.pCategory ?? '').toUpperCase() === 'CUP')) {
+      this.activity.bookingCreated({ actorId, userName, bookingId: saved.id, code: saved.code, customerName, bags, kgs });
+    }
+    return this.toDto(saved, new Map());
   }
 
   async update(id: number, dto: UpdateBookingDto): Promise<BookingDto> {

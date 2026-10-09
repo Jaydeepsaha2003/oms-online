@@ -6,8 +6,17 @@ import { queryClient } from './query';
 import { http } from './api';
 import { playTestChime } from './chime';
 import { openNotificationTarget } from './notification-target';
+import { showBillReady } from './bill-ready-toast';
 
 let socket: Socket | null = null;
+
+/**
+ * The app's own chime, only where no OS notification will sound off. With notifications allowed, Windows / the phone plays its own tone
+ * for the push or `new Notification()` - a second, app-made sound on top of it is noise.
+ */
+const appChime = () => {
+  if (typeof Notification === 'undefined' || Notification.permission !== 'granted') playTestChime();
+};
 
 /** Shows a native OS notification if permission was granted — the browser/OS controls its sound. */
 function showNativeNotification(payload: TestNotificationPayload): void {
@@ -40,7 +49,7 @@ export function connectNotificationsSocket(): void {
 
   socket.on('test-notification', (payload: TestNotificationPayload) => {
     showNativeNotification(payload);
-    playTestChime();
+    appChime();
     toast.info(`Test notification received (sent by ${payload.triggeredBy})`);
   });
 
@@ -105,6 +114,12 @@ export function connectNotificationsSocket(): void {
   // listened for it here, so every targeted in-app notification was silently
   // dropped. Web Push covers the closed-app case separately.
   socket.on('notification', (n: AppNotification) => {
+    // "Bill ready" stacks into its own card (one line per bill), info only.
+    if (n.data?.kind === 'bill-ready') {
+      appChime();
+      showBillReady(n.data);
+      return;
+    }
     // The page the alert is about, when it names one (order alerts do).
     const url = n.data?.url;
     const open = () => openNotificationTarget(url);
@@ -120,7 +135,7 @@ export function connectNotificationsSocket(): void {
         /* ignore — some platforms restrict constructing Notification directly */
       }
     }
-    playTestChime();
+    appChime();
     toast.info(n.title, {
       description: n.body,
       ...(typeof url === 'string' ? { duration: 8000, action: { label: 'View', onClick: open } } : {}),

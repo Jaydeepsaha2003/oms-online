@@ -472,12 +472,21 @@ export class BankStatementService {
     /** Return/reject debits found in the same file — see {@link applyReturns}. */
     returns: { rowNo: number; txnDate: Date | null; narration: string; amount: number }[] = [],
   ): Promise<BankStatementCreateResponse> {
+    // Every dated line inside the range, debits too — the span the statement really covers.
+    const order = detectStatementDateOrder((dto.rows ?? []).map((r) => r[map.date]));
+    const toEnd = new Date(to.getTime() + DAY);
+    const days = (dto.rows ?? [])
+      .map((r) => this.cellDate(r[map.date], order))
+      .filter((d): d is Date => !!d && d >= from && d < toEnd)
+      .map(Number);
     const run = await this.prisma.bankStatementRun.create({
       data: {
         fileName: dto.fileName?.trim() || 'statement',
         bankName: dto.bankName?.trim() || null,
         fromDate: from,
         toDate: to,
+        firstEntry: days.length ? new Date(Math.min(...days)) : null,
+        lastEntry: days.length ? new Date(Math.max(...days)) : null,
         userName: userName ?? null,
         rowCount: fresh.length,
         creditTotal: r2(fresh.reduce((s, p) => s + p.amount, 0)),
@@ -1668,7 +1677,7 @@ export class BankStatementService {
   }
 
   private runDto(r: {
-    id: number; fileName: string; bankName: string | null; fromDate: Date; toDate: Date; uploadedAt: Date;
+    id: number; fileName: string; bankName: string | null; fromDate: Date; toDate: Date; firstEntry: Date | null; lastEntry: Date | null; uploadedAt: Date;
     userName: string | null; status: string; processedAt: Date | null; rowCount: number; creditTotal: number;
     matchedCount: number; partialCount: number; unmatchedCount: number; noPartyCount: number; postedCount: number; ignoredCount: number;
   }): BankStatementRunDto {
@@ -1678,6 +1687,8 @@ export class BankStatementService {
       bankName: r.bankName,
       fromDate: r.fromDate.toISOString(),
       toDate: r.toDate.toISOString(),
+      firstEntry: iso(r.firstEntry),
+      lastEntry: iso(r.lastEntry),
       uploadedAt: r.uploadedAt.toISOString(),
       userName: r.userName,
       status: r.status as BankStatementRunDto['status'],

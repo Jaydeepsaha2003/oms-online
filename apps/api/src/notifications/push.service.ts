@@ -19,6 +19,11 @@ export class PushService {
     this.vapidConfigured = true;
   }
 
+  private kindOf(sub: { userAgent: string | null }): string {
+    const ua = sub.userAgent ?? '';
+    return /iPhone|iPad/.test(ua) ? 'iOS' : /Android/.test(ua) ? 'Android' : 'other';
+  }
+
   /** Stores (or replaces, by endpoint) one device's push subscription. */
   async saveSubscription(userId: string, sub: PushSubscriptionRequest, userAgent?: string): Promise<void> {
     await this.prisma.pushSubscription.upsert({
@@ -80,7 +85,7 @@ export class PushService {
     await Promise.all(
       subscriptions.map(async (sub) => {
         try {
-          await webpush.sendNotification(
+          const res = await webpush.sendNotification(
             { endpoint: sub.endpoint, keys: { p256dh: sub.p256dh, auth: sub.auth } },
             body,
             /*
@@ -92,10 +97,14 @@ export class PushService {
              */
             { urgency: 'high', TTL: 24 * 60 * 60 },
           );
+          // What each push service answered, per device kind: "accepted" here is the last thing the server can know - whether the phone
+          // then shows it is up to the phone (permission, battery saver). Found "Android gets nothing" impossible to tell apart without this.
+          this.logger.log(`Push ${this.kindOf(sub)} -> ${new URL(sub.endpoint).host}: ${res.statusCode} (${JSON.parse(body).title})`);
         } catch (err) {
           const webPushErr = err as { statusCode?: number; body?: string; headers?: Record<string, string> };
           const statusCode = webPushErr.statusCode;
           if (statusCode === 404 || statusCode === 410) {
+            this.logger.warn(`Push ${this.kindOf(sub)} subscription ${sub.id} is gone (${statusCode}) - removed; that device must open OMS and allow notifications again`);
             await this.prisma.pushSubscription.delete({ where: { id: sub.id } }).catch(() => {});
           } else {
             // DIAGNOSTIC: web-push's own .message is just "Received unexpected response

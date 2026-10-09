@@ -44,6 +44,7 @@ const r2 = (n: number) => Math.round((n + Number.EPSILON) * 100) / 100;
 interface Actor {
   id?: string | null;
   name?: string | null;
+  canApprove?: boolean;
 }
 
 // Cap quantities at 3 decimals. Subtracting/summing floats (e.g. ordered − dispatched)
@@ -761,7 +762,7 @@ export class DispatchService implements OnModuleInit {
   /* ── Dispatch records ───────────────────────────────────────────────────── */
 
   async findMany(query: DispatchQueryDto): Promise<DispatchList> {
-    const and = this.listFilters(query);
+    const and = await this.listFilters(query);
     const where: Prisma.DispatchWhereInput = and.length ? { AND: and } : {};
     // Quantity totals are aggregated over the WHOLE filtered set, not the page
     // being returned. The screen shows one figure under the table, and a
@@ -785,8 +786,12 @@ export class DispatchService implements OnModuleInit {
     ]);
     const challans = await this.challanByDispatch(rows.map((r) => r.id));
     const refs = await this.returnRefs(rows.map((r) => r.id));
+    const short = await this.shortFullBags(rows.filter((r) => r.dispatchStatus === 'FULLY DISPATCH').map((r) => r.orderItemId));
     return {
-      items: rows.map((r) => this.toDto(r, challans.get(r.id), refs)),
+      items: rows.map((r) => {
+        const dto = this.toDto(r, challans.get(r.id), refs);
+        return r.dispatchStatus === 'FULLY DISPATCH' && short.has(r.orderItemId) ? { ...dto, shortBags: short.get(r.orderItemId) } : dto;
+      }),
       total,
       page: query.page,
       pageSize: query.pageSize,
@@ -801,9 +806,27 @@ export class DispatchService implements OnModuleInit {
     };
   }
 
+  /** Order lines (of these) still a whole bag or more short of what was ordered,
+   *  net of returns → bags short. Flags Full rows that closed a line too early. */
+  private async shortFullBags(itemIds: number[]): Promise<Map<number, number>> {
+    const out = new Map<number, number>();
+    const ids = [...new Set(itemIds)];
+    if (!ids.length) return out;
+    const [lines, sums] = await Promise.all([
+      this.prisma.orderItem.findMany({ where: { id: { in: ids } }, select: { id: true, bags: true } }),
+      this.prisma.dispatch.groupBy({ by: ['orderItemId'], where: { orderItemId: { in: ids } }, _sum: { bags: true } }),
+    ]);
+    const sent = new Map(sums.map((s) => [s.orderItemId, s._sum.bags ?? 0]));
+    for (const l of lines) {
+      const s = round3((l.bags ?? 0) - (sent.get(l.id) ?? 0));
+      if (s >= 1 - EPS) out.set(l.id, s);
+    }
+    return out;
+  }
+
   /** Every dispatch row the Modify Dispatch filters match, unpaged — the Excel export. */
   async exportRows(query: DispatchQueryDto): Promise<DispatchDto[]> {
-    const and = this.listFilters(query);
+    const and = await this.listFilters(query);
     const rows = await this.prisma.dispatch.findMany({
       where: and.length ? { AND: and } : {},
       include: LIST_INCLUDE,
@@ -814,11 +837,19 @@ export class DispatchService implements OnModuleInit {
   }
 
   /** The list's filters as AND clauses, shared by the page and the export. */
-  private listFilters(query: DispatchQueryDto): Prisma.DispatchWhereInput[] {
+  private async listFilters(query: DispatchQueryDto): Promise<Prisma.DispatchWhereInput[]> {
     const search = query.search?.trim();
     // Build with AND so the dropdown filters and the search box compose (each can
     // contribute its own OR without clobbering the others).
     const and: Prisma.DispatchWhereInput[] = [];
+    if (query.shortFull) {
+      // Same test as shortFullBags: a Full line still ≥ 1 bag short, net of returns.
+      const lines = await this.prisma.$queryRawUnsafe<{ id: number | bigint }[]>(
+        `SELECT oi.id FROM order_items oi JOIN dispatches d ON d.orderItemId = oi.id GROUP BY oi.id
+         HAVING MAX(d.dispatchStatus = 'FULLY DISPATCH') = 1 AND COALESCE(oi.bags, 0) - SUM(COALESCE(d.bags, 0)) >= ${1 - EPS}`,
+      );
+      and.push({ dispatchStatus: 'FULLY DISPATCH', orderItemId: { in: lines.map((l) => Number(l.id)) } });
+    }
     if (query.status) and.push({ dispatchStatus: uc(query.status)! });
     if (query.customer) and.push({ customerName: query.customer });
     if (query.agent) and.push({ agentName: query.agent });
@@ -889,7 +920,11 @@ export class DispatchService implements OnModuleInit {
     const byOutward = new Map<number, DispatchReturnRef[]>();
     if (!ids.length) return { byReturnRow, byOutward };
     const links = await this.prisma.creditNoteItem.findMany({
-      where: { OR: [{ returnDispatchId: { in: ids } }, { dispatchId: { in: ids }, returnDispatchId: { not: null } }] },
+      // No `returnDispatchId: { not: null }` here: a negation stops Prisma from
+      // splitting a long id list, and grouped Modify Dispatch (2000 rows) then
+      // failed outright (P2029) and the screen blinked as it retried. Rows with
+      // no return are skipped below instead.
+      where: { OR: [{ returnDispatchId: { in: ids } }, { dispatchId: { in: ids } }] },
       select: {
         dispatchId: true,
         returnDispatchId: true,
@@ -1155,6 +1190,21 @@ export class DispatchService implements OnModuleInit {
     });
     if (!row) throw new NotFoundException('Dispatch not found.');
     return this.toDto(row, (await this.challanByDispatch([row.id])).get(row.id));
+  }
+
+  /** The line's ordered qty and what its OTHER dispatches already took (returns
+   *  are negative, so they net off) — Modify Dispatch's "left after this" panel. */
+  async lineBalance(id: number) {
+    const cur = await this.prisma.dispatch.findUnique({ where: { id }, select: { orderItemId: true } });
+    if (!cur) throw new NotFoundException('Dispatch not found.');
+    const it = await this.prisma.orderItem.findUnique({ where: { id: cur.orderItemId }, include: { dispatches: true } });
+    if (!it) throw new NotFoundException('Order line not found.');
+    const others = it.dispatches.filter((d) => d.id !== id);
+    const sum = (k: 'bags' | 'pcs' | 'gram' | 'box') => round3(others.reduce((a, d) => a + (d[k] ?? 0), 0));
+    return {
+      ordered: { bags: it.bags ?? 0, pcs: it.pcs ?? 0, gram: it.gram ?? 0, box: it.box ?? 0 },
+      others: { bags: sum('bags'), pcs: sum('pcs'), gram: sum('gram'), box: sum('box') },
+    };
   }
 
   /**
@@ -1512,10 +1562,10 @@ export class DispatchService implements OnModuleInit {
       // Same-line, same-day duplicate guards — shared with edit and with an
       // approved date move, see assertNoDuplicateDispatch. `dup` is the
       // just-created twin of a double-tap, refused the same way.
-      this.assertNoDuplicateDispatch(it, it.dispatches, { bags, pcs, gram, box }, effectiveDate, dto.confirmSimilar, dup);
+      this.assertNoDuplicateDispatch(it, it.dispatches, { bags, pcs, gram, box }, effectiveDate, dto.confirmSimilar, dup, dto.confirmSimilar ?? false);
 
       const rem = this.remaining(it, it.dispatches);
-      this.validateQty({ bags, pcs, gram, box }, rem, dto.dispatchStatus, it.calField);
+      this.validateQty({ bags, pcs, gram, box }, rem, dto.dispatchStatus, it.calField, !!actor?.canApprove && !!dto.confirmShortFull);
 
       const created = await tx.dispatch.create({
         data: {
@@ -1805,15 +1855,17 @@ export class DispatchService implements OnModuleInit {
    * `siblings` are the line's OTHER dispatches (an edit must not match itself).
    * `alsoExact` is create's just-created double-tap twin, refused the same way.
    *
-   * EXACT — same line, same day, every quantity identical: refused, no override.
-   * Past the idempotency window it is somebody recording a shipment that was
-   * already recorded, and accepting it doubles what has left the building.
+   * EXACT — same line, same day, every quantity identical: refused unless the
+   * operator, warned, carries on (`confirmExact`). Usually it is a shipment
+   * recorded twice, but the owner asked to be able to save it after the warning.
+   * A double-tap twin (`alsoExact`) and an approved date move (no
+   * `confirmExact`) are still refused outright.
    * Matched per ORDER LINE, not per order (two different lines of one order can
    * legitimately ship the same quantity the same day), and on the DISPATCH date,
    * not the clock, so a backdated entry is checked against the day it claims.
    *
-   * SIMILAR — same bags, and the same Kgs or Pcs: a warning `confirmSimilar`
-   * lifts. It catches the usual shape of a double-entry (one figure typed
+   * SIMILAR — same bags and the same Kgs or Pcs, or the same Kgs AND Pcs with
+   * different bags: a warning `confirmSimilar` lifts. It catches the usual shape of a double-entry (one figure typed
    * differently), but a 30 Kg line sent as 15 + 15 looks the same and is real
    * work. Every compared figure must be NON-ZERO — on a Kgs-priced line both
    * carry pcs 0, and 0 === 0 would fire on nearly every second dispatch.
@@ -1828,6 +1880,7 @@ export class DispatchService implements OnModuleInit {
     day: Date,
     confirmSimilar: boolean | undefined,
     alsoExact?: Dispatch,
+    confirmExact?: boolean,
   ): void {
     const { bags, pcs, gram, box } = qty;
     const onDay = (d: Date) =>
@@ -1847,25 +1900,30 @@ export class DispatchService implements OnModuleInit {
     const exact =
       live.find((d) => (d.bags ?? 0) === bags && (d.pcs ?? 0) === pcs && (d.gram ?? 0) === gram && (d.box ?? 0) === box) ??
       alsoExact;
-    if (exact) {
+    const twin = !!alsoExact && exact === alsoExact;
+    if (exact && !(confirmExact && !twin)) {
       const match = describe(exact);
       throw new ConflictException({
         error: 'DUPLICATE_DISPATCH',
         message: `Already dispatched ${when} — ${match.code} recorded ${match.qtyText}.`,
-        duplicateDispatch: { ...match, overridable: false },
+        // Only create and edit can carry on (they pass confirmExact); an approved date move cannot.
+        duplicateDispatch: { ...match, overridable: !twin && confirmExact !== undefined, matchedOn: 'exact quantity' },
       });
     }
+    if (exact) return; // warned and carried on
 
     if (confirmSimilar) return;
     const similar = live.find(
       (d) =>
-        bags > 0 &&
-        (d.bags ?? 0) === bags &&
-        ((gram > 0 && (d.gram ?? 0) === gram) || (pcs > 0 && (d.pcs ?? 0) === pcs)),
+        (bags > 0 &&
+          (d.bags ?? 0) === bags &&
+          ((gram > 0 && (d.gram ?? 0) === gram) || (pcs > 0 && (d.pcs ?? 0) === pcs))) ||
+        // Same Kgs and Pcs, only the bags differ (DSP-04812 / 04813, 05-Oct).
+        (gram > 0 && pcs > 0 && (d.gram ?? 0) === gram && (d.pcs ?? 0) === pcs),
     );
     if (similar) {
       const matched = [
-        `${bags} bags`,
+        (similar.bags ?? 0) === bags && bags > 0 ? `${bags} bags` : null,
         (similar.gram ?? 0) === gram && gram > 0 ? `${gram} kgs` : null,
         (similar.pcs ?? 0) === pcs && pcs > 0 ? `${pcs} pcs` : null,
       ]
@@ -1932,10 +1990,13 @@ export class DispatchService implements OnModuleInit {
       (cur.bags ?? 0) !== bags || (cur.pcs ?? 0) !== pcs || (cur.gram ?? 0) !== gram || (cur.box ?? 0) !== box;
     const dayChanged = !this.sameDay(targetDay.toISOString(), cur.dispatchDate);
     if (cur.dispatchStatus !== RETURNED_DISPATCH_STATUS && (qtyChanged || dayChanged)) {
-      this.assertNoDuplicateDispatch(it, others, { bags, pcs, gram, box }, targetDay, dto.confirmSimilar);
+      this.assertNoDuplicateDispatch(it, others, { bags, pcs, gram, box }, targetDay, dto.confirmSimilar, undefined, dto.confirmSimilar ?? false);
     }
 
-    this.validateQty({ bags, pcs, gram, box }, rem, status, it.calField);
+    // A row that was already Full and keeps its qty (a remark/date fix on an old
+    // entry) isn't re-judged; turning a row Full or changing a Full row's qty is.
+    const keepsOldFull = cur.dispatchStatus === 'FULLY DISPATCH' && !qtyChanged;
+    this.validateQty({ bags, pcs, gram, box }, rem, status, it.calField, keepsOldFull || (!!actor?.canApprove && !!dto.confirmShortFull));
 
     const row = await this.prisma.dispatch.update({
       where: { id },
@@ -2119,7 +2180,17 @@ export class DispatchService implements OnModuleInit {
     rem: { bags: number; pcs: number; gram: number; box: number },
     status: string,
     calField?: string | null,
+    allowShortFull = false,
   ) {
+    // Full while a whole bag or more of the order is still unsent closes the line
+    // with goods owed (e.g. 2 bags ordered, 1 sent). Only an approver may, when the
+    // party cancelled the rest. rem is clamped at 0, so an over-sent line never trips.
+    const shortBags = round3(rem.bags - q.bags);
+    if (status === 'FULLY DISPATCH' && shortBags >= 1 - EPS && !allowShortFull) {
+      throw new BadRequestException(
+        `${shortBags} bag(s) of this order are still pending — mark it Partially Dispatched. Only an admin can close it as Fully Dispatched.`,
+      );
+    }
     // No quantity may be negative — a negative on a non-mandatory unit would
     // otherwise slip past the mandatory + upper-bound checks and corrupt totals.
     if (q.bags < -EPS || q.pcs < -EPS || q.gram < -EPS || q.box < -EPS) {

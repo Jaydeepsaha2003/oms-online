@@ -81,6 +81,7 @@ import {
   useDeleteDispatch,
   useDispatches,
   useDispatchFilterOptions,
+  useLineBalance,
   useLineLock,
   useUpdateDispatch,
 } from './use-dispatch';
@@ -262,7 +263,12 @@ const COLUMNS: DataColumn<DispatchDto>[] = [
   {
     id: 'customer',
     label: 'Customer',
-    cell: (d) => <span className={TEXT_CELL}>{d.customerName}</span>,
+    cell: (d) => (
+      <span className={TEXT_CELL}>
+        {d.customerName}
+        <ShortTag d={d} />
+      </span>
+    ),
   },
   {
     id: 'product',
@@ -1222,7 +1228,10 @@ function ModifyDispatchCard({
 
         <div className="flex items-start justify-between gap-2">
           <div className="min-w-0">
-            <p className="truncate text-[16px] font-semibold leading-tight">{d.customerName}</p>
+            <p className="truncate text-[16px] font-semibold leading-tight">
+              {d.customerName}
+              <ShortTag d={d} />
+            </p>
             <p className="text-muted-foreground mt-0.5 text-[12px]">{formatDate(d.dispatchDate)}</p>
           </div>
           <ChallanBadge d={d} />
@@ -1339,6 +1348,8 @@ export function ModifyDispatchPage() {
   const [searchParams, setSearchParams] = useSearchParams();
   const [search, setSearch] = useState(searchParams.get('search') ?? '');
   const [statusFilter, setStatusFilter] = useState('');
+  // Admin's "mistakes" view: only Full rows whose order line is still ≥ 1 bag short.
+  const [shortOnly, setShortOnly] = useState(false);
   const [customerFilter, setCustomerFilter] = useState('');
   const [agentFilter, setAgentFilter] = useState('');
   // Sits ABOVE the item picker, same as Dispatch Order: the option lists cascade,
@@ -1454,6 +1465,7 @@ export function ModifyDispatchPage() {
     dateFrom: dateFrom || undefined,
     dateTo: dateTo || undefined,
     orderIds,
+    shortFull: shortOnly || undefined,
   };
   // Live refresh every 2s — paused while the edit dialog is open, so a
   // background refetch can never reset a quantity someone is mid-editing.
@@ -1608,10 +1620,12 @@ export function ModifyDispatchPage() {
     productFilter ||
     designFilter ||
     orderFilters.length > 0 ||
-    dateActive
+    dateActive ||
+    shortOnly
   );
   const resetFilters = () => {
     setSearch('');
+    setShortOnly(false);
     setStatusFilter('');
     setCustomerFilter('');
     setAgentFilter('');
@@ -1886,6 +1900,25 @@ export function ModifyDispatchPage() {
               </span>
               <Switch checked={groupedByItem} onCheckedChange={(v) => setGroupBy(v ? 'item' : 'none')} />
             </label>
+            {isSystemAdmin && (
+              <label
+                className={cn(
+                  'flex cursor-pointer items-center justify-between gap-2 rounded-[4px] border px-2.5 py-2 text-[12.5px] font-semibold select-none',
+                  shortOnly ? 'border-red-400 bg-red-50 text-red-700' : 'border-red-200 text-slate-600',
+                )}
+              >
+                <span className="flex items-center gap-1.5">
+                  <TriangleAlert className="size-3.5 text-red-600" /> Short Full only
+                </span>
+                <Switch
+                  checked={shortOnly}
+                  onCheckedChange={(v) => {
+                    setShortOnly(v);
+                    setPage(1);
+                  }}
+                />
+              </label>
+            )}
           </div>
 
           {/* Desktop: filters inline. */}
@@ -2057,6 +2090,27 @@ export function ModifyDispatchPage() {
               <Switch checked={groupedByItem} onCheckedChange={(v) => setGroupBy(v ? 'item' : 'none')} />
               Group by Item
             </label>
+            {isSystemAdmin && (
+              <label
+                className={cn(
+                  'flex h-9 shrink-0 cursor-pointer items-center gap-2 rounded-[4px] border px-2.5 text-[12.5px] font-semibold whitespace-nowrap select-none',
+                  shortOnly
+                    ? 'border-red-400 bg-red-50 text-red-700 dark:bg-red-500/15 dark:text-red-300'
+                    : 'border-red-200 text-slate-600 dark:border-red-400/40',
+                )}
+                title="Only rows marked Fully Dispatched while the order is still 1 bag or more short"
+              >
+                <TriangleAlert className="size-3.5 text-red-600" />
+                <Switch
+                  checked={shortOnly}
+                  onCheckedChange={(v) => {
+                    setShortOnly(v);
+                    setPage(1);
+                  }}
+                />
+                Short Full only
+              </label>
+            )}
 
             {hasFilters && (
               <Button
@@ -2636,15 +2690,39 @@ function EditDispatchDialog({ dispatch, onClose }: { dispatch: DispatchDto; onCl
     dispatchDate: toDateInput(dispatch.dispatchDate),
   });
   const set = (patch: Partial<typeof form>) => setForm((f) => ({ ...f, ...patch }));
+  const { data: balance } = useLineBalance(dispatch.id);
+  const confirm = useConfirm();
   const dateChanged = form.dispatchDate !== toDateInput(dispatch.dispatchDate);
 
-  const submit = () => {
+  const submit = async () => {
     if (update.isPending) return; // guard a double-fire (fast Ctrl+S + click)
+    // Full while a whole bag or more of the order is still unsent is refused (server
+    // rule, validateQty) — unless it was already Full and the qty isn't touched.
+    // An approver may close it anyway when the party cancelled the rest.
+    let confirmShortFull: true | undefined;
+    const qtyChanged = (['bags', 'pcs', 'gram', 'box'] as const).some((k) => num(form[k]) !== (dispatch[k] ?? 0));
+    const shortBags = balance ? Math.round((balance.ordered.bags - balance.others.bags - num(form.bags)) * 1000) / 1000 : 0;
+    if (
+      form.dispatchStatus === 'FULLY DISPATCH' &&
+      shortBags >= 1 &&
+      (dispatch.dispatchStatus !== 'FULLY DISPATCH' || qtyChanged)
+    ) {
+      if (!canApprove)
+        return toast.error(`${shortBags} bag(s) of this order are still pending — mark it Partially dispatched.`);
+      const ok = await confirm({
+        title: `${shortBags} bag(s) still pending — close as Fully dispatched?`,
+        description: 'Only if the party cancelled the rest. The line will stop showing as pending.',
+        confirmText: 'Close as Fully dispatched',
+        destructive: true,
+      });
+      if (!ok) return;
+      confirmShortFull = true;
+    }
     // Billed dispatch: only the status is changeable — skip qty validation and
     // send only the status so we don't accidentally trigger the backend's billed guard.
     if (locked) {
       update.mutate(
-        { dispatchStatus: form.dispatchStatus },
+        { dispatchStatus: form.dispatchStatus, confirmShortFull },
         {
           onSuccess: () => {
             toast.success('Dispatch status updated');
@@ -2668,6 +2746,7 @@ function EditDispatchDialog({ dispatch, onClose }: { dispatch: DispatchDto; onCl
       dispatchStatus: form.dispatchStatus,
       comment: form.comment.trim() || null,
       dispatchDate: form.dispatchDate,
+      confirmShortFull,
     });
   };
 
@@ -2855,6 +2934,46 @@ function EditDispatchDialog({ dispatch, onClose }: { dispatch: DispatchDto; onCl
                 </button>
               ))}
             </div>
+            {form.dispatchStatus === 'PARTIALLY DISPATCH' && balance && (
+              <div className="rounded-lg border border-amber-200 bg-amber-50/60 p-2.5 text-xs dark:border-amber-400/30 dark:bg-amber-400/10">
+                <p className="mb-1.5 font-semibold text-amber-800 dark:text-amber-300">
+                  After this partial dispatch, still pending on the order:
+                </p>
+                <table className="w-full tabular-nums">
+                  <thead>
+                    <tr className="text-muted-foreground text-[11px]">
+                      <th className="text-left font-medium" />
+                      {qtyFields.map(({ key: k, label }) => (
+                        <th key={k} className="text-right font-medium">{label}</th>
+                      ))}
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {(['Ordered', 'Dispatched', 'Left'] as const).map((row) => (
+                      <tr key={row} className={row === 'Left' ? 'border-t font-bold' : ''}>
+                        <td className="text-muted-foreground py-0.5">{row}</td>
+                        {qtyFields.map(({ key: k }) => {
+                          const done = balance.others[k] + num(form[k]);
+                          const v = row === 'Ordered' ? balance.ordered[k] : row === 'Dispatched' ? done : balance.ordered[k] - done;
+                          const r = Math.round(v * 1000) / 1000;
+                          return (
+                            <td
+                              key={k}
+                              className={cn(
+                                'py-0.5 text-right',
+                                row === 'Left' && !!balance.ordered[k] && (r < 0 ? 'text-red-600' : r > 0 ? 'text-amber-700 dark:text-amber-300' : 'text-emerald-700'),
+                              )}
+                            >
+                              {row !== 'Left' ? r : !balance.ordered[k] ? '—' : r < 0 ? `${-r} extra` : r}
+                            </td>
+                          );
+                        })}
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            )}
           </div>
 
           {/* Remarks — disabled when billed. */}
@@ -2937,6 +3056,19 @@ function EditDispatchDialog({ dispatch, onClose }: { dispatch: DispatchDto; onCl
 export default ModifyDispatchPage;
 
 /** Marks a line drawn from a bag booking, beside its order number. */
+/** Marked Fully Dispatched while the order line is still a whole bag or more short. */
+function ShortTag({ d }: { d: DispatchDto }) {
+  if (!d.shortBags) return null;
+  return (
+    <span
+      title="Marked Fully Dispatched, but the order still has this many bags unsent"
+      className="ml-1.5 inline-flex items-center gap-0.5 rounded bg-red-100 px-1.5 py-0.5 text-[10.5px] font-bold whitespace-nowrap text-red-700 dark:bg-red-500/20 dark:text-red-300"
+    >
+      <TriangleAlert className="size-3" /> {d.shortBags} bag short
+    </span>
+  );
+}
+
 function BookingTag({ d }: { d: DispatchDto }) {
   const { permissions } = usePermissions();
   if (!d.bookingId || !permissions.includes(ALL_PERMISSIONS)) return null;

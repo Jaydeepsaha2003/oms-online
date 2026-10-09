@@ -196,6 +196,12 @@ export class DispatchController {
     return { ...res, items: this.redactRates(res.items, user) };
   }
 
+  @Get(':id/line-balance')
+  @Permissions(perm(R, ACTIONS.VIEW))
+  lineBalance(@Param('id', ParseIntPipe) id: number) {
+    return this.dispatch.lineBalance(id);
+  }
+
   @Get(':id')
   @Permissions(perm(R, ACTIONS.VIEW))
   get(@Param('id', ParseIntPipe) id: number) {

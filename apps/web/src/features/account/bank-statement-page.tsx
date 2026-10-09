@@ -429,13 +429,43 @@ export function BankStatementPage() {
     setToDate(fileRange.to);
   }, [rangeFromFile, fileRange]);
 
-  const loadStatement = () => {
+  const loadStatement = async () => {
     if (!statementRows.length) return toast.error('Choose a statement file first.');
     if (!map.date || !map.narration || !map.credit) return toast.error('Map the Date, Narration and Credit columns.');
     if (!fromDate || !toDate) return toast.error('Choose the date range this statement covers.');
     // Every receipt Process creates is a BANK receipt and needs an account on it.
     if (!bankName) return toast.error('Choose which bank account this statement is for.');
+    if (!(await confirmNoGap())) return;
     submitRun('ask');
+  };
+
+  /**
+   * Days between this bank's last statement entry and this file's first one —
+   * e.g. last 29-09, this starts 01-10: was 30-09 never downloaded? Asked, not
+   * blocked: a day can genuinely have no transactions.
+   */
+  const confirmNoGap = async (): Promise<boolean> => {
+    const ymd = (iso: string) => new Date(iso).toLocaleDateString('en-CA'); // local yyyy-mm-dd
+    const prevLast = (runsList?.items ?? [])
+      .filter((r) => r.bankName === bankName && r.lastEntry)
+      .map((r) => ymd(r.lastEntry!))
+      .sort()
+      .at(-1);
+    const first = [rowScan?.from, fromDate].filter(Boolean).sort().at(-1);
+    if (!prevLast || !first) return true;
+    const missing: string[] = [];
+    for (let d = new Date(`${prevLast}T00:00`); ; ) {
+      d.setDate(d.getDate() + 1);
+      const s = d.toLocaleDateString('en-CA');
+      if (s >= first || missing.length > 31) break;
+      missing.push(s);
+    }
+    if (!missing.length) return true;
+    return confirm({
+      title: `${missing.length} day${missing.length > 1 ? 's' : ''} missing between statements`,
+      description: `The last ${bankName} statement has entries up to ${formatDate(prevLast)}, and this file starts on ${formatDate(first)}. Nothing is on record for ${missing.map((m) => formatDate(m)).join(', ')} — that statement may not have been downloaded. Continue only if the bank had no entries on ${missing.length > 1 ? 'those days' : 'that day'}.`,
+      confirmText: 'Continue anyway',
+    });
   };
 
   /**
@@ -1257,7 +1287,7 @@ export function BankStatementPage() {
                   </div>
                   <div className="col-span-2 border-t border-border/70 pt-3">
                     <dt className="text-muted-foreground font-medium">Statement range</dt>
-                    <dd className="mt-0.5 font-semibold tabular-nums">{formatDate(r.fromDate)} – {formatDate(r.toDate)}</dd>
+                    <dd className="mt-0.5 font-semibold tabular-nums">{formatDate(r.firstEntry ?? r.fromDate)} – {formatDate(r.lastEntry ?? r.toDate)}</dd>
                   </div>
                 </dl>
                 <div className="mt-3 flex items-center gap-2">
@@ -1300,7 +1330,7 @@ export function BankStatementPage() {
                     <td className={cn(TD, 'font-semibold')}>{r.fileName}</td>
                     <td className={TD}>{r.bankName ?? '—'}</td>
                     <td className={cn(TD, 'whitespace-nowrap tabular-nums')}>
-                      {formatDate(r.fromDate)} – {formatDate(r.toDate)}
+                      {formatDate(r.firstEntry ?? r.fromDate)} – {formatDate(r.lastEntry ?? r.toDate)}
                     </td>
                     <td className={cn(TD, NUM, 'font-bold')}>{money0(r.creditTotal)}</td>
                     <td className={cn(TD, NUM)}>{r.rowCount}</td>
@@ -1353,7 +1383,11 @@ export function BankStatementPage() {
               <div className="min-w-0">
                 <h2 className="truncate text-[15px] font-extrabold tracking-tight">{run?.fileName}</h2>
                 <p className="text-muted-foreground text-[12px]">
-                  {run && `${formatDate(run.fromDate)} – ${formatDate(run.toDate)}`}
+                  {run && (
+                    <span className="mr-1 inline-flex rounded-[4px] bg-indigo-50 px-1.5 py-0.5 font-bold text-indigo-700 tabular-nums dark:bg-indigo-500/15 dark:text-indigo-300">
+                      Entries {formatDate(run.firstEntry ?? run.fromDate)} → {formatDate(run.lastEntry ?? run.toDate)}
+                    </span>
+                  )}
                   {run?.bankName ? ` · ${run.bankName}` : ''}
                   {run?.status === 'PROCESSED' && ' · processed, read-only'}
                 </p>
@@ -1660,7 +1694,7 @@ export function BankStatementPage() {
                   <div>
                     <h3 className="text-[14px] font-extrabold tracking-tight">{partyView.customerName}</h3>
                     <p className="text-muted-foreground text-[11.5px]">
-                      {run && `${formatDate(run.fromDate)} – ${formatDate(run.toDate)}`}
+                      {run && `${formatDate(run.firstEntry ?? run.fromDate)} – ${formatDate(run.lastEntry ?? run.toDate)}`}
                     </p>
                   </div>
 

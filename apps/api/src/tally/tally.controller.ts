@@ -16,6 +16,7 @@ import { TallyPartiesService } from './tally-parties.service';
 import { TallyBillsService } from './tally-bills.service';
 import { TallyPostingService } from './tally-posting.service';
 import { TallyNotesService } from './tally-notes.service';
+import { BillReadyService } from './bill-ready.service';
 
 const R = RESOURCES.TALLY;
 
@@ -57,6 +58,17 @@ class PostDto extends CodeDto {
   @IsOptional() @IsBoolean() ewayAck?: boolean;
 }
 
+class PcPrintedDto {
+  @IsString() vchNo!: string;
+  @IsOptional() @IsString() party?: string;
+  @IsOptional() @IsString() eway?: string;
+}
+
+class BillReadyAlertsBody {
+  @IsBoolean() enabled!: boolean;
+  @IsArray() @IsString({ each: true }) userIds!: string[];
+}
+
 class EwayAskDto {
   @IsArray() @IsString({ each: true }) vchNos!: string[];
 }
@@ -75,6 +87,7 @@ export class TallyController {
     private readonly bills: TallyBillsService,
     private readonly posting: TallyPostingService,
     private readonly notes: TallyNotesService,
+    private readonly billReady: BillReadyService,
   ) {}
 
   /** Live check: can OMS reach Tally, and is the locked company open? */
@@ -128,6 +141,28 @@ export class TallyController {
   async pcEway(@Req() req: Request, @Headers('x-tally-key') key = '', @Body() dto?: EwayAskDto) {
     pcCaller(req, key);
     return { required: await this.posting.ewayFor(dto?.vchNos ?? []) };
+  }
+
+  /** The Tally PC printed a bill (e-invoice / e-way done): tell the people on the "Bill ready" list. Same key + LAN rule as pc-hello. */
+  @Public()
+  @SkipThrottle()
+  @Post('pc-printed')
+  async pcPrinted(@Req() req: Request, @Headers('x-tally-key') key = '', @Body() dto?: PcPrintedDto) {
+    pcCaller(req, key);
+    return this.billReady.printed({ vchNo: dto?.vchNo ?? '', party: dto?.party, eway: dto?.eway });
+  }
+
+  /** Who gets "Bill ready" alerts — read by Settings, changed by an admin. */
+  @Get('bill-ready-alerts')
+  getBillReadyAlerts() {
+    return this.billReady.getSettings();
+  }
+
+  @Put('bill-ready-alerts')
+  @Permissions(perm(RESOURCES.SETTING, ACTIONS.UPDATE))
+  @Audit({ action: ACTIONS.UPDATE, resource: RESOURCES.SETTING, description: 'Changed who gets Bill ready alerts' })
+  saveBillReadyAlerts(@Body() dto: BillReadyAlertsBody) {
+    return this.billReady.saveSettings(dto);
   }
 
   @Put('config')

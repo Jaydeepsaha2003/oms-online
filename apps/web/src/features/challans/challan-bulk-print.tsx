@@ -12,6 +12,7 @@ import { Button } from '@/components/ui/button';
 import { Dialog, DialogContent, DialogFooter, DialogHeader, DialogTitle } from '@/components/ui/dialog';
 import { useChallanTerms, useCompany } from '@/features/settings/use-settings';
 import { ChallanInvoice, challanTermsFor, pcsLineCount } from './challan-invoice';
+import { useMarkPrinted } from './use-challans';
 
 /**
  * Print rules for a whole batch, mirroring the single challan's `PRINT_CSS`
@@ -98,6 +99,7 @@ export function ChallanBulkPrint({
 }) {
   const { data: termsData } = useChallanTerms();
   const { data: company } = useCompany();
+  const markPrinted = useMarkPrinted();
 
   const [jobs, setJobs] = useState<Job[] | null>(null);
   const [loadError, setLoadError] = useState<string | null>(null);
@@ -296,6 +298,7 @@ export function ChallanBulkPrint({
      */
     // iPhone: all challans into ONE PDF, opened from a fresh tap (its share sheet has Print).
     // Saving them as separate PDFs showed only the first one in the print preview.
+    if (how === 'print') markPrinted(list.map((j) => j.challan.id)); // a press counts as printed
     const iosPrint = how === 'print' && isIOS();
     const mode: Delivery = iosPrint ? 'share' : how;
     setOnePdf(null);
