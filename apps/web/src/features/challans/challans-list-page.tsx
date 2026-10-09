@@ -60,7 +60,13 @@ const money = (v: number | null) => `₹ ${(v ?? 0).toLocaleString('en-IN')}`;
 
 /** Tally link of one challan: posted (with its Tally number), waiting, or not a Tally bill at all. */
 function TallyChip({ r }: { r: ChallanDto }) {
-  if (!r.tallyEligible) return <span className="text-muted-foreground/60 text-[12px]">—</span>;
+  if (!r.tallyEligible)
+    return (
+      <span className="inline-flex flex-wrap items-center gap-x-2 gap-y-1">
+        <span className="text-muted-foreground/60 text-[12px]">—</span>
+        <PrintChip r={r} />
+      </span>
+    );
   const s = r.tally?.status ?? 'NOT_POSTED';
   const [text, tone] =
     s === 'POSTED'
@@ -74,13 +80,33 @@ function TallyChip({ r }: { r: ChallanDto }) {
             : ['Not in Tally', 'bg-amber-50 text-amber-800 ring-amber-200'];
   return (
     <span className="inline-flex flex-col items-start gap-1">
-      <span className={cn('inline-flex rounded-[4px] px-2 py-0.5 text-[11.5px] font-bold whitespace-nowrap ring-1 ring-inset', tone)}>{text}</span>
+      {/* Print status rides on the chip's line so it adds no height; wraps under it if the column is narrow. */}
+      <span className="inline-flex flex-wrap items-center gap-x-2 gap-y-1">
+        <span className={cn('inline-flex rounded-[4px] px-2 py-0.5 text-[11.5px] font-bold whitespace-nowrap ring-1 ring-inset', tone)}>{text}</span>
+        <PrintChip r={r} />
+      </span>
       {s === 'POSTED' && (r.tally?.irnAckNo || r.tally?.eWayBillNo) && (
         <span className="inline-flex flex-wrap gap-x-2 text-[11px] font-semibold text-emerald-700 dark:text-emerald-300">
           {r.tally?.irnAckNo && <span title={`IRN acknowledgement ${r.tally.irnAckNo}`}>IRN issued ✓</span>}
           {r.tally?.eWayBillNo && <span title={`E-way bill ${r.tally.eWayBillNo}`}>E-way issued ✓</span>}
         </span>
       )}
+    </span>
+  );
+}
+
+/** Print pressed ×N (a press counts — the browser never reports real paper), or not yet. */
+function PrintChip({ r }: { r: ChallanDto }) {
+  if (r.challanStatus === 'CANCELLED' || r.printCount == null) return null;
+  if (!r.printCount)
+    return <span className="inline-flex items-center gap-1 rounded-[4px] bg-rose-50 px-1.5 py-0.5 text-[11px] font-bold whitespace-nowrap text-rose-700 ring-1 ring-rose-200 ring-inset"><Printer className="size-3" /> Not printed</span>;
+  const when = r.lastPrintedAt ? `${formatDate(r.lastPrintedAt)} ${new Date(r.lastPrintedAt).toLocaleTimeString('en-IN', { hour: '2-digit', minute: '2-digit' })}` : '';
+  return (
+    <span
+      title={r.lastPrintedAt ? `Last printed ${when}${r.lastPrintedBy ? ` by ${r.lastPrintedBy}` : ''}` : 'Printed before print tracking started'}
+      className="inline-flex items-center gap-1 text-[11px] font-semibold whitespace-nowrap text-slate-500"
+    >
+      <Printer className="size-3" /> Printed ×{r.printCount}
     </span>
   );
 }
@@ -197,6 +223,7 @@ export function ChallansListPage() {
   const [preset, setPreset] = useState(() => initialFilters.preset ?? DEFAULT_PRESET);
   const [status, setStatus] = useState(() => initialFilters.status ?? '');
   const [agent, setAgent] = useState(() => initialFilters.agent ?? '');
+  const [notPrinted, setNotPrinted] = useState(false);
   const { page, setPage, pageSize, setPageSize } = usePageSize('challans-list', undefined, 1);
   // Phones: date range / quick range / status live behind this Filter icon.
   const [mobileFiltersOpen, setMobileFiltersOpen] = useState(false);
@@ -256,6 +283,7 @@ export function ChallansListPage() {
     dateTo: dateTo || undefined,
     status: status || undefined,
     agent: agent || undefined,
+    notPrinted: notPrinted || undefined,
   };
   const { data, isLoading } = useChallans(query);
   // KPI totals cover the whole filtered set, not the current page — so they only
@@ -550,7 +578,9 @@ export function ChallansListPage() {
         id: 'tally',
         label: 'Tally',
         sortValue: (r) => r.tally?.status ?? '',
-        cell: (r) => <TallyChip r={r} />,
+        cell: (r) => (
+          <TallyChip r={r} />
+        ),
       },
     ],
     // The tick column reads the live selection, so it has to re-render when it
@@ -788,6 +818,24 @@ export function ChallansListPage() {
     </div>
   );
 
+  /** Only challans whose Print was never pressed — to catch the ones to print. */
+  const notPrintedToggle = (
+    <button
+      type="button"
+      aria-pressed={notPrinted}
+      onClick={() => {
+        setNotPrinted((v) => !v);
+        setPage(1);
+      }}
+      className={cn(
+        'flex h-9 cursor-pointer items-center gap-1.5 rounded-[4px] border px-2.5 text-[12px] font-semibold whitespace-nowrap',
+        notPrinted ? 'border-rose-500 bg-rose-500 text-white' : 'border-rose-200 text-rose-700 hover:bg-rose-50',
+      )}
+    >
+      <Printer className="size-3.5" /> Not printed
+    </button>
+  );
+
   const presetOptions = (
     <div className="grid grid-cols-2 gap-1 sm:grid-cols-1">
       {PRESETS.map((p) => {
@@ -913,6 +961,7 @@ export function ChallansListPage() {
           </Button>
 
           <div className="hidden sm:block">{statusPills}</div>
+          <div className="hidden sm:block">{notPrintedToggle}</div>
 
           <div className="hidden w-44 sm:block">{agentSelect}</div>
 
@@ -1024,6 +1073,7 @@ export function ChallansListPage() {
             <div className="space-y-1.5">
               <Label className="text-muted-foreground text-[10px] font-bold uppercase tracking-widest">Status</Label>
               {statusPills}
+              {notPrintedToggle}
             </div>
             <div className="space-y-1.5">
               <Label className="text-muted-foreground text-[10px] font-bold uppercase tracking-widest">Agent</Label>

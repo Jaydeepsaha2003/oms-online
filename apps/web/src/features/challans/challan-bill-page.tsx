@@ -13,7 +13,7 @@ import { Dialog, DialogContent, DialogFooter, DialogHeader, DialogTitle } from '
 import { buildBillFilename, captureScale, decodeImage, isIOS, savePdfBlob, sharePdfFile, showPreviewPlaceholder, takePendingPreviewTab, waitForPaintable } from '@/lib/pdf';
 import kavishLogo from '@/assets/kavish-logo-order.png';
 import { useChallanTerms, useCompany } from '@/features/settings/use-settings';
-import { useChallan, usePendingChallans } from './use-challans';
+import { useChallan, useMarkPrinted, usePendingChallans } from './use-challans';
 import { ChallanInvoice, challanTermsFor, isPcsUnit, pcsLineCount } from './challan-invoice';
 
 const PRINT_CSS = `
@@ -84,6 +84,7 @@ export function ChallanBillPage() {
   const { data: company, isPending: companyPending } = useCompany();
   const logoSrc = company?.logo || kavishLogo;
   const confirm = useConfirm();
+  const markPrinted = useMarkPrinted();
   const [busy, setBusy] = useState(false);
   // Whether PCS-sold lines print their Kgs — see `askKgsForPcs`. Off by default,
   // matching the desktop OMS, where "No" is the highlighted button.
@@ -371,6 +372,8 @@ export function ChallanBillPage() {
     // taps Print from the iOS share sheet / Safari's PDF viewer. `download` opens
     // the tab synchronously inside this tap, so iOS doesn't block it.
     if (!asked) await askKgsForPcs();
+    // Pressing Print counts as printed — the browser never says if paper came out.
+    if (challan) markPrinted([challan.id]);
     if (isIOS()) {
       await download(true);
       return;

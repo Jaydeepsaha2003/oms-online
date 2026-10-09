@@ -14,6 +14,7 @@ import {
   DismissMissingChallanDto,
   DraftChallanDto,
   ItemHistoryQueryDto,
+  MarkPrintedDto,
   MissingChallanQueryDto,
   PendingChallanQueryDto,
   SavePrefixSettingsDto,
@@ -65,6 +66,13 @@ export class ChallansController {
   @Permissions(perm(R, ACTIONS.VIEW))
   list(@Query() query: ChallanQueryDto) {
     return this.challans.findMany(query);
+  }
+
+  /** Print pressed (single or bulk) — the list's Printed ×N / Not printed. */
+  @Post('printed')
+  @Permissions(perm(R, ACTIONS.VIEW))
+  markPrinted(@Body() dto: MarkPrintedDto, @CurrentUser('name') userName?: string) {
+    return this.challans.markPrinted(dto.ids, userName ?? null);
   }
 
   @Get('summary')

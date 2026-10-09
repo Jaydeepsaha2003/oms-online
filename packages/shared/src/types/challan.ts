@@ -93,6 +93,10 @@ export interface ChallanDto {
   tally?: { status: 'NOT_POSTED' | 'POSTING' | 'POSTED' | 'FAILED' | 'UNKNOWN'; vchNo: string | null; irnAckNo: string | null; eWayBillNo: string | null } | null;
   /** List rows only: an SSS-series sales invoice, i.e. one that belongs in Tally at all. */
   tallyEligible?: boolean;
+  /** List rows only: Print presses so far, and the last one. */
+  printCount?: number;
+  lastPrintedAt?: string | null;
+  lastPrintedBy?: string | null;
   prefix: string | null;
   invDate: string;
   customerId: number | null;
@@ -151,6 +155,8 @@ export type ChallanQuery = PaginationQuery & {
    * agent's customers and matches those — see `agentScope` in the service.
    */
   agent?: string;
+  /** Only challans whose Print was never pressed. */
+  notPrinted?: boolean;
 };
 export type ChallanList = Paginated<ChallanDto>;
 

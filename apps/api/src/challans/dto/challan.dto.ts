@@ -24,6 +24,13 @@ export class ChallanQueryDto extends PaginationDto {
   @IsOptional() @IsString() category?: string;
   /** Restrict to the parties of one agent (exact, from the customer master). */
   @IsOptional() @IsString() agent?: string;
+  /** Only challans whose Print was never pressed. */
+  @IsOptional() @Transform(toBool) @IsBoolean() notPrinted?: boolean;
+}
+
+/** Print was pressed for these challans (one, or a bulk print). */
+export class MarkPrintedDto {
+  @IsArray() @ArrayNotEmpty() @IsInt({ each: true }) ids!: number[];
 }
 
 export class UpdateChallanStatusDto {
