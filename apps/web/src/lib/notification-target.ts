@@ -108,6 +108,8 @@ export function useNotificationNavigation(): void {
       const data = e.data as { type?: string; url?: string } | undefined;
       if (data?.type !== 'NOTIFICATION_NAVIGATE') return;
       openNotificationTarget(data.url);
+      // Handled — so the resume check below does not act on it a second time.
+      void clearPendingTarget();
     };
     navigator.serviceWorker.addEventListener('message', onMessage);
     return () => navigator.serviceWorker.removeEventListener('message', onMessage);
@@ -118,11 +120,24 @@ export function useNotificationNavigation(): void {
     // no user yet and bounces the whole thing to /login.
     if (isBootstrapping) return;
     let cancelled = false;
-    void takePendingNotificationTarget().then((url) => {
-      if (!cancelled && url) navigate(landingFor(url), { replace: true });
-    });
+    const take = () =>
+      void takePendingNotificationTarget().then((url) => {
+        if (!cancelled && url) navigate(landingFor(url), { replace: true });
+      });
+    take();
+    /*
+     * A phone app that was only in the background is RESUMED, not booted —
+     * and a suspended page may never get the worker's message. Without this
+     * the tap brought back whatever page was last open instead of the one the
+     * notification was about.
+     */
+    const onVisible = () => {
+      if (document.visibilityState === 'visible') take();
+    };
+    document.addEventListener('visibilitychange', onVisible);
     return () => {
       cancelled = true;
+      document.removeEventListener('visibilitychange', onVisible);
     };
   }, [isBootstrapping, navigate]);
 }

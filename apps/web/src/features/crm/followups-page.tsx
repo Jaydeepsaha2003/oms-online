@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import { useNavigate, useSearchParams } from 'react-router-dom';
 import { AlarmClock, Bell, Building2, EllipsisVertical, CalendarDays, Check, ChevronDown, CircleCheck, Clock, Eye, Factory, Flag, HandCoins, Handshake, Info, ListChecks, Loader2, MessageSquare, MessageSquarePlus, Mic, Package, PackageCheck, Pencil, Plus, RotateCcw, Search, SlidersHorizontal, Sparkles, Trash2, TriangleAlert, Truck, Wallet, type LucideIcon } from 'lucide-react';
 import { toast } from 'sonner';
@@ -83,16 +83,26 @@ export function FollowupsPage({ kind = 'DELIVERY' }: { kind?: FollowupKind }) {
   const { data: summary } = useFollowupSummary(kind);
 
   const [searchParams] = useSearchParams();
+  const target = searchParams.get('followup');
+  // Opened from a reminder: clear the filters so that follow-up is on the list.
   useEffect(() => {
-    const id = searchParams.get('followup');
-    if (!id) return;
-    const el = document.getElementById(`followup-${id}`);
+    if (!target) return;
+    setBucket('');
+    setSearch('');
+    setStatus('OPEN');
+    setAgentOnly(false);
+  }, [target]);
+  /** The follow-up already brought into view — once per reminder, not on every refetch. */
+  const shownTarget = useRef<string | null>(null);
+  useEffect(() => {
+    if (!target || shownTarget.current === target) return;
+    const el = document.getElementById(`followup-${target}`);
     if (!el) return;
+    shownTarget.current = target;
     el.scrollIntoView({ behavior: 'smooth', block: 'center' });
     el.classList.add('ring-2', 'ring-indigo-400', 'ring-offset-2');
-    const timer = setTimeout(() => el.classList.remove('ring-2', 'ring-indigo-400', 'ring-offset-2'), 2200);
-    return () => clearTimeout(timer);
-  }, [searchParams, groups]);
+    setTimeout(() => el.classList.remove('ring-2', 'ring-indigo-400', 'ring-offset-2'), 5000);
+  }, [target, groups]);
 
   const [formOpen, setFormOpen] = useState(false);
   const [editing, setEditing] = useState<FollowupDto | null>(null);
@@ -322,7 +332,7 @@ export function FollowupsPage({ kind = 'DELIVERY' }: { kind?: FollowupKind }) {
       ) : (
         <>
           {showingDone && <HistoryList items={doneItems} canEdit={canEdit} />}
-          <div className={cn('grid gap-3 sm:grid-cols-[repeat(auto-fill,minmax(400px,1fr))]', showingDone && 'sm:hidden')}>
+          <div className={cn('grid items-start gap-3 sm:grid-cols-[repeat(auto-fill,minmax(400px,1fr))]', showingDone && 'sm:hidden')}>
             {groups.map((g) => (
               <PartyCard key={g.partyName} group={g} canEdit={canEdit} onEdit={openForm} balance={balByParty.get(g.partyName.trim().toUpperCase())} done={showingDone} />
             ))}

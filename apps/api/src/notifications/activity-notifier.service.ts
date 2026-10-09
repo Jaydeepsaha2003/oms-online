@@ -89,6 +89,19 @@ export class ActivityNotifier {
     );
   }
 
+  /** A cup bag booking was made — the floor plans bags against it. Opens the bookings list. */
+  bookingCreated(f: Actor & { bookingId: number; code?: string | null; customerName: string; bags: number; kgs: number }): void {
+    this.fire(
+      {
+        title: `New cup booking — ${f.customerName}`,
+        body: this.line([f.code || `#${f.bookingId}`, f.bags ? `${f.bags} bags` : null, f.kgs ? `${f.kgs} kgs` : null, this.by(f.userName)]),
+        data: { kind: 'booking', bookingId: f.bookingId, url: '/bookings' },
+      },
+      f.actorId,
+      `booking:created:${f.bookingId}`,
+    );
+  }
+
   /** A Design Track processed ("Kalwat") figure was entered or changed. */
   designTrackUpdated(
     f: Actor & {

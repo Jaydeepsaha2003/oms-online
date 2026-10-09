@@ -10,7 +10,7 @@ import { showSystemNotifications } from '@/lib/system-notification';
 import { formatDate } from '@/lib/date-format';
 import { Button } from '@/components/ui/button';
 import { useCrmSettings, useFollowupDue, useResolveFollowup, useSeenFollowup, useSnoozeFollowup } from './use-crm';
-import { Chip, itemLine, UrgencyChip } from './crm-shared';
+import { Chip, followupUrl, itemLine, UrgencyChip } from './crm-shared';
 
 /**
  * When each follow-up last raised a banner, per browser.
@@ -229,6 +229,8 @@ export function FollowupNudge() {
                 options: {
                   body: `${f.title}${f.promisedAt ? ` · promised ${formatDate(f.promisedAt)}` : ''}`,
                   tag: `followup-${f.id}`,
+                  // Tapping it opens THIS follow-up, not whatever page was open.
+                  data: { followupId: f.id, kind: f.kind, url: followupUrl(f) },
                 },
               })),
             )
@@ -286,7 +288,7 @@ export function FollowupNudge() {
             resolve={resolve}
             onOpen={() => {
               setActiveBanners((prev) => prev.filter((b) => b.id !== id));
-              navigate('/crm');
+              navigate(followupUrl(followup));
             }}
             onDismiss={() => {
               setActiveBanners((prev) => prev.filter((b) => b.id !== id));

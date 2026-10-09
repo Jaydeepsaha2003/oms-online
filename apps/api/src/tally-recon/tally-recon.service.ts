@@ -503,6 +503,15 @@ export class TallyReconService {
    * vouchers: every member's vouchers, concatenated — each already carries
    * its own date and amount, so there is nothing to reconcile between them.
    */
+  /** One OMS book for a Tally ledger that several OMS parties are billed under:
+   *  their bills and receipts join it. The opening stays the mapped party's —
+   *  Tally's opening for B K METAL already agreed with BK METAL's alone. */
+  private withSharedBooks(book: OmsParty | null, shared: OmsParty[]): OmsParty | null {
+    if (!book || !shared.length) return book;
+    const all = [book, ...shared];
+    return { ...book, invoices: all.flatMap((b) => b.invoices), vouchers: all.flatMap((b) => b.vouchers) };
+  }
+
   private mergeLedgersForBalance(ledgers: ParsedLedger[]): ParsedLedger {
     const openings = ledgers.map((l) => l.openingNet).filter((n): n is number => n != null);
     const latestVoucherDate = (l: ParsedLedger) =>
@@ -605,7 +614,19 @@ export class TallyReconService {
     for (const l of register.ledgers) resolved.set(l.ledgerName, resolve(l.ledgerName));
 
     const custIds = [...new Set([...resolved.values()].filter(Boolean).map((r) => r!.id))];
-    const books = await this.loadOmsBooks(custIds, from, toExclusive);
+    /*
+     * OMS parties billed in Tally under ANOTHER party's ledger — the customer's
+     * Tally ledger (what Post to Tally uses): B KUMAR's ROOPI, RAJ STEEL and
+     * CHANDINI all go to "B K METAL". Their bills belong to that ledger here
+     * too, or they read as missing in OMS. A party that has its own ledger in
+     * this file is left to that ledger, never counted twice.
+     */
+    const resolvedIds = new Set(custIds);
+    const ledgerOwners = await this.prisma.customer.findMany({ where: { tallyLedgerName: { not: null } }, select: { id: true, tallyLedgerName: true } });
+    const sharersOf = (ledgerName: string) =>
+      ledgerOwners.filter((c) => exactKey(c.tallyLedgerName!) === exactKey(ledgerName) && !resolvedIds.has(c.id)).map((c) => c.id);
+    const sharerIds = [...new Set(register.ledgers.flatMap((l) => (resolved.get(l.ledgerName) ? sharersOf(l.ledgerName) : [])))];
+    const books = await this.loadOmsBooks([...custIds, ...sharerIds], from, toExclusive);
     const groups = await loadLedgerGroups(this.prisma);
 
     /*
@@ -623,7 +644,8 @@ export class TallyReconService {
       if (hit) {
         const siblings = register.ledgers.filter((l) => resolved.get(l.ledgerName)?.id === hit.id);
         for (const l of siblings) done.add(l.ledgerName);
-        rows.push(...reconcileParty(siblings.length > 1 ? this.mergeLedgersForBalance(siblings) : ledger, books.get(hit.id) ?? null, from));
+        const shared = [...new Set(siblings.flatMap((l) => sharersOf(l.ledgerName)))].map((id) => books.get(id)).filter((b): b is OmsParty => !!b);
+        rows.push(...reconcileParty(siblings.length > 1 ? this.mergeLedgersForBalance(siblings) : ledger, this.withSharedBooks(books.get(hit.id) ?? null, shared), from));
         continue;
       }
       const group = groups.groupOf(ledger.ledgerName);

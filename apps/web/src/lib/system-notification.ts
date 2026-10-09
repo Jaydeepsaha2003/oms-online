@@ -9,6 +9,7 @@
  * choosing rather than the user's.
  */
 import { currentRegistration } from './service-worker';
+import { openNotificationTarget } from './notification-target';
 
 /**
  * Show one notification. Returns whether it was actually shown, so the caller
@@ -51,7 +52,17 @@ export async function showSystemNotification(
   }
 
   try {
-    new Notification(title, opts);
+    const n = new Notification(title, opts);
+    // A page-level notification never reaches the worker's click handler, so
+    // it opens its own page here — otherwise a click just focused the tab.
+    const url = (opts.data as { url?: unknown } | undefined)?.url;
+    if (url) {
+      n.onclick = () => {
+        window.focus();
+        openNotificationTarget(url);
+        n.close();
+      };
+    }
     return true;
   } catch {
     return false; // iOS Safari and friends: no page-level notifications at all
