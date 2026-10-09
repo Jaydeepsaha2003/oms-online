@@ -24,12 +24,12 @@ import {
 /** One-tap shortcuts to the screens used all day, in the order of the work:
  *  order → dispatch → bill → collect. Route, icon and permission come from the
  *  menu, so a shortcut only shows to someone who could open it anyway. */
-const SHORTCUTS: { to: string; label: string }[] = [
-  { to: '/orders/new', label: 'New Order' },
-  { to: '/challans/pending', label: 'Add Sales' },
-  { to: '/dispatch/new', label: 'Dispatch' },
-  { to: '/dispatch', label: 'Modify Dispatch' },
-  { to: '/account/payment', label: 'Receive Payment' },
+const SHORTCUTS: { to: string; label: string; tone: string }[] = [
+  { to: '/orders/new', label: 'New Order', tone: 'from-blue-500 to-indigo-600 shadow-indigo-500/30' },
+  { to: '/challans/pending', label: 'Add Sales', tone: 'from-emerald-500 to-teal-600 shadow-emerald-500/30' },
+  { to: '/dispatch/new', label: 'Dispatch', tone: 'from-orange-400 to-amber-600 shadow-amber-500/30' },
+  { to: '/dispatch', label: 'Modify Dispatch', tone: 'from-violet-500 to-purple-600 shadow-purple-500/30' },
+  { to: '/account/payment', label: 'Receive Payment', tone: 'from-rose-500 to-pink-600 shadow-rose-500/30' },
 ];
 
 function Shortcuts() {
@@ -41,7 +41,7 @@ function Shortcuts() {
   );
   if (!items.length) return null;
   return (
-    <nav aria-label="Shortcuts" className="ml-3 hidden min-w-0 items-center gap-1 overflow-x-auto md:flex">
+    <nav aria-label="Shortcuts" className="mr-1 hidden min-w-0 items-center gap-1.5 md:flex">
       {items.map((sc) => {
         const Icon = getMenuIcon(sc.route!.icon);
         const active = pathname === sc.to;
@@ -52,10 +52,12 @@ function Shortcuts() {
             title={sc.label}
             aria-current={active ? 'page' : undefined}
             className={cn(
-              'inline-flex h-9 shrink-0 items-center gap-1.5 rounded-lg border px-2.5 text-[13px] font-semibold whitespace-nowrap transition-colors',
-              active
-                ? 'border-transparent bg-primary text-primary-foreground shadow-sm'
-                : 'bg-background hover:bg-accent text-foreground/80 hover:text-foreground',
+              'inline-flex h-9 shrink-0 items-center gap-1.5 rounded-lg bg-gradient-to-b px-2.5 text-[13px] font-semibold whitespace-nowrap text-white shadow-md',
+              'transition-all duration-200 hover:-translate-y-0.5 hover:shadow-lg hover:brightness-110 active:translate-y-0 active:scale-[0.97]',
+              'focus-visible:ring-2 focus-visible:ring-offset-2 focus-visible:outline-none',
+              sc.tone,
+              // The page you are on: ringed, so it reads as "here".
+              active && 'outline-foreground/50 outline outline-2 outline-offset-2',
             )}
           >
             <Icon className="size-4 shrink-0" />
@@ -123,9 +125,8 @@ export function Topbar({
 
       <h1 className="truncate text-xl font-bold tracking-tight sm:text-2xl">{title}</h1>
 
-      <Shortcuts />
-
       <div className="ml-auto flex items-center gap-2">
+        <Shortcuts />
         {/* Manual refresh — reloads the page so the latest data (and, with the
             network-first service worker, the latest deployed app version) is
             fetched. The companion to the auto-update-on-reload behaviour. */}
