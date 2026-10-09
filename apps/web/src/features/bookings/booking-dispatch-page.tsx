@@ -6,6 +6,7 @@ import { qtyOrderForCategory, type BookingDispatchLineInput, type BookingDispatc
 import { getApiErrorMessage } from '@/lib/api';
 import { formatDate } from '@/lib/date-format';
 import { useIsMobile } from '@/hooks/use-is-mobile';
+import { usePermissions } from '@/hooks/use-permissions';
 import { useConfirm } from '@/components/common/confirm';
 import { DatePicker } from '@/components/ui/date-picker';
 import { NativeSelect } from '@/components/common/combo';
@@ -98,6 +99,9 @@ const readDraft = (): { customer: string; bookingId: number | null; lines: Draft
 export function BookingDispatchPage() {
   const navigate = useNavigate();
   const confirm = useConfirm();
+  // Rates and amounts only for `dispatch:viewrates` (the server leaves them out
+  // otherwise) — an operator dispatches by quantity; the server prices the lines.
+  const canViewRates = usePermissions().can('dispatch:viewrates');
   const { data: lookups } = useOrderLookups();
   const { data: qtyLayout } = useOrderQtyLayout();
   const send = useDispatchFromBooking();
@@ -361,7 +365,7 @@ export function BookingDispatchPage() {
       if ((n(v) ?? 0) < 0) return toast.error(`${label} cannot be negative`);
     }
     if (!((n(entry.pcs) ?? 0) > 0)) return toast.error('Enter Pcs — this item is billed by pieces');
-    if (rateFor(entry) <= 0) return toast.error('This item has no rate on the booking — it cannot be ₹0');
+    if (canViewRates && rateFor(entry) <= 0) return toast.error('This item has no rate on the booking — it cannot be ₹0');
     const designName = noDesignNames ? 'NA' : entry.designName;
     const dupIdx = lines.findIndex(
       (l) =>
@@ -732,15 +736,17 @@ export function BookingDispatchPage() {
             onInvalidEntry={() => toast.error('Please select a correct design name')}
           />
         </div>
-        <div className="bd-f bd-float bd-narrow flex-[1_1_110px]">
-          <span className="bd-lbl" style={isMobile ? { color: '#3a9a5c' } : undefined}>
-            Rate ₹
-          </span>
-          <span className="bd-ro bd-rate" title="Frozen on the booking at its booking date">
-            {!isMobile && <Lock className="size-3 opacity-60" strokeWidth={2.6} />}
-            {entryRate ? nf(entryRate) : '—'}
-          </span>
-        </div>
+        {canViewRates && (
+          <div className="bd-f bd-float bd-narrow flex-[1_1_110px]">
+            <span className="bd-lbl" style={isMobile ? { color: '#3a9a5c' } : undefined}>
+              Rate ₹
+            </span>
+            <span className="bd-ro bd-rate" title="Frozen on the booking at its booking date">
+              {!isMobile && <Lock className="size-3 opacity-60" strokeWidth={2.6} />}
+              {entryRate ? nf(entryRate) : '—'}
+            </span>
+          </div>
+        )}
       </div>
       <div className="bd-flex">
         {/* Bags are not per line — asked once for the whole dispatch below. */}
@@ -844,10 +850,12 @@ export function BookingDispatchPage() {
                 </span>
               ))}
             </div>
-            <div className="flex min-w-[86px] flex-col items-end leading-tight">
-              <span className="text-[14.5px] font-extrabold tabular-nums">{inr(l.amount)}</span>
-              <span className="bd-tiny">@ {inr(l.rate)}</span>
-            </div>
+            {canViewRates && (
+              <div className="flex min-w-[86px] flex-col items-end leading-tight">
+                <span className="text-[14.5px] font-extrabold tabular-nums">{inr(l.amount)}</span>
+                <span className="bd-tiny">@ {inr(l.rate)}</span>
+              </div>
+            )}
             <div className="flex gap-1">
               <span className="bd-photo" data-miss={missingPhotoKeys.has(l.key) ? '' : undefined}>
                 <LinePhotoButton photos={l.photos} onChange={(photos) => setLinePhotos(l.key, photos)} status={photoStatusFor(l.key)} />
@@ -868,12 +876,12 @@ export function BookingDispatchPage() {
           </div>
         );
       })}
-      <div className="bd-totals">
+      <div className="bd-totals" style={canViewRates ? undefined : { gridTemplateColumns: 'repeat(3, minmax(0, 1fr))' }}>
         {[
           ['Box', nf(totals.box)],
           ['Pcs', nf(totals.pcs)],
           ['Kgs', nf(totals.kgs)],
-          ['Amount', inr(totals.amount)],
+          ...(canViewRates ? [['Amount', inr(totals.amount)]] : []),
         ].map(([k, v]) => (
           <div key={k}>
             <small>{k}</small>
@@ -1054,7 +1062,9 @@ export function BookingDispatchPage() {
           <div className="bd-foot">
             <div>
               <div className="flex min-w-0 flex-1 flex-col leading-tight">
-                <span className="text-base font-extrabold whitespace-nowrap tabular-nums">{inr(totals.amount)}</span>
+                <span className="text-base font-extrabold whitespace-nowrap tabular-nums">
+                  {canViewRates ? inr(totals.amount) : customer || 'Booking Dispatch'}
+                </span>
                 <span className="truncate text-[11.5px] font-semibold" style={muted}>
                   {lines.length
                     ? `${items(lines.length)} · ${nf(totals.pcs)} pcs · ${nf(totals.kgs)} kgs${bags ? ` · ${nf(bags)} bags` : ''}`

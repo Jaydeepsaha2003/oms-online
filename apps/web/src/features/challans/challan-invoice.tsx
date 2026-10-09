@@ -295,30 +295,32 @@ export function ChallanInvoice({
             const name = [it.productName, it.design && it.design.toUpperCase() !== 'NA' ? it.design : null].filter(Boolean).join(' ');
             return (
               <tr key={it.id} style={{ background: idx % 2 === 1 ? '#F5F7FA' : '#fff' }}>
-                <td style={{ ...td, textAlign: 'center' }}>{idx + 1}</td>
+                <td style={{ ...td, textAlign: 'center', whiteSpace: 'nowrap' }}>{idx + 1}</td>
                 <td style={td}>{name || '—'}</td>
-                <td style={{ ...td, textAlign: 'right' }}>{it.bags ? numf(it.bags) : '-'}</td>
-                <td style={{ ...td, textAlign: 'right' }}>{it.box ? numf(it.box) : '-'}</td>
-                <td style={{ ...td, textAlign: 'right' }}>{it.pcs ? numf(it.pcs) : '-'}</td>
+                <td style={{ ...td, textAlign: 'right', whiteSpace: 'nowrap' }}>{it.bags ? numf(it.bags) : '-'}</td>
+                <td style={{ ...td, textAlign: 'right', whiteSpace: 'nowrap' }}>{it.box ? numf(it.box) : '-'}</td>
+                <td style={{ ...td, textAlign: 'right', whiteSpace: 'nowrap' }}>{it.pcs ? numf(it.pcs) : '-'}</td>
                 {/* A PCS-sold line only shows its Kgs when the operator said
-                    so at print time (see askKgsForPcs). */}
-                <td style={{ ...td, textAlign: 'right' }}>{showKgs(it.unit) && it.kgs ? numf(it.kgs) : '-'}</td>
-                <td style={{ ...td, textAlign: 'center' }}>{isKgs(it.unit) ? 'KGS' : it.unit || '-'}</td>
-                <td style={{ ...td, textAlign: 'right' }}>{rateFmt(it.price)}</td>
-                <td style={{ ...td, textAlign: 'right', fontWeight: 700 }}>{money(it.amount)}</td>
+                    so at print time (see askKgsForPcs). Numbers never wrap:
+                    the table squeezed these columns and broke "65.8" into
+                    "65." / "8" — the item name takes the slack instead. */}
+                <td style={{ ...td, textAlign: 'right', whiteSpace: 'nowrap' }}>{showKgs(it.unit) && it.kgs ? numf(it.kgs) : '-'}</td>
+                <td style={{ ...td, textAlign: 'center', whiteSpace: 'nowrap' }}>{isKgs(it.unit) ? 'KGS' : it.unit || '-'}</td>
+                <td style={{ ...td, textAlign: 'right', whiteSpace: 'nowrap' }}>{rateFmt(it.price)}</td>
+                <td style={{ ...td, textAlign: 'right', fontWeight: 700, whiteSpace: 'nowrap' }}>{money(it.amount)}</td>
               </tr>
             );
           })}
           {/* Total row — orange, matching the Sales Order total row */}
           <tr>
-            <td style={{ ...th, textAlign: 'right' }} colSpan={2}>Total</td>
-            <td style={{ ...th, textAlign: 'right' }}>{numf(totals.bags)}</td>
-            <td style={{ ...th, textAlign: 'right' }}>{numf(totals.box)}</td>
-            <td style={{ ...th, textAlign: 'right' }}>{numf(totals.pcs)}</td>
-            <td style={{ ...th, textAlign: 'right' }}>{numf(totals.kgs)}</td>
+            <td style={{ ...th, textAlign: 'right', whiteSpace: 'nowrap' }} colSpan={2}>Total</td>
+            <td style={{ ...th, textAlign: 'right', whiteSpace: 'nowrap' }}>{numf(totals.bags)}</td>
+            <td style={{ ...th, textAlign: 'right', whiteSpace: 'nowrap' }}>{numf(totals.box)}</td>
+            <td style={{ ...th, textAlign: 'right', whiteSpace: 'nowrap' }}>{numf(totals.pcs)}</td>
+            <td style={{ ...th, textAlign: 'right', whiteSpace: 'nowrap' }}>{numf(totals.kgs)}</td>
             <td style={th} />
             <td style={th} />
-            <td style={{ ...th, textAlign: 'right' }}>{money(totals.subTotal)}</td>
+            <td style={{ ...th, textAlign: 'right', whiteSpace: 'nowrap' }}>{money(totals.subTotal)}</td>
           </tr>
         </tbody>
       </table>

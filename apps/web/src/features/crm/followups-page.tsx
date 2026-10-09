@@ -35,7 +35,7 @@ import {
   type OpenOrderItemHit,
 } from './use-crm';
 import { MobileHero, MobileKpiTile, MobileTabs, MobileWallpaper, SKIN_TONE, type SkinTone } from '@/components/common/mobile-skin';
-import { Chip, initials, itemLine, UrgencyChip } from './crm-shared';
+import { Chip, initials, itemLine, SNOOZE_CHOICES, SnoozeMenu, UrgencyChip } from './crm-shared';
 import { ChecklistInput, type ChecklistDraftItem } from './checklist-input';
 import {
   balancesInView,
@@ -559,8 +559,8 @@ function FollowupRow({ f, canEdit, onEdit, done }: { f: FollowupDto; canEdit: bo
   const promised = f.kind === 'PAYMENT' ? (f.promisedAmount ?? 0) : 0;
   const received = f.receivedSince ?? 0;
   const short = Math.max(0, promised - received);
-  const doSnooze = () =>
-    snooze.mutate(f.id, {
+  const doSnooze = (minutes: number) =>
+    snooze.mutate({ id: f.id, minutes }, {
       onSuccess: () => toast.success('Snoozed — will nudge again later'),
       onError: (e) => toast.error(getApiErrorMessage(e, 'Failed')),
     });
@@ -720,15 +720,16 @@ function FollowupRow({ f, canEdit, onEdit, done }: { f: FollowupDto; canEdit: bo
               )}
               {/* Desktop has room for Snooze as a button, as in the mockup; on a
                   phone it stays in the menu so the row keeps two buttons. */}
-              <Button
-                size="sm"
-                variant="outline"
-                className="pd-btn pd-btn-snooze h-8 cursor-pointer text-xs max-sm:hidden"
-                disabled={snooze.isPending}
-                onClick={doSnooze}
-              >
-                <AlarmClock className="size-3.5" /> Snooze
-              </Button>
+              <SnoozeMenu onPick={doSnooze}>
+                <Button
+                  size="sm"
+                  variant="outline"
+                  className="pd-btn pd-btn-snooze h-8 cursor-pointer text-xs max-sm:hidden"
+                  disabled={snooze.isPending}
+                >
+                  <AlarmClock className="size-3.5" /> Snooze
+                </Button>
+              </SnoozeMenu>
               <DropdownMenu>
                 <DropdownMenuTrigger asChild>
                   <Button
@@ -742,9 +743,11 @@ function FollowupRow({ f, canEdit, onEdit, done }: { f: FollowupDto; canEdit: bo
                   </Button>
                 </DropdownMenuTrigger>
                 <DropdownMenuContent align="end" className="w-52 font-sans">
-                  <DropdownMenuItem className="sm:hidden" disabled={snooze.isPending} onSelect={doSnooze}>
-                    <AlarmClock className="text-amber-600" /> Snooze the reminder
-                  </DropdownMenuItem>
+                  {SNOOZE_CHOICES.map(([mins, label]) => (
+                    <DropdownMenuItem key={mins} className="sm:hidden" disabled={snooze.isPending} onSelect={() => doSnooze(mins)}>
+                      <AlarmClock className="text-amber-600" /> Snooze {label}
+                    </DropdownMenuItem>
+                  ))}
                   {/* Seen acknowledges the nudge; Resolved is what actually closes it. */}
                   <DropdownMenuItem
                     disabled={seen.isPending}

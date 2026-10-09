@@ -3,6 +3,34 @@ import { computeFollowupState, type FollowupDto } from '@oms/shared';
 import { cn } from '@/lib/utils';
 import { formatDate } from '@/lib/date-format';
 import { Button } from '@/components/ui/button';
+import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuLabel, DropdownMenuTrigger } from '@/components/ui/dropdown-menu';
+
+/** How long a reminder can be snoozed for. "Seen" covers "until tomorrow". */
+export const SNOOZE_CHOICES = [
+  [15, '15 minutes'],
+  [30, '30 minutes'],
+  [60, '1 hour'],
+  [120, '2 hours'],
+  [240, '4 hours'],
+] as const;
+
+/** Snooze for a chosen length — opens from whatever button the caller draws. */
+export function SnoozeMenu({ onPick, children }: { onPick: (minutes: number) => void; children: React.ReactElement }) {
+  return (
+    <DropdownMenu>
+      <DropdownMenuTrigger asChild>{children}</DropdownMenuTrigger>
+      {/* Above the reminder banners (z 99999) it can open from. */}
+      <DropdownMenuContent align="end" className="z-[100000] min-w-36">
+        <DropdownMenuLabel className="text-xs">Snooze for</DropdownMenuLabel>
+        {SNOOZE_CHOICES.map(([mins, label]) => (
+          <DropdownMenuItem key={mins} onSelect={() => onPick(mins)}>
+            {label}
+          </DropdownMenuItem>
+        ))}
+      </DropdownMenuContent>
+    </DropdownMenu>
+  );
+}
 
 /** Tone + label for a follow-up's urgency, from the shared state engine. */
 /** The page that shows this follow-up, opened on it — where a reminder leads. */
@@ -121,7 +149,7 @@ export function FollowupPartyList({
 }: {
   items: FollowupDto[];
   canUpdate: boolean;
-  onSnooze: (id: number) => void;
+  onSnooze: (id: number, minutes: number) => void;
   onResolve: (id: number) => void;
   snoozing: boolean;
   resolving: boolean;
@@ -157,15 +185,11 @@ export function FollowupPartyList({
                 </div>
                 {canUpdate && (
                   <div className="flex shrink-0 gap-1.5">
-                    <Button
-                      size="sm"
-                      variant="outline"
-                      className="h-7 text-xs text-amber-700"
-                      disabled={snoozing}
-                      onClick={() => onSnooze(f.id)}
-                    >
-                      <AlarmClock className="size-3" /> Snooze
-                    </Button>
+                    <SnoozeMenu onPick={(mins) => onSnooze(f.id, mins)}>
+                      <Button size="sm" variant="outline" className="h-7 text-xs text-amber-700" disabled={snoozing}>
+                        <AlarmClock className="size-3" /> Snooze
+                      </Button>
+                    </SnoozeMenu>
                     <Button
                       size="sm"
                       variant="outline"

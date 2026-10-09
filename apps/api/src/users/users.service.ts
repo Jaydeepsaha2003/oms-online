@@ -12,6 +12,8 @@ import { UserQueryDto } from './dto/user-query.dto';
 const USER_INCLUDE = { roles: { include: { role: true } } } satisfies Prisma.UserInclude;
 type UserRow = Prisma.UserGetPayload<{ include: typeof USER_INCLUDE }>;
 
+const latest = (a?: Date | null, b?: Date | null) => (!a ? b ?? null : !b ? a : a > b ? a : b);
+
 @Injectable()
 export class UsersService {
   constructor(
@@ -261,11 +263,11 @@ export class UsersService {
    */
   private async presenceFor(
     ids: string[],
-  ): Promise<Map<string, { lastActiveAt: Date | null; activeSessions: number; alertDevices: number }>> {
-    const out = new Map<string, { lastActiveAt: Date | null; activeSessions: number; alertDevices: number }>();
+  ): Promise<Map<string, { lastActiveAt: Date | null; lastSessionAt: Date | null; activeSessions: number; alertDevices: number }>> {
+    const out = new Map<string, { lastActiveAt: Date | null; lastSessionAt: Date | null; activeSessions: number; alertDevices: number }>();
     if (!ids.length) return out;
     const now = new Date();
-    const [acts, sessions, alerts] = await Promise.all([
+    const [acts, sessions, alerts, opened] = await Promise.all([
       this.prisma.auditLog.groupBy({ by: ['userId'], where: { userId: { in: ids } }, _max: { createdAt: true } }),
       this.prisma.refreshToken.groupBy({
         by: ['userId'],
@@ -280,10 +282,17 @@ export class UsersService {
         where: { userId: { in: ids } },
         _count: { _all: true },
       }),
+      // When a device last opened the app. Sessions are kept for weeks, so the
+      // app reopening on a phone renews its session instead of asking for the
+      // password again — the password sign-in date alone looked stale.
+      this.prisma.refreshToken.groupBy({ by: ['userId'], where: { userId: { in: ids } }, _max: { createdAt: true } }),
     ]);
-    for (const id of ids) out.set(id, { lastActiveAt: null, activeSessions: 0, alertDevices: 0 });
+    for (const id of ids) out.set(id, { lastActiveAt: null, lastSessionAt: null, activeSessions: 0, alertDevices: 0 });
     for (const a of acts) {
       if (a.userId && out.has(a.userId)) out.get(a.userId)!.lastActiveAt = a._max.createdAt ?? null;
+    }
+    for (const o of opened) {
+      if (out.has(o.userId)) out.get(o.userId)!.lastSessionAt = o._max.createdAt ?? null;
     }
     for (const s of sessions) {
       if (out.has(s.userId)) out.get(s.userId)!.activeSessions = s._count._all;
@@ -296,7 +305,7 @@ export class UsersService {
 
   private toDto(
     u: UserRow,
-    presence?: { lastActiveAt: Date | null; activeSessions: number; alertDevices: number },
+    presence?: { lastActiveAt: Date | null; lastSessionAt: Date | null; activeSessions: number; alertDevices: number },
   ): UserDto {
     return {
       id: u.id,
@@ -305,7 +314,8 @@ export class UsersService {
       status: u.status as UserStatus,
       roles: u.roles.map((ur) => ({ id: ur.role.id, name: ur.role.name, label: ur.role.label })),
       hasPin: !!u.pinHash,
-      lastLoginAt: u.lastLoginAt?.toISOString() ?? null,
+      // The later of the password / PIN sign-in and a device reopening the app.
+      lastLoginAt: latest(u.lastLoginAt, presence?.lastSessionAt)?.toISOString() ?? null,
       lastActiveAt: presence?.lastActiveAt?.toISOString() ?? null,
       alertDevices: presence?.alertDevices ?? 0,
       activeSessions: presence?.activeSessions ?? 0,

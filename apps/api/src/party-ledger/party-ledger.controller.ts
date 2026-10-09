@@ -1,10 +1,18 @@
-import { Controller, Get, Query, Res } from '@nestjs/common';
+import { Body, Controller, Delete, Get, Param, ParseIntPipe, Post, Query, Res } from '@nestjs/common';
 import type { Response } from 'express';
 import { ApiBearerAuth, ApiTags } from '@nestjs/swagger';
 import { ACTIONS, perm, RESOURCES } from '@oms/shared';
 import { Permissions } from '../common/decorators/permissions.decorator';
+import { CurrentUser } from '../common/decorators/current-user.decorator';
 import { PartyLedgerService } from './party-ledger.service';
-import { LedgerClearedQueryDto, LedgerReceiptsQueryDto, PartyLedgerQueryDto } from './dto/party-ledger.dto';
+import { PartyLedgerPeriodsService } from './party-ledger-periods.service';
+import {
+  LedgerClearedQueryDto,
+  LedgerReceiptsQueryDto,
+  PartyLedgerPeriodsQueryDto,
+  PartyLedgerQueryDto,
+  SavePartyLedgerPeriodDto,
+} from './dto/party-ledger.dto';
 
 const R = RESOURCES.PARTY_LEDGER;
 
@@ -12,7 +20,30 @@ const R = RESOURCES.PARTY_LEDGER;
 @ApiBearerAuth()
 @Controller('party-ledger')
 export class PartyLedgerController {
-  constructor(private readonly svc: PartyLedgerService) {}
+  constructor(
+    private readonly svc: PartyLedgerService,
+    private readonly periods: PartyLedgerPeriodsService,
+  ) {}
+
+  /** A party's saved ranges, newest end date first. Bookkeeping on the
+   *  statement, so the same right as reading it. */
+  @Get('periods')
+  @Permissions(perm(R, ACTIONS.VIEW))
+  listPeriods(@Query() q: PartyLedgerPeriodsQueryDto) {
+    return this.periods.list(q.customerId);
+  }
+
+  @Post('periods')
+  @Permissions(perm(R, ACTIONS.VIEW))
+  savePeriod(@Body() dto: SavePartyLedgerPeriodDto, @CurrentUser('name') userName?: string) {
+    return this.periods.create(dto.customerId, dto.from, dto.to, dto.note ?? null, userName ?? null);
+  }
+
+  @Delete('periods/:id')
+  @Permissions(perm(R, ACTIONS.VIEW))
+  removePeriod(@Param('id', ParseIntPipe) id: number) {
+    return this.periods.remove(id);
+  }
 
   /** Customers + agents for the filter dropdowns. */
   @Get('lookups')

@@ -99,7 +99,7 @@ import {
 } from '../quotations/use-quotations';
 import { clearOrderDraft, loadOrderDraft, saveOrderDraft } from './order-draft';
 import { DraftLinePhotos, LinePhotoButton, PhotoLightbox, toPhotoInput, type LinePhoto } from './line-photos';
-import { DRAWABLE_BOOKING_STATUSES } from '@oms/shared';
+import { DRAWABLE_BOOKING_STATUSES, isBookingDispatchOnly } from '@oms/shared';
 import { useActiveCustomerBookings } from '@/features/bookings/use-bookings';
 import { OrderBookingSource } from './order-booking-source';
 import { bookingCapacityError, type BookingOrderLine } from './order-booking-balance';
@@ -1204,6 +1204,9 @@ export function OrderFormPage() {
   const bookingEntryBlocker = (): string | null => {
     const problem = bookingSourceProblem();
     if (problem || !bookingSource) return problem;
+    if (isBookingDispatchOnly(entry.category)) {
+      return `${entry.category.trim().toUpperCase()} is not drawn from a bag booking on New Order — dispatch it from Booking Dispatch, or choose the current price list for this item.`;
+    }
     // Priced from the current list, so there is no booked price to wait for.
     if (bookingPriceAtCurrent) return null;
     if (!entry.product.trim()) return null; // nothing picked yet; the item rules speak first

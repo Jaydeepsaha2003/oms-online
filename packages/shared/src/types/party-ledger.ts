@@ -332,3 +332,15 @@ export interface PartyLedgerLookups {
   /** Account groups holding at least one party — for the combined group view. */
   groups: { id: number; name: string; count: number }[];
 }
+
+/** A saved Party Ledger range — the party's ledger checked / settled for it. */
+export interface PartyLedgerPeriodDto {
+  id: number;
+  customerId: number;
+  /** YYYY-MM-DD. */
+  from: string;
+  to: string;
+  note: string | null;
+  createdBy: string | null;
+  createdAt: string;
+}

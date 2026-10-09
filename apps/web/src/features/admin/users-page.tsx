@@ -15,7 +15,8 @@ import {
 import { toast } from 'sonner';
 import type { UserDto, UserStatus } from '@oms/shared';
 import { getApiErrorMessage } from '@/lib/api';
-import { cn, formatDateShort, formatDateTime } from '@/lib/utils';
+import { cn, formatDateTime } from '@/lib/utils';
+import { formatDate } from '@/lib/date-format';
 import { usePermissions } from '@/hooks/use-permissions';
 import { useConfirm } from '@/components/common/confirm';
 import { DataTable, type DataColumn } from '@/components/common/data-table';
@@ -158,7 +159,7 @@ const dt = (s?: string | null) =>
       className="text-muted-foreground font-mono text-xs whitespace-nowrap"
       title={formatDateTime(s)}
     >
-      {formatDateShort(s)}
+      {formatDateTime(s)}
     </span>
   ) : (
     <span className="text-muted-foreground">—</span>
@@ -324,8 +325,9 @@ export function UsersPage() {
         </div>
       )}
       <p className="text-muted-foreground text-xs">
-        Last login {u.lastLoginAt ? formatDateShort(u.lastLoginAt) : '—'} · Created{' '}
-        {formatDateShort(u.createdAt)}
+        {/* With the year: "01-10" read as January as easily as October. */}
+        Last login {u.lastLoginAt ? `${formatDateTime(u.lastLoginAt)} (${ago(u.lastLoginAt)})` : '—'} · Created{' '}
+        {formatDate(u.createdAt)}
         <span className="mt-1 block">
           <PresenceCell u={u} />
         </span>

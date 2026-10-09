@@ -14,6 +14,12 @@ import type { JwtConfig } from '../config/configuration';
 import { AuditService } from '../audit/audit.service';
 import { PrismaService } from '../prisma/prisma.service';
 import { flattenAccess, USER_ACCESS_INCLUDE, type UserWithAccess } from './user-access.util';
+import { parseUserAgent } from './session-util';
+
+/** Roles that may stay signed in on several devices at once. */
+const ONE_DEVICE_EXEMPT_ROLES = ['super_admin', 'admin'];
+/** Prefix of the refresh error the client turns into "signed in elsewhere". */
+const SIGNED_IN_ELSEWHERE = 'SIGNED_IN_ELSEWHERE';
 
 export interface RequestMeta {
   ip?: string | null;
@@ -107,8 +113,13 @@ export class AuthService {
     // rotated. Rejecting it would log the user out of every tab, so a token
     // revoked within the last minute is still accepted (and a fresh pair issued).
     const ROTATION_GRACE_MS = 60_000;
-    if (existing.revokedAt && Date.now() - existing.revokedAt.getTime() > ROTATION_GRACE_MS) {
-      throw new UnauthorizedException('Refresh token is invalid or expired.');
+    if (existing.revokedAt) {
+      // No grace for a device the one-device rule signed out: the window is
+      // for rotation races, and would let the old phone mint itself a new session.
+      const reason = await this.revokedReason(existing);
+      if (reason.startsWith(SIGNED_IN_ELSEWHERE) || Date.now() - existing.revokedAt.getTime() > ROTATION_GRACE_MS) {
+        throw new UnauthorizedException(reason);
+      }
     }
     if (existing.user.status !== 'active') {
       throw new UnauthorizedException('Account is not active.');
@@ -187,12 +198,40 @@ export class AuthService {
 
   // ── Helpers ─────────────────────────────────────────────────────────────
 
+  /**
+   * Why a session's token stopped working. A sign-in on ANOTHER device at the
+   * moment it was revoked means the one-device rule moved the account there —
+   * worth saying, so the person is not left wondering why they were logged out.
+   */
+  private async revokedReason(token: { id: string; userId: string; revokedAt: Date | null; deviceId: string | null; userAgent: string | null }) {
+    const generic = 'Refresh token is invalid or expired.';
+    if (!token.revokedAt) return generic;
+    const at = token.revokedAt.getTime();
+    const next = await this.prisma.refreshToken.findFirst({
+      // The session minted right after this one was revoked (finishLogin revokes, then issues).
+      where: { userId: token.userId, id: { not: token.id }, createdAt: { gte: token.revokedAt, lte: new Date(at + 10_000) } },
+      orderBy: { createdAt: 'asc' },
+      select: { deviceId: true, userAgent: true, deviceName: true, createdAt: true },
+    });
+    const elsewhere = next && (token.deviceId && next.deviceId ? next.deviceId !== token.deviceId : next.userAgent !== token.userAgent);
+    if (!elsewhere) return generic;
+    const where = next.deviceName || parseUserAgent(next.userAgent).label;
+    const when = next.createdAt.toLocaleString('en-IN', { day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit' });
+    return `${SIGNED_IN_ELSEWHERE}: Your account was signed in on another device (${where}, ${when}), so this one was signed out.`;
+  }
+
   private async finishLogin(
     user: UserWithAccess,
     meta: RequestMeta,
     description: string,
   ): Promise<IssuedSession> {
     await this.prisma.user.update({ where: { id: user.id }, data: { lastLoginAt: new Date() } });
+    // One device at a time, admins excepted (they run the office PC and their
+    // phone together). Revoking the other sessions signs those devices out on
+    // their next request; `refresh` then tells them why.
+    if (!user.roles.some((ur) => ONE_DEVICE_EXEMPT_ROLES.includes(ur.role.name))) {
+      await this.prisma.refreshToken.updateMany({ where: { userId: user.id, revokedAt: null }, data: { revokedAt: new Date() } });
+    }
     const session = await this.issueSession(user, meta);
 
     await this.audit.record({

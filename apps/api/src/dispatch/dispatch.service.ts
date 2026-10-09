@@ -1365,6 +1365,9 @@ export class DispatchService implements OnModuleInit {
         const bags = 0; // set from the dispatch's total below
         // The bill carries the booking's frozen booking-date rate; this is the same figure, for the result.
         const frozen = await this.bookings.priceOrderLine(booking.id, { pCategory: category, subCategory, product, productName: product, psize: row.size, designType });
+        const rate = frozen?.rate ?? row.rate ?? 0;
+        // Checked here, not only on the form: a user without rate rights never sees it.
+        if (rate <= 0) throw new BadRequestException(`${product} (${subCategory}) has no rate on the booking — it cannot be dispatched at ₹0.`);
         return {
           subCategory,
           product,
@@ -1373,7 +1376,7 @@ export class DispatchService implements OnModuleInit {
           kgs,
           bags,
           size: row.size,
-          rate: frozen?.rate ?? row.rate ?? 0,
+          rate,
           designType,
           design: uc(line.design) || 'NA',
           photos: line.photos ?? [],

@@ -2,7 +2,7 @@ import { serializeBookingDraw } from '../bookings/booking-draw-lock';
 import { unlink } from 'node:fs/promises';
 import { join } from 'node:path';
 import { BadRequestException, ForbiddenException, Injectable, Logger, NotFoundException } from '@nestjs/common';
-import { isAdminRole, SUPER_ADMIN_ROLE } from '@oms/shared';
+import { isAdminRole, isBookingDispatchOnly, SUPER_ADMIN_ROLE } from '@oms/shared';
 import { Prisma } from '@prisma/client';
 import {
   isUncommittedOrder,
@@ -1692,6 +1692,14 @@ export class OrdersService {
       it.priceAtCurrent = !!bookingId && wantsCurrent;
       if (!bookingId) continue;
       const saved = savedById?.get(toNum(it.id) ?? -1);
+      // CUP is dispatched from Booking Dispatch, which converts the booking
+      // itself; an order line never draws it. A line already saved that way is
+      // left alone — only a new draw is refused.
+      if (isBookingDispatchOnly(toStr(it.pCategory)) && toNum(saved?.bookingId) !== bookingId) {
+        throw new BadRequestException(
+          `${toStr(it.pCategory)?.toUpperCase()} is not drawn from a bag booking on an order — dispatch it from Booking Dispatch, or take it at the current price list.`,
+        );
+      }
 
       /*
        * "Bags from the booking, price from the current list" overrides the price

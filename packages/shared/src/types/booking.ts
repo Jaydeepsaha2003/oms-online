@@ -435,3 +435,11 @@ export interface BookingDispatchItemOption {
   /** Chart rate, used when no rate was settled for this size class. */
   rate: number | null;
 }
+
+/**
+ * Booking categories that are dispatched ONLY from Booking Dispatch: New Order
+ * neither offers such a booking nor lets a line of that category draw on one.
+ */
+export const BOOKING_DISPATCH_ONLY_CATEGORIES = ['CUP'];
+export const isBookingDispatchOnly = (category?: string | null) =>
+  BOOKING_DISPATCH_ONLY_CATEGORIES.includes((category ?? '').trim().toUpperCase());

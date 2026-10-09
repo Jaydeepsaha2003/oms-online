@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useRef, useState, type CSSProperties } from 'react';
 import { useNavigate, useSearchParams } from 'react-router-dom';
 import {
+  BookmarkPlus,
   CalendarRange,
   ChevronDown,
   ChevronLeft,
@@ -14,6 +15,7 @@ import {
   Printer,
   SlidersHorizontal,
   Target,
+  Trash2,
   X,
 } from 'lucide-react';
 import { toast } from 'sonner';
@@ -46,7 +48,16 @@ import { Popover, PopoverAnchor, PopoverContent, PopoverTrigger } from '@/compon
 import { Switch } from '@/components/ui/switch';
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from '@/components/ui/dialog';
 import { Sheet, SheetContent, SheetHeader, SheetTitle } from '@/components/ui/sheet';
-import { fetchLedgerCleared, fetchLedgerReceipts, usePartyLedger, usePartyLedgerLookups } from './use-party-ledger';
+import {
+  fetchLedgerCleared,
+  fetchLedgerReceipts,
+  useDeletePartyLedgerPeriod,
+  usePartyLedger,
+  usePartyLedgerLookups,
+  usePartyLedgerPeriods,
+  useSavePartyLedgerPeriod,
+} from './use-party-ledger';
+import { useConfirm } from '@/components/common/confirm';
 import { DemandPlanDialog } from '@/features/crm/demand-plan-dialog';
 
 const inr = (v: number) => (v ?? 0).toLocaleString('en-IN', { maximumFractionDigits: 0 });
@@ -64,6 +75,12 @@ const moneyOrDash = (v: number) => (v ? inr(v) : '-');
 const prettyDate = (iso: string | null) => formatDate(iso);
 const ymd = (d: Date) =>
   `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+/** The day after a YYYY-MM-DD date. */
+const dayAfter = (s: string) => {
+  const d = new Date(`${s}T00:00:00`);
+  d.setDate(d.getDate() + 1);
+  return ymd(d);
+};
 const timestampedPdfName = (partyName: string) => {
   const now = new Date();
   const two = (value: number) => String(value).padStart(2, '0');
@@ -349,6 +366,27 @@ export function PartyLedgerPage() {
   );
 
   const { data, isFetching } = usePartyLedger(query);
+
+  // ── Saved ranges: per party, the periods its ledger was checked / settled
+  // for. Picking a party starts the filter the day after its last saved end.
+  const confirm = useConfirm();
+  const { data: periodsData } = usePartyLedgerPeriods(query.customerId);
+  const periods = useMemo(() => periodsData ?? [], [periodsData]);
+  const savePeriod = useSavePartyLedgerPeriod();
+  const deletePeriod = useDeletePartyLedgerPeriod();
+  const [periodNote, setPeriodNote] = useState('');
+  /** The party just picked from the list — only a fresh pick moves the dates,
+   *  never a reload or a shared link that already carries them. */
+  const pickedRef = useRef<string | null>(null);
+  useEffect(() => {
+    // Wait for THIS party's saved ranges before deciding.
+    if (!party || pickedRef.current !== party || !periodsData) return;
+    pickedRef.current = null;
+    const last = periods[0];
+    const today = ymd(new Date());
+    if (last && dayAfter(last.to) <= today) patch({ from: dayAfter(last.to), to: today, preset: '' });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [periodsData, party]);
   const rows = data?.rows ?? [];
   const footer = data?.footer;
   const kpis = data?.kpis;
@@ -657,6 +695,77 @@ export function PartyLedgerPage() {
           onChange={(f, t) => patch({ from: f, ...(t ? { to: t } : {}), preset: '' })}
         />
       </div>
+      {query.customerId != null && (
+        <div className="space-y-1.5 border-t pt-2">
+          <div className="text-muted-foreground text-[10.5px] font-extrabold tracking-[0.06em] uppercase">Saved ranges · this party</div>
+          <div className="flex gap-1">
+            <input
+              value={periodNote}
+              onChange={(e) => setPeriodNote(e.target.value)}
+              placeholder="Note (optional)"
+              maxLength={300}
+              className="h-8 min-w-0 flex-1 rounded-[9px] border px-2 text-[12px]"
+            />
+            <button
+              type="button"
+              className="pl-btn h-8 shrink-0 px-2.5 text-[12px]"
+              disabled={savePeriod.isPending}
+              title={`Save ${prettyDate(from)} → ${prettyDate(to)} for ${party}`}
+              onClick={() =>
+                savePeriod.mutate(
+                  { customerId: query.customerId!, from, to, note: periodNote || undefined },
+                  {
+                    onSuccess: () => {
+                      setPeriodNote('');
+                      toast.success(`Saved ${prettyDate(from)} → ${prettyDate(to)}. Next time ${party} opens from ${prettyDate(dayAfter(to))}.`);
+                    },
+                    onError: (e) => toast.error(getApiErrorMessage(e, 'Could not save the range')),
+                  },
+                )
+              }
+            >
+              {savePeriod.isPending ? <Loader2 className="size-3.5 animate-spin" /> : <BookmarkPlus className="size-3.5" />} Save
+            </button>
+          </div>
+          {periods.length > 0 && (
+            <ul className="max-h-40 space-y-1 overflow-y-auto">
+              {periods.map((p) => (
+                <li key={p.id} className="flex items-start gap-1 rounded-[9px] bg-[#f6f8fc] px-2 py-1 dark:bg-white/5">
+                  <button
+                    type="button"
+                    className="min-w-0 flex-1 cursor-pointer text-left"
+                    title="Show this range"
+                    onClick={() => patch({ from: p.from, to: p.to, preset: '' })}
+                  >
+                    <span className="block text-[11.5px] font-bold tabular-nums">
+                      {prettyDate(p.from)} → {prettyDate(p.to)}
+                    </span>
+                    <span className="text-muted-foreground block truncate text-[10.5px]">
+                      {[p.note, p.createdBy, formatDate(p.createdAt)].filter(Boolean).join(' · ')}
+                    </span>
+                  </button>
+                  <button
+                    type="button"
+                    className="text-muted-foreground mt-0.5 cursor-pointer rounded p-0.5 hover:text-rose-600"
+                    aria-label={`Delete saved range ${prettyDate(p.from)} to ${prettyDate(p.to)}`}
+                    onClick={async () => {
+                      if (!(await confirm({ title: 'Delete this saved range?', description: `${prettyDate(p.from)} → ${prettyDate(p.to)} for ${party}.`, confirmText: 'Delete', destructive: true }))) return;
+                      deletePeriod.mutate({ id: p.id, customerId: p.customerId }, { onError: (e) => toast.error(getApiErrorMessage(e, 'Could not delete')) });
+                    }}
+                  >
+                    <Trash2 className="size-3.5" />
+                  </button>
+                </li>
+              ))}
+            </ul>
+          )}
+          {periods[0] && (
+            <p className="text-muted-foreground text-[10.5px] leading-snug">
+              Picking {party} opens it from {prettyDate(dayAfter(periods[0].to))}.
+            </p>
+          )}
+        </div>
+      )}
       <div className="flex items-center justify-between gap-2 border-t pt-2">
         <span className="min-w-0 truncate text-[11.5px] font-semibold">
           {prettyDate(from)} <span className="text-muted-foreground">→</span> {prettyDate(to)}
@@ -681,7 +790,10 @@ export function PartyLedgerPage() {
     closingNet == null && footer ? 'clear the filters' : windowEndsInPast ? `as at ${formatDate(to)}` : undefined;
 
   /* ── Controls, shared by the desktop bar and the phone's filter card ── */
-  const onParty = (v: string) => patch({ party: v, ...(v ? { agent: '' } : {}) });
+  const onParty = (v: string) => {
+    pickedRef.current = v || null;
+    patch({ party: v, ...(v ? { agent: '' } : {}) });
+  };
   const onAgent = (v: string) => patch({ agent: v, ...(v ? { party: '' } : {}) });
   const agentList = agentOptions.filter((a) => a !== 'All');
 
@@ -700,7 +812,9 @@ export function PartyLedgerPage() {
           <ChevronDown className="size-3.5 shrink-0 opacity-60" />
         </button>
       </PopoverTrigger>
-      <PopoverContent align="start" className="w-auto rounded-[16px] p-3">
+      {/* Scrolls inside the room it has: with a party's saved ranges below the
+          calendar it can be taller than a laptop screen. */}
+      <PopoverContent align="start" className="max-h-[var(--radix-popover-content-available-height)] w-auto overflow-y-auto rounded-[16px] p-3">
         {datePanel}
       </PopoverContent>
     </Popover>

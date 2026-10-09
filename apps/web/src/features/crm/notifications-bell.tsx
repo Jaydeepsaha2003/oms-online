@@ -120,7 +120,7 @@ function CrmNotificationsBell() {
               canUpdate={can('crm:update')}
               snoozing={snooze.isPending}
               resolving={resolve.isPending}
-              onSnooze={(id) => snooze.mutate(id, { onSuccess: () => toast.success('Snoozed'), onError: (e) => toast.error(getApiErrorMessage(e, 'Failed')) })}
+              onSnooze={(id, minutes) => snooze.mutate({ id, minutes }, { onSuccess: () => toast.success('Snoozed'), onError: (e) => toast.error(getApiErrorMessage(e, 'Failed')) })}
               onResolve={(id) => resolve.mutate({ id }, { onSuccess: () => toast.success('Done'), onError: (e) => toast.error(getApiErrorMessage(e, 'Failed')) })}
             />
           </div>

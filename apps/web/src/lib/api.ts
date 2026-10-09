@@ -147,6 +147,10 @@ api.interceptors.request.use((config) => {
 // tokens may be single-use, so two parallel calls could kill a valid session).
 let refreshing: Promise<string | null> | null = null;
 
+/** Why this device was last signed out, for the login screen to say — set when
+ *  the account signed in on another device (one device at a time). */
+export const SIGNED_OUT_REASON_KEY = 'oms.signed-out-reason';
+
 export async function refreshAccessToken(): Promise<string | null> {
   if (!refreshing) {
     refreshing = axios
@@ -169,6 +173,14 @@ export async function refreshAccessToken(): Promise<string | null> {
         // A network error/timeout (slow VPN, brief outage) keeps the session;
         // the request that triggered this simply fails and can be retried.
         const status = axios.isAxiosError(err) ? err.response?.status : undefined;
+        const message = axios.isAxiosError(err) ? String((err.response?.data as { message?: unknown } | undefined)?.message ?? '') : '';
+        if (message.startsWith('SIGNED_IN_ELSEWHERE:')) {
+          try {
+            sessionStorage.setItem(SIGNED_OUT_REASON_KEY, message.replace('SIGNED_IN_ELSEWHERE:', '').trim());
+          } catch {
+            /* storage blocked — the plain login screen still appears */
+          }
+        }
         if (status === 401 || status === 403) useAuthStore.getState().clear();
         return null;
       })
