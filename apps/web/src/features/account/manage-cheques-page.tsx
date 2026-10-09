@@ -1,11 +1,12 @@
-import { useMemo, useState } from 'react';
-import { AlertTriangle, Banknote, CalendarClock, CheckCircle2, ChevronLeft, ChevronRight, Landmark, Loader2, Pencil, Plus, RotateCcw, Trash2, TriangleAlert, X, XCircle } from 'lucide-react';
+import { useEffect, useMemo, useState } from 'react';
+import { AlertTriangle, Banknote, CalendarClock, Camera, CheckCircle2, ChevronLeft, ChevronRight, Landmark, Loader2, Pencil, Plus, RotateCcw, Smartphone, Trash2, TriangleAlert, X, XCircle } from 'lucide-react';
+import { useQuery } from '@tanstack/react-query';
 import { toast } from 'sonner';
 import type { ChequeDto, ChequeStatus } from '@oms/shared';
-import { CHARGES_PAID_BY, chequeTimingVerdict, RESOURCES } from '@oms/shared';
+import { CHARGES_PAID_BY, chequeTimingVerdict, classifyDueType, RESOURCES } from '@oms/shared';
 import { cn } from '@/lib/utils';
 import { formatDate } from '@/lib/date-format';
-import { getApiErrorMessage } from '@/lib/api';
+import { getApiErrorMessage, http, uploadFile } from '@/lib/api';
 import { usePermissions } from '@/hooks/use-permissions';
 import { useSaveShortcut } from '@/hooks/use-save-shortcut';
 import { usePageSize } from '@/hooks/use-page-size';
@@ -19,6 +20,7 @@ import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from '@/components/ui/dialog';
 import { useCustomers } from '@/features/customers/use-customers';
+import { PhotoLightbox } from '@/features/orders/line-photos';
 import { useAgents } from '@/features/agents/use-agents';
 import { ChequeTimingModal, ChequeTimingPanel } from '@/features/agent-commission/cheque-timing';
 import { BankChargesDialog, ChequeBounceRegister, RecordBounceDialog } from '@/features/agent-commission/cheque-bounces';
@@ -114,6 +116,7 @@ export function ManageChequesPage() {
   const [bounceFor, setBounceFor] = useState<ChequeDto | 'any' | null>(null);
   const [chargesOpen, setChargesOpen] = useState(false);
   const [view, setView] = useState<'cheques' | 'bounces'>('cheques');
+  const [viewPhoto, setViewPhoto] = useState<string | null>(null);
 
   const openSettle = (id: number | '') => {
     setSettleId(id);
@@ -140,7 +143,20 @@ export function ManageChequesPage() {
   const columns: DataColumn<ChequeDto>[] = useMemo(
     () => [
       { id: 'recDate', label: 'Rec Date', sortValue: (c) => c.recDate, cell: (c) => <span className="whitespace-nowrap">{prettyDate(c.recDate)}</span> },
-      { id: 'chequeNo', label: 'Cheque No', cell: (c) => <span className="font-mono font-semibold">{c.chequeNo}</span> },
+      {
+        id: 'chequeNo',
+        label: 'Cheque No',
+        cell: (c) => (
+          <span className="inline-flex items-center gap-1.5">
+            <span className="font-mono font-semibold">{c.chequeNo}</span>
+            {c.photoUrl && (
+              <button type="button" title="Cheque photo" onClick={(e) => { e.stopPropagation(); setViewPhoto(c.photoUrl); }} className="text-indigo-600 hover:text-indigo-800">
+                <Camera className="size-3.5" />
+              </button>
+            )}
+          </span>
+        ),
+      },
       { id: 'party', label: 'Party', cell: (c) => <span className="font-medium">{c.partyName}</span> },
       { id: 'drawerBank', label: 'Deposit Bank', cell: (c) => c.drawerBank ?? '—' },
       { id: 'amt', label: 'Cheque Amt', align: 'right', sortValue: (c) => c.chequeAmt ?? 0, cell: (c) => <span className="tabular-nums font-semibold">{money(c.chequeAmt)}</span> },
@@ -388,6 +404,7 @@ export function ManageChequesPage() {
       )}
 
       {formModal && <ChequeFormModal cheque={formModal === 'new' ? null : formModal} onClose={() => setFormModal(null)} />}
+      {viewPhoto && <PhotoLightbox photos={[{ url: viewPhoto, title: 'Cheque photo' }]} index={0} onIndex={() => {}} onClose={() => setViewPhoto(null)} />}
       {settleOpen && <SettleModal initialId={settleId} onClose={() => { setSettleOpen(false); setSettleId(''); }} />}
       {depositCheque && <DepositModal cheque={depositCheque} onClose={() => setDepositCheque(null)} />}
       {timingCheque && <ChequeTimingModal cheque={timingCheque} onClose={() => setTimingCheque(null)} />}
@@ -456,31 +473,83 @@ function ChequeFormModal({ cheque, onClose }: { cheque: ChequeDto | null; onClos
   // §6 — a cheque an agent hands over has to say which agent, otherwise the
   // bounce charges and commitments have nobody to attach to.
   const [agentName, setAgentName] = useState(cheque?.agentName ?? '');
+  const [photoUrl, setPhotoUrl] = useState(cheque?.photoUrl ?? '');
+  const [viewPhoto, setViewPhoto] = useState(false);
+  const [uploading, setUploading] = useState(false);
 
   const customerId = byLabel.get(party) ?? cheque?.customerId ?? undefined;
   const { data: agentData } = useAgents({ page: 1, pageSize: 500 });
   const agentOptions = useMemo(() => (agentData?.items ?? []).map((a) => a.name).sort((a, b) => a.localeCompare(b)), [agentData]);
+  // A new cheque starts as brought by the party's own agent (SELF = handed over directly); still changeable.
+  const partyAgent = customerData?.items.find((c) => c.partyName === party)?.agentName ?? '';
+  useEffect(() => {
+    if (!isEdit) setAgentName(partyAgent !== 'SELF' && agentOptions.includes(partyAgent) ? partyAgent : '');
+  }, [isEdit, partyAgent, agentOptions]);
+
+  // "Request photo from phone": the admin's phone gets a push; this form polls
+  // until the photo taken there arrives (ChequePhotoPage on the phone).
+  const [waitingId, setWaitingId] = useState<string | null>(null);
+  const { data: phoneReq } = useQuery({
+    queryKey: ['cheque-photo-request', waitingId],
+    queryFn: () => http.get<{ photoUrl: string | null }>(`/cheques/photo-requests/${waitingId}`),
+    enabled: !!waitingId,
+    refetchInterval: 3000,
+  });
+  useEffect(() => {
+    if (!phoneReq?.photoUrl) return;
+    setPhotoUrl(phoneReq.photoUrl);
+    setWaitingId(null);
+    toast.success('Cheque photo received from the phone');
+  }, [phoneReq?.photoUrl]);
+  const requestFromPhone = async () => {
+    try {
+      const r = await http.post<{ id: string }>('/cheques/photo-requests', { partyName: party || undefined, chequeAmt: Number(chequeAmt) || undefined });
+      setWaitingId(r.id);
+      toast.info('Request sent to the admin’s phone');
+    } catch (e) {
+      toast.error(getApiErrorMessage(e, 'Could not send the request'));
+    }
+  };
+
+  const pickPhoto = async (file: File | undefined) => {
+    if (!file) return;
+    setUploading(true);
+    try {
+      setPhotoUrl((await uploadFile(file, undefined, 'cheques')).url);
+    } catch (e) {
+      toast.error(getApiErrorMessage(e, 'Photo upload failed'));
+    } finally {
+      setUploading(false);
+    }
+  };
   const agentId = useMemo(() => (agentData?.items ?? []).find((a) => a.name === agentName)?.id, [agentData, agentName]);
 
   // Open invoices for the chosen party, so the user can tag which one(s) this
   // cheque is meant to clear — and so we can compare due dates for the delay check.
   const { data: ctx } = usePaymentContext({ customerId, recDate: TODAY() }, customerId != null);
   const invoiceOptions = useMemo(() => {
-    const rows = ctx?.invoices ?? [];
+    // Aged to the CHEQUE date, so each invoice's status and "N OVER / N LEFT" read as
+    // they will stand on the day this cheque is paid — Receive Payment's rule (classifyDueType).
+    const asOf = new Date(`${dueDate || TODAY()}T00:00`);
+    const rows = (ctx?.invoices ?? []).map((r) => {
+      if (!r.dueDate) return r;
+      const due = new Date(r.dueDate);
+      due.setHours(0, 0, 0, 0);
+      const left = Math.round((due.getTime() - asOf.getTime()) / 86_400_000);
+      return { ...r, dueType: classifyDueType(new Date(r.invDate), due, asOf), dueDays: left > 0 ? `${left} LEFT` : left === 0 ? 'TODAY' : `${-left} OVER` };
+    });
     // Keep any already-tagged invoice visible even if it's no longer "pending"
     // (e.g. settled since) — editing shouldn't silently drop it from the list.
-    const missing = selectedInvoices.filter((no) => !rows.some((r) => r.invNo === no)).map((no) => ({ invNo: no, dueDate: null as string | null, bankBal: 0, cashBal: 0 }));
+    const missing = selectedInvoices
+      .filter((no) => !rows.some((r) => r.invNo === no))
+      .map((no) => ({ invNo: no, invDate: null as string | null, dueDate: null as string | null, bankBal: 0, cashBal: 0, dueType: null as string | null, dueDays: '' }));
     return [...rows, ...missing];
-  }, [ctx, selectedInvoices]);
+  }, [ctx, selectedInvoices, dueDate]);
   const invBalance = (inv: { bankBal: number; cashBal: number }) => (inv.bankBal ?? 0) + (inv.cashBal ?? 0);
 
   const toggleInvoice = (invNo: string) =>
     setSelectedInvoices((s) => (s.includes(invNo) ? s.filter((x) => x !== invNo) : [...s, invNo]));
 
-  // Only offer invoices this cheque can actually clear — its amount, minus
-  // whatever's already tagged, must cover the invoice's outstanding balance.
-  // Ticked invoices always stay visible (so you can untick them) even if a
-  // smaller/edited cheque amount no longer covers them.
   const chequeAmtNum = Number(chequeAmt) || 0;
   const selectedTotal = useMemo(
     () =>
@@ -491,10 +560,19 @@ function ChequeFormModal({ cheque, onClose }: { cheque: ChequeDto | null; onClos
     [selectedInvoices, invoiceOptions],
   );
   const remainingToAllocate = chequeAmtNum - selectedTotal;
-  const clearableInvoices = useMemo(
-    () => invoiceOptions.filter((inv) => selectedInvoices.includes(inv.invNo) || invBalance(inv) <= remainingToAllocate + 0.01),
-    [invoiceOptions, selectedInvoices, remainingToAllocate],
-  );
+  // Any invoice can be tagged (a cheque may pay part of one). What the cheque would
+  // cover of each tagged one, in the order they were ticked — so a part payment shows as one.
+  const coverOf = useMemo(() => {
+    const m = new Map<string, number>();
+    let left = chequeAmtNum;
+    for (const no of selectedInvoices) {
+      const inv = invoiceOptions.find((i) => i.invNo === no);
+      const c = Math.max(0, Math.min(left, inv ? invBalance(inv) : 0));
+      m.set(no, c);
+      left -= c;
+    }
+    return m;
+  }, [selectedInvoices, invoiceOptions, chequeAmtNum]);
 
   // Delay check: cheque due date vs. each tagged invoice's due date.
   const delays = useMemo(() => {
@@ -529,6 +607,7 @@ function ChequeFormModal({ cheque, onClose }: { cheque: ChequeDto | null; onClos
     setComments('');
     setSelectedInvoices([]);
     setAgentName('');
+    setPhotoUrl('');
   };
 
   const submit = async () => {
@@ -604,6 +683,7 @@ function ChequeFormModal({ cheque, onClose }: { cheque: ChequeDto | null; onClos
       invoiceNos: selectedInvoices,
       agentId: agentId ?? null,
       agentName: agentName.trim() || null,
+      photoUrl: photoUrl || null,
     };
     const opts = {
       onSuccess: () => {
@@ -666,15 +746,49 @@ function ChequeFormModal({ cheque, onClose }: { cheque: ChequeDto | null; onClos
             <Label className="text-sm">Brought by agent</Label>
             <NativeSelect value={agentName} onChange={setAgentName} options={['', ...agentOptions]} placeholder="Party handed it over directly" className="h-10 text-base" />
           </div>
+          <div className="space-y-1.5 sm:col-span-2">
+            <Label className="text-sm">Cheque photo</Label>
+            <div className="flex items-center gap-3">
+              {photoUrl && (
+                <button type="button" title="Open the photo" onClick={() => setViewPhoto(true)}>
+                  <img src={photoUrl} alt="Cheque" className="h-16 w-28 rounded-md border object-cover" />
+                </button>
+              )}
+              {viewPhoto && photoUrl && (
+                <PhotoLightbox photos={[{ url: photoUrl, title: 'Cheque photo' }]} index={0} onIndex={() => {}} onClose={() => setViewPhoto(false)} />
+              )}
+              {/* capture: a phone opens its camera straight away; a PC gets the file picker. */}
+              <label className="hover:bg-muted inline-flex h-10 cursor-pointer items-center gap-2 rounded-md border px-3 text-sm font-semibold">
+                {uploading ? <Loader2 className="size-4 animate-spin" /> : <Camera className="size-4" />}
+                {photoUrl ? 'Change photo' : 'Take / upload photo'}
+                <input type="file" accept="image/*" capture="environment" className="hidden" disabled={uploading} onChange={(e) => void pickPhoto(e.target.files?.[0])} />
+              </label>
+              {photoUrl && (
+                <Button type="button" variant="ghost" size="sm" onClick={() => setPhotoUrl('')}>
+                  Remove
+                </Button>
+              )}
+              {waitingId ? (
+                <span className="inline-flex items-center gap-2 text-sm font-medium text-indigo-700">
+                  <Loader2 className="size-4 animate-spin" /> Waiting for the phone…
+                  <Button type="button" variant="ghost" size="sm" onClick={() => setWaitingId(null)}>
+                    Cancel
+                  </Button>
+                </span>
+              ) : (
+                <Button type="button" variant="outline" className="h-10" onClick={() => void requestFromPhone()}>
+                  <Smartphone className="size-4" /> Request photo from phone
+                </Button>
+              )}
+            </div>
+          </div>
         </div>
 
         {/* Tag which invoice(s) this cheque is FOR — a reference note only. It does
             NOT allocate the payment or touch the party ledger in any way; that
             still only happens when the cheque is actually receipted through
-            Account → Payment. Multiple invoices can be tagged at once. Only
-            invoices whose balance still fits the cheque amount (minus whatever's
-            already tagged) are offered, so the reference stays sensible — not
-            every pending invoice for the party. */}
+            Account → Payment. Multiple invoices can be tagged at once, including
+            one this cheque only pays part of (the "This cheque" column says so). */}
         <div className="space-y-1.5">
           <div className="flex items-baseline justify-between">
             <Label className="text-sm">For Invoice(s) — reference only</Label>
@@ -686,22 +800,54 @@ function ChequeFormModal({ cheque, onClose }: { cheque: ChequeDto | null; onClos
           </div>
           {customerId == null ? (
             <p className="text-muted-foreground rounded-md border border-dashed px-3 py-2 text-sm">Select a party to see its open invoices.</p>
-          ) : chequeAmtNum <= 0 ? (
-            <p className="text-muted-foreground rounded-md border border-dashed px-3 py-2 text-sm">Enter the Cheque Amt above to see which open invoices fit this cheque.</p>
-          ) : clearableInvoices.length === 0 ? (
-            <p className="text-muted-foreground rounded-md border border-dashed px-3 py-2 text-sm">
-              No open invoice for this party has a balance this cheque's amount can cover.
-            </p>
+          ) : invoiceOptions.length === 0 ? (
+            <p className="text-muted-foreground rounded-md border border-dashed px-3 py-2 text-sm">This party has no open invoices.</p>
           ) : (
-            <div className="max-h-40 space-y-1 overflow-y-auto rounded-md border p-2">
-              {clearableInvoices.map((inv) => (
-                <label key={inv.invNo} className="hover:bg-muted/60 flex cursor-pointer items-center gap-2 rounded px-1.5 py-1 text-sm">
-                  <input type="checkbox" checked={selectedInvoices.includes(inv.invNo)} onChange={() => toggleInvoice(inv.invNo)} className="size-4 accent-blue-600" />
-                  <span className="min-w-0 flex-1 truncate font-mono">{inv.invNo}</span>
-                  <span className="text-muted-foreground shrink-0">{inv.dueDate ? `due ${prettyDate(inv.dueDate)}` : '—'}</span>
-                  {invBalance(inv) > 0 && <span className="shrink-0 tabular-nums">{money(invBalance(inv))}</span>}
-                </label>
-              ))}
+            /* Every open invoice, aged to the cheque date. */
+            <div className="max-h-48 overflow-y-auto rounded-md border">
+              <table className="w-full text-[12.5px] tabular-nums">
+                <thead className="bg-muted/60 text-muted-foreground sticky top-0 text-[11px] uppercase">
+                  <tr>
+                    <th className="w-7" />
+                    <th className="px-1.5 py-1 text-left">Inv date</th>
+                    <th className="px-1.5 py-1 text-left">Inv no</th>
+                    <th className="px-1.5 py-1 text-left">Due date</th>
+                    <th className="px-1.5 py-1 text-left">Status</th>
+                    <th className="px-1.5 py-1 text-right">Bal amt</th>
+                    <th className="px-1.5 py-1 text-left">On cheque date</th>
+                    <th className="px-1.5 py-1 text-right">This cheque</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {invoiceOptions.map((inv) => {
+                    const cover = coverOf.get(inv.invNo);
+                    const part = cover != null && cover < invBalance(inv) - 0.01;
+                    const tone = inv.dueType === 'OVERDUE' ? 'text-rose-600' : inv.dueType === 'PAST DUE' ? 'text-amber-700' : 'text-emerald-700';
+                    return (
+                      <tr key={inv.invNo} className={cn('border-t', inv.dueType === 'OVERDUE' && 'bg-rose-50/60', inv.dueType === 'PAST DUE' && 'bg-amber-50/60')}>
+                        <td className="px-1.5 text-center">
+                          <input
+                            type="checkbox"
+                            checked={selectedInvoices.includes(inv.invNo)}
+                            title="Tag this invoice"
+                            onChange={() => toggleInvoice(inv.invNo)}
+                            className="size-4 accent-blue-600"
+                          />
+                        </td>
+                        <td className="px-1.5 py-1">{inv.invDate ? prettyDate(inv.invDate) : '—'}</td>
+                        <td className="px-1.5 py-1 font-mono">{inv.invNo}</td>
+                        <td className="px-1.5 py-1">{inv.dueDate ? prettyDate(inv.dueDate) : '—'}</td>
+                        <td className={cn('px-1.5 py-1 text-[11px] font-bold', tone)}>{inv.dueType ?? '—'}</td>
+                        <td className="px-1.5 py-1 text-right font-semibold">{money(invBalance(inv))}</td>
+                        <td className={cn('px-1.5 py-1 font-bold', tone)}>{inv.dueDays || '—'}</td>
+                        <td className={cn('px-1.5 py-1 text-right font-semibold whitespace-nowrap', part ? 'text-amber-700' : 'text-emerald-700')}>
+                          {cover == null ? '' : cover <= 0 ? <span className="text-rose-600">nothing left</span> : part ? `${money(cover)} part` : 'Full'}
+                        </td>
+                      </tr>
+                    );
+                  })}
+                </tbody>
+              </table>
             </div>
           )}
           <p className="text-muted-foreground text-xs">

@@ -104,7 +104,7 @@ function PrintChip({ r }: { r: ChallanDto }) {
   return (
     <span
       title={r.lastPrintedAt ? `Last printed ${when}${r.lastPrintedBy ? ` by ${r.lastPrintedBy}` : ''}` : 'Printed before print tracking started'}
-      className="inline-flex items-center gap-1 text-[11px] font-semibold whitespace-nowrap text-slate-500"
+      className="inline-flex items-center gap-1 rounded-[4px] bg-sky-50 px-1.5 py-0.5 text-[11px] font-bold whitespace-nowrap text-sky-700 ring-1 ring-sky-200 ring-inset dark:bg-sky-500/15 dark:text-sky-300 dark:ring-sky-400/30"
     >
       <Printer className="size-3" /> Printed ×{r.printCount}
     </span>

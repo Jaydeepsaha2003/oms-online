@@ -128,15 +128,15 @@ export function buildSalesVoucher(
   if (!party.state) blocks.push(`Tally ledger ${party.name} has no state — cannot choose CGST/SGST or IGST.`);
   if (!intra && party.state && !TALLY_NAMES.igst[rate]) blocks.push(`No IGST ledger for ${rate}% GST.`);
 
-  // A billing-rate invoice bills only KGS lines whose GST rate was saved with
-  // the challan. C (Gaushala) and the unbilled balance are deliberately outside
-  // this Tally invoice; its party amount is B, not the challan's full total.
+  // A billing-rate invoice bills every line whose GST rate was saved with the
+  // challan BY ITS KGS at the billing rate — exactly how OMS worked out B
+  // (computeChallanTotals), so a cup sold by the piece goes in as its kgs too.
+  // C (Gaushala) and the unbilled balance are deliberately outside this Tally
+  // invoice; its party amount is B, not the challan's full total.
   let itemsToBill = c.items;
   if (billedAtSpecialRate) {
     itemsToBill = [];
     for (const it of c.items) {
-      const item = itemFor(it);
-      if (!item || item.unit !== 'KGS') continue;
       if (it.gstRate == null || !Number.isFinite(it.gstRate)) {
         blocks.push(`Line "${it.productName ?? '?'}" has no saved GST rate. Check whether this bill is already in Tally before posting it.`);
         continue;
@@ -151,13 +151,14 @@ export function buildSalesVoucher(
     // A missing historical rate makes all later totals meaningless. Do not
     // show zero-line, tax and round-off errors derived from that missing input.
     if (blocks.length) return { voucher: null, blocks };
-    if (!itemsToBill.length) return { voucher: null, blocks: ['No KGS item with a saved GST rate is available to bill.'] };
+    if (!itemsToBill.length) return { voucher: null, blocks: ['No item with a saved GST rate is available to bill.'] };
   }
 
   // Same item at the same rate is one line, as in Tally today.
   const merged = new Map<string, VoucherLine>();
   for (const it of itemsToBill) {
-    const t = itemFor(it);
+    // Billing rate is per kg: every line goes in as kgs (SCRAP keeps its own item).
+    const t = billedAtSpecialRate && itemFor(it)?.item !== TALLY_NAMES.itemScrap ? { item: TALLY_NAMES.itemKgs, unit: 'KGS' as const } : itemFor(it);
     if (!t) {
       blocks.push(`Line "${it.productName ?? '?'}" has no unit (KGS/PCS), so it has no Tally item.`);
       continue;

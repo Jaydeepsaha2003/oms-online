@@ -1,5 +1,5 @@
 import { Type } from 'class-transformer';
-import { IsArray, IsBoolean, IsIn, IsInt, IsNumber, IsOptional, IsString, MaxLength, Min, MinLength } from 'class-validator';
+import { IsArray, IsBoolean, IsIn, IsInt, IsNumber, IsOptional, IsString, Matches, MaxLength, Min, MinLength } from 'class-validator';
 import { CHARGES_PAID_BY } from '@oms/shared';
 import { PaginationDto } from '../../common/dto/pagination.dto';
 
@@ -28,6 +28,19 @@ export class CreateChequeDto {
   @IsOptional() @IsString() @MaxLength(1000) comments?: string | null;
   /** Invoice/challan codes this cheque is meant to clear (optional, informational). */
   @IsOptional() @IsArray() @IsString({ each: true }) invoiceNos?: string[];
+  /** Photo of the cheque - only a URL this server handed out for the cheques folder. */
+  @IsOptional() @IsString() @Matches(/^\/api\/uploads\/cheques\/[\w-]+\.[a-z]+$/) photoUrl?: string | null;
+}
+
+/** Desktop asks the admin's phone for a cheque photo. */
+export class ChequePhotoRequestDto {
+  @IsOptional() @IsString() @MaxLength(255) partyName?: string;
+  @IsOptional() @Type(() => Number) @IsNumber() chequeAmt?: number;
+}
+
+/** The phone sends back the photo it uploaded (same URL rule as on a cheque). */
+export class CompleteChequePhotoDto {
+  @IsString() @Matches(/^\/api\/uploads\/cheques\/[\w-]+\.[a-z]+$/) photoUrl!: string;
 }
 
 /** Edit an as-yet-undeposited (PENDING) cheque. */
@@ -42,6 +55,8 @@ export class UpdateChequeDto {
   @IsOptional() @IsString() dueDate?: string;
   @IsOptional() @IsString() @MaxLength(1000) comments?: string | null;
   @IsOptional() @IsArray() @IsString({ each: true }) invoiceNos?: string[];
+  /** Photo of the cheque - only a URL this server handed out for the cheques folder. */
+  @IsOptional() @IsString() @Matches(/^\/api\/uploads\/cheques\/[\w-]+\.[a-z]+$/) photoUrl?: string | null;
 }
 
 /** Deposit a PENDING cheque (must be on/after the due date). */

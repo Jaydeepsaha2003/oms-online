@@ -53,6 +53,7 @@ const FollowupsPage = lazy(() => import('@/features/crm/followups-page').then((m
 const PaymentsFollowupsPage = lazy(() => import('@/features/crm/followups-page').then((m) => ({ default: m.PaymentsFollowupsPage })));
 const InquiriesPage = lazy(() => import('@/features/crm/followups-page').then((m) => ({ default: m.InquiriesPage })));
 const PartyListsPage = lazy(() => import('@/features/crm/party-lists-page').then((m) => ({ default: m.PartyListsPage })));
+const ChequePhotoPage = lazy(() => import('@/features/account/cheque-photo-page').then((m) => ({ default: m.ChequePhotoPage })));
 const ManageChequesPage = lazy(() => import('@/features/account/manage-cheques-page').then((m) => ({ default: m.ManageChequesPage })));
 const BankAccountsPage = lazy(() => import('@/features/account/bank-accounts-page').then((m) => ({ default: m.BankAccountsPage })));
 const OpeningBalancePage = lazy(() => import('@/features/account/opening-balance-page').then((m) => ({ default: m.OpeningBalancePage })));
@@ -318,6 +319,14 @@ export function AppRoutes() {
             element={
               <RequirePermission permission={perm(RESOURCES.ORDER, ACTIONS.PRINT)}>
                 <OrderBillPage />
+              </RequirePermission>
+            }
+          />
+          <Route
+            path="/cheque-photo/:id"
+            element={
+              <RequirePermission permission={perm(RESOURCES.CHEQUE, ACTIONS.CREATE)}>
+                <ChequePhotoPage />
               </RequirePermission>
             }
           />

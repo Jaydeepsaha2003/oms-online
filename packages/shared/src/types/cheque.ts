@@ -50,6 +50,8 @@ export interface ChequeDto {
   /** Whether a bounced cheque is being re-deposited (represented). */
   isRepresent: boolean;
   comments: string | null;
+  /** Photo of the cheque, when one was taken. */
+  photoUrl: string | null;
   /** Invoice/challan codes this cheque is meant to clear (optional, informational —
    *  not a financial allocation; those still go through Payment/AGST REF). */
   invoiceNos: string[];
@@ -69,6 +71,7 @@ export interface CreateChequeInput {
   recDate: string;
   dueDate: string;
   comments?: string | null;
+  photoUrl?: string | null;
   invoiceNos?: string[];
 }
 
@@ -83,6 +86,7 @@ export interface UpdateChequeInput {
   recDate?: string;
   dueDate?: string;
   comments?: string | null;
+  photoUrl?: string | null;
   invoiceNos?: string[];
 }
 

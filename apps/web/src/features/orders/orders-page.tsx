@@ -1,6 +1,6 @@
 import { useState } from 'react';
 import { useNavigate, useSearchParams } from 'react-router-dom';
-import { Ban, ChevronLeft, ChevronRight, EllipsisVertical, FileDown, FileText, Filter, Loader2, Pencil, Plus, Printer, RotateCcw, Search, Trash2, Truck } from 'lucide-react';
+import { Ban, ChevronLeft, ChevronRight, EllipsisVertical, FileDown, FileText, Filter, Loader2, Pencil, Plus, Printer, RotateCcw, Search, Trash2, Truck, X } from 'lucide-react';
 import { toast } from 'sonner';
 import type { OrderDto } from '@oms/shared';
 import { getApiErrorMessage } from '@/lib/api';
@@ -125,6 +125,8 @@ function useOrderFilters() {
     agent: get('agent'),
     product: get('product'),
     design: get('design'),
+    // Set by the draft-backlog notification (?status=DRAFT); cleared by its chip.
+    status: get('status'),
     page: Math.max(1, Number(params.get('page')) || 1),
   };
   /** One writer for the whole set: a filter change also resets the page, and
@@ -137,6 +139,7 @@ function useOrderFilters() {
     if (changes.agent !== undefined) write('agent', changes.agent);
     if (changes.product !== undefined) write('product', changes.product);
     if (changes.design !== undefined) write('design', changes.design);
+    if (changes.status !== undefined) write('status', changes.status);
     // An explicit page is honoured; any OTHER change drops back to page 1,
     // because page 7 of a freshly narrowed result set is usually empty.
     if (changes.page !== undefined) next.set('page', String(changes.page));
@@ -150,7 +153,7 @@ export function OrdersPage() {
   const navigate = useNavigate();
   const { can } = usePermissions();
   const confirm = useConfirm();
-  const { search, agent, product, design, page, patch } = useOrderFilters();
+  const { search, agent, product, design, status, page, patch } = useOrderFilters();
   // The box keeps its own copy so typing stays instant even while the list
   // re-queries; the URL is the source of truth it is seeded from.
   const [searchInput, setSearchInput] = useState(search);
@@ -174,6 +177,7 @@ export function OrdersPage() {
     agent: agent || undefined,
     product: product || undefined,
     design: design || undefined,
+    status: status || undefined,
   });
   const cols = useColumnOrder('orders', COLUMNS);
   const { format, setFormat } = useDateFormat();
@@ -395,6 +399,16 @@ export function OrdersPage() {
           <div className="hidden w-40 lg:block">
             <NativeSelect value={design} onChange={(v) => patch({ design: v })} options={['', ...(filterOptions?.designs ?? [])]} placeholder="All designs" className={cn(CONTROL, 'font-medium', design && CONTROL_ON)} />
           </div>
+          {status && (
+            <button
+              type="button"
+              onClick={() => patch({ status: '' })}
+              className="inline-flex h-9 shrink-0 items-center gap-1.5 rounded-[4px] border border-slate-400 bg-slate-100 px-2.5 text-[12px] font-bold text-slate-700 hover:bg-slate-200"
+              title="Show all orders again"
+            >
+              {status === 'DRAFT' ? 'Drafts only' : status} <X className="size-3.5" />
+            </button>
+          )}
           {activeFilterCount > 0 && (
             <Button
               variant="ghost"

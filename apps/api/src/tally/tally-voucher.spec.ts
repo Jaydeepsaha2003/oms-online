@@ -56,6 +56,19 @@ test('SSS-687: PCS lines at the same rate merge; box charge; CGST+SGST within Ma
   assert.deepEqual(merged.voucher.lines, [{ item: 'S.S.UTENSILS/GLASS (PCS)', unit: 'PCS', qty: 1120, rate: 90, amount: 100800 }]);
 });
 
+test('SSS-834 ANIL METAL: billing-rate cups sold by PCS go in by their kgs, as OMS worked out B', () => {
+  const cup = (kgs: number, pcs: number) => ({ productName: 'CUP', unit: 'PCS', pCategory: 'CUP', kgs, pcs, price: 50, gstRate: 5 });
+  const { voucher, blocks } = buildSalesVoucher(
+    { ...base, code: 'SSS/26-27/834', gst: 5, tax: 1080, total: 64180, b: 22680, billingRate: 180, items: [cup(60, 600), cup(46.8, 468), cup(13.2, 132)] },
+    { name: 'ANIL METAL', state: 'Maharashtra' },
+    'Maharashtra',
+    'SSS-834/26-27',
+  );
+  assert.deepEqual(blocks, []);
+  assert.deepEqual(voucher.lines, [{ item: 'S.S.UTENSILS/GLASS', unit: 'KGS', qty: 120, rate: 180, amount: 21600 }]);
+  assert.equal(voucher.total, 22680);
+});
+
 test('billing-rate bill posts billed KGS at billing rate; C and unbilled charges stay outside Tally', () => {
   const party = { name: 'SANCHETI STEEL HOUSE', state: 'Maharashtra' };
   const half = buildSalesVoucher(
