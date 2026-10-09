@@ -142,6 +142,15 @@ export function useLineLock(orderItemId: number | null | undefined): string | nu
   return denied;
 }
 
+type Qty4 = { bags: number; pcs: number; gram: number; box: number };
+/** The line's ordered qty + what its other dispatches took — see DispatchService.lineBalance. */
+export function useLineBalance(dispatchId: number) {
+  return useQuery({
+    queryKey: [...KEY, 'line-balance', dispatchId],
+    queryFn: () => http.get<{ ordered: Qty4; others: Qty4 }>(`/dispatch/${dispatchId}/line-balance`),
+  });
+}
+
 /** Has this party + item + design ever been documented with a reference photo?
  *  Gates the Dispatch form's Save — see DispatchService.photoCheck. */
 export function useDispatchPhotoCheck(orderItemId?: number) {

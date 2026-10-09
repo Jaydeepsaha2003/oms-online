@@ -6,7 +6,9 @@ import { formatDate } from '@/lib/date-format';
 import { usePermissions } from '@/hooks/use-permissions';
 import { NativeSelect } from '@/components/common/combo';
 import { inrCompact } from '@/features/dashboard/format';
-import { useCustomers } from '@/features/customers/use-customers';
+import { Button } from '@/components/ui/button';
+import { Dialog, DialogContent, DialogFooter, DialogHeader, DialogTitle } from '@/components/ui/dialog';
+import { useCustomerLookups, useCustomers } from '@/features/customers/use-customers';
 import { DispatchHoldDialog, holdPartyOf, type HoldParty } from '@/features/customers/dispatch-hold-dialog';
 import { useHeldParties } from './use-dispatch';
 
@@ -40,7 +42,7 @@ export function PartyOnHoldPage() {
   const canHold = can('customer:update');
   const { data: parties = [], isLoading } = useHeldParties();
   const [search, setSearch] = useState('');
-  const [dialog, setDialog] = useState<{ party: HoldParty; hold: boolean } | null>(null);
+  const [dialog, setDialog] = useState<{ parties: HoldParty[]; hold: boolean } | null>(null);
 
   const totals = useMemo(() => {
     const lines = parties.flatMap((p) => p.lines);
@@ -79,7 +81,7 @@ export function PartyOnHoldPage() {
             </div>
             <p className="mt-1.5 text-[13px] text-white/80">No orders, drafts, quotations or bookings can be made for them, and their orders are hidden from Dispatch Order, until the hold is released.</p>
           </div>
-          {canHold && <HoldPicker onPick={(party) => setDialog({ party, hold: true })} />}
+          {canHold && <HoldPicker onPick={(parties) => setDialog({ parties, hold: true })} />}
         </div>
         <div className="mt-4 grid grid-cols-2 gap-2 md:grid-cols-4">
           {tiles.map((t) => (
@@ -111,7 +113,7 @@ export function PartyOnHoldPage() {
           {shown.length ? (
             <section className="grid grid-cols-[repeat(auto-fit,minmax(min(100%,320px),1fr))] gap-3">
               {shown.map((p, i) => (
-                <HeldCard key={p.id} p={p} index={i} onRelease={canHold ? () => setDialog({ party: holdPartyOf(p.id, p.name, p.hold), hold: false }) : undefined} />
+                <HeldCard key={p.id} p={p} index={i} onRelease={canHold ? () => setDialog({ parties: [holdPartyOf(p.id, p.name, p.hold)], hold: false }) : undefined} />
               ))}
             </section>
           ) : (
@@ -120,15 +122,17 @@ export function PartyOnHoldPage() {
         </>
       )}
 
-      {dialog && <DispatchHoldDialog parties={[dialog.party]} hold={dialog.hold} onClose={() => setDialog(null)} />}
+      {dialog && <DispatchHoldDialog parties={dialog.parties} hold={dialog.hold} onClose={() => setDialog(null)} />}
     </div>
   );
 }
 
-/** Search the parties that are not on hold yet and pick one to hold. */
-function HoldPicker({ onPick }: { onPick: (p: HoldParty) => void }) {
+/** Search the parties that are not on hold yet and pick one to hold - or pick an agent and tick any of that agent's parties. */
+function HoldPicker({ onPick }: { onPick: (p: HoldParty[]) => void }) {
   const [q, setQ] = useState('');
+  const [agent, setAgent] = useState('');
   const { data } = useCustomers({ search: q, pageSize: 20 });
+  const { data: lookups } = useCustomerLookups();
   const free = (data?.items ?? []).filter((c) => !c.dispatchHold);
   return (
     <div className="w-full sm:w-[300px]">
@@ -139,14 +143,80 @@ function HoldPicker({ onPick }: { onPick: (p: HoldParty) => void }) {
         value=""
         onChange={(id) => {
           const c = free.find((x) => String(x.id) === id);
-          if (c) onPick(c);
+          if (c) onPick([c]);
         }}
         onType={setQ}
         options={free.map((c) => ({ value: String(c.id), label: c.partyName ?? `#${c.id}` }))}
         placeholder="Search a party to hold…"
         className="h-10 rounded-[12px] text-[13.5px] font-semibold"
       />
+      <NativeSelect
+        value={agent}
+        onChange={setAgent}
+        options={lookups?.agents ?? []}
+        placeholder="Or pick an agent to hold his parties…"
+        className="mt-2 h-10 rounded-[12px] text-[13.5px] font-semibold"
+      />
+      {agent && (
+        <AgentPartiesDialog
+          agent={agent}
+          onClose={() => setAgent('')}
+          onPick={(parties) => {
+            setAgent('');
+            onPick(parties);
+          }}
+        />
+      )}
     </div>
+  );
+}
+
+/** One agent's parties that are not on hold yet, each with a tick box: the ticked ones go to the hold dialog together. */
+function AgentPartiesDialog({ agent, onClose, onPick }: { agent: string; onClose: () => void; onPick: (p: HoldParty[]) => void }) {
+  const { data, isLoading } = useCustomers({ agentName: agent, pageSize: 500 });
+  const items = data?.items ?? [];
+  const free = items.filter((c) => !c.dispatchHold);
+  const [ticked, setTicked] = useState<Set<number>>(new Set());
+  const toggle = (id: number) => setTicked((t) => { const n = new Set(t); if (!n.delete(id)) n.add(id); return n; });
+  const all = free.length > 0 && free.every((c) => ticked.has(c.id));
+  return (
+    <Dialog open onOpenChange={(o) => !o && onClose()}>
+      <DialogContent className="max-w-[min(96vw,30rem)] font-sans sm:max-w-md">
+        <DialogHeader>
+          <DialogTitle className="flex items-center gap-2 text-[16px]">
+            <PauseCircle className="size-4.5 text-amber-600" /> Hold parties of {agent}
+          </DialogTitle>
+        </DialogHeader>
+        {isLoading ? (
+          <p className="pl-muted flex items-center gap-2 py-6 text-sm"><Loader2 className="size-4 animate-spin" /> Loading…</p>
+        ) : !free.length ? (
+          <p className="pl-muted py-6 text-[13px]">{items.length ? 'All of this agent’s parties are already on hold.' : 'This agent has no active party.'}</p>
+        ) : (
+          <>
+            <label className="flex cursor-pointer items-center gap-2 border-b pb-2 text-[13px] font-bold">
+              <input type="checkbox" checked={all} onChange={() => setTicked(all ? new Set() : new Set(free.map((c) => c.id)))} className="size-4 cursor-pointer accent-indigo-600" />
+              Select all ({free.length})
+            </label>
+            <ul className="max-h-[50vh] space-y-1 overflow-y-auto">
+              {free.map((c) => (
+                <li key={c.id}>
+                  <label className="flex cursor-pointer items-center gap-2 rounded-md px-1 py-1 text-[13px] hover:bg-slate-50 dark:hover:bg-white/5">
+                    <input type="checkbox" checked={ticked.has(c.id)} onChange={() => toggle(c.id)} className="size-4 cursor-pointer accent-indigo-600" />
+                    {c.partyName ?? `#${c.id}`}
+                  </label>
+                </li>
+              ))}
+            </ul>
+          </>
+        )}
+        <DialogFooter className="gap-2">
+          <Button variant="outline" size="sm" onClick={onClose} className="rounded-[4px] font-semibold">Cancel</Button>
+          <Button size="sm" disabled={!ticked.size} onClick={() => onPick(free.filter((c) => ticked.has(c.id)))} className="rounded-[4px] bg-amber-600 font-bold text-white hover:bg-amber-700">
+            Hold {ticked.size || ''} {ticked.size === 1 ? 'party' : 'parties'}
+          </Button>
+        </DialogFooter>
+      </DialogContent>
+    </Dialog>
   );
 }
 

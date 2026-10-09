@@ -37,6 +37,8 @@ export function DuplicateDispatchDialog({
   onContinue?: () => void;
 }) {
   const similar = !!match.overridable && !!onContinue;
+  // The identical quantity again — it can still be saved after this warning.
+  const exact = match.matchedOn === 'exact quantity';
   // "today" only when it IS today — an edit, a backdated entry or an approved
   // date move can collide on any day, and saying "today" then is simply wrong.
   const at = new Date(match.dispatchedAt);
@@ -77,10 +79,10 @@ export function DuplicateDispatchDialog({
             {/* A real DialogTitle/Description, not styled headings: Radix needs
                 them to label the dialog for screen readers. */}
             <DialogTitle className="text-[17px] font-extrabold tracking-tight">
-              {similar ? `Similar dispatch already ${when}` : `Already dispatched ${when}`}
+              {similar && !exact ? `Similar dispatch already ${when}` : `Already dispatched ${when}`}
             </DialogTitle>
             <DialogDescription className="text-muted-foreground mt-1 text-[13px]">
-              {similar ? (
+              {similar && !exact ? (
                 <>
                   Something with the same{' '}
                   <span className="font-bold text-amber-700 dark:text-amber-400">{match.matchedOn}</span> already went
@@ -104,7 +106,9 @@ export function DuplicateDispatchDialog({
 
           <p className="text-[12.5px] font-medium text-amber-700 dark:text-amber-400">
             {similar
-              ? 'If this is the rest of the line going out separately, carry on. If it is the same load being entered twice, cancel and check that dispatch.'
+              ? exact
+                ? 'If this really is a second load of the same quantity, carry on. If it is the same load entered twice, cancel and check that dispatch.'
+                : 'If this is the rest of the line going out separately, carry on. If it is the same load being entered twice, cancel and check that dispatch.'
               : 'If the quantity is wrong, modify that dispatch instead of adding another one.'}
           </p>
         </div>

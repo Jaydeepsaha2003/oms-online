@@ -266,6 +266,9 @@ export interface DispatchDto {
    * The history the Modify Dispatch row needs to explain why its line reopened.
    */
   returns?: DispatchReturnRef[];
+  /** On a FULLY DISPATCH row whose order line is still a whole bag or more
+   *  short of what was ordered: how many bags short (list rows only). */
+  shortBags?: number;
 }
 
 export interface CreateDispatchInput {
@@ -286,6 +289,8 @@ export interface CreateDispatchInput {
    *  ahead. Lifts the partial same-day check only — an EXACT collision is
    *  refused whatever this says. See DispatchService.create. */
   confirmSimilar?: boolean;
+  /** An approver confirmed closing a line a whole bag or more short (party cancelled the rest). */
+  confirmShortFull?: boolean;
 }
 
 export interface UpdateDispatchInput {
@@ -300,6 +305,8 @@ export interface UpdateDispatchInput {
   /** Same meaning as on {@link CreateDispatchInput}: an edit runs the same
    *  same-day duplicate guards, and this lifts the SIMILAR one only. */
   confirmSimilar?: boolean;
+  /** An approver confirmed closing a line a whole bag or more short (party cancelled the rest). */
+  confirmShortFull?: boolean;
 }
 
 export type DispatchQuery = PaginationQuery & {
@@ -321,6 +328,8 @@ export type DispatchQuery = PaginationQuery & {
   orderId?: number;
   /** Several order ids, comma-separated — the ORD# multi-pick. */
   orderIds?: string;
+  /** Only Full rows whose order line is still a whole bag or more short ({@link DispatchDto.shortBags}). */
+  shortFull?: boolean;
 };
 /** Distinct values present in dispatch records, for the Modify Dispatch filters.
  *  `categories` is populated for BOTH the pending pool (Dispatch Order) and the

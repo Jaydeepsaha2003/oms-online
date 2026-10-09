@@ -85,8 +85,8 @@ export class BookingsController {
   @Post()
   @Permissions(perm(R, ACTIONS.CREATE))
   @Audit({ action: ACTIONS.CREATE, resource: R })
-  create(@Body() dto: CreateBookingDto, @CurrentUser('name') userName: string) {
-    return this.bookings.create(dto, userName);
+  create(@Body() dto: CreateBookingDto, @CurrentUser('name') userName: string, @CurrentUser('id') actorId: string) {
+    return this.bookings.create(dto, userName, actorId);
   }
 
   @Patch(':id')

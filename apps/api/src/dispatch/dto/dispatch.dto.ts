@@ -36,6 +36,10 @@ export class CreateDispatchDto {
    * day, same every quantity other than the same shipment entered twice.
    */
   @IsOptional() @IsBoolean() confirmSimilar?: boolean;
+
+  /** An approver confirmed closing the line as Fully Dispatched although it is
+   *  a whole bag or more short (the party cancelled the rest). Ignored for anyone else. */
+  @IsOptional() @IsBoolean() confirmShortFull?: boolean;
 }
 
 export class UpdateDispatchDto extends PartialType(CreateDispatchDto) {}
@@ -66,6 +70,8 @@ export class DispatchQueryDto extends PaginationDto {
   /** Several order ids at once, comma-separated ("1132,1330") — Modify
    *  Dispatch's multi-pick of the ORD# filter. */
   @IsOptional() @IsString() orderIds?: string;
+  /** Only Full rows whose order line is still a whole bag or more short. */
+  @IsOptional() @Transform(({ value }) => value === true || value === 'true' || value === '1') @IsBoolean() shortFull?: boolean;
   /** Excel export: which columns, comma-separated ids (all when empty). */
   @IsOptional() @IsString() columns?: string;
 }

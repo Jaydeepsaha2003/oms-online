@@ -37,7 +37,7 @@ import { formatDate } from '@/lib/date-format';
 import { usePermissions } from '@/hooks/use-permissions';
 import { useIsMobile } from '@/hooks/use-is-mobile';
 import { useColumnOrder } from '@/hooks/use-column-order';
-import { usePageSize } from '@/hooks/use-page-size';
+import { PAGE_SIZE_OPTIONS, usePageSize } from '@/hooks/use-page-size';
 import { settingValues, useOrderQtyLayout, useSettings } from '@/features/settings/use-settings';
 import { useDrawableBookings } from '@/features/bookings/use-bookings';
 import { LiveLinePhotos } from '../orders/line-photos';
@@ -1412,7 +1412,7 @@ export function DispatchOrderPage() {
           of <span className="font-bold tabular-nums text-foreground">{totalPages}</span>
         </p>
         <div className="flex items-center gap-3">
-          <PageSizeSelect value={pageSize} onChange={setPageSize} />
+          <PageSizeSelect value={pageSize} onChange={setPageSize} options={[...PAGE_SIZE_OPTIONS, 500, 1000]} />
           <div className="flex gap-2">
             <Button
               variant="outline"
@@ -1690,6 +1690,8 @@ function DispatchSheet({
    *  alone (the default; drawing one down is opt-in, never assumed). */
   const [drawBookingId, setDrawBookingId] = useState<number | null>(null);
 
+  /** An approver confirmed closing this line Full while a whole bag or more is still unsent. */
+  const confirmShortRef = useRef(false);
   const doCreate = (
     bags: number,
     pcs: number,
@@ -1716,6 +1718,7 @@ function DispatchSheet({
         dispatchDate,
         bookingDrawId: bookingDrawId ?? null,
         ...(confirmSimilar ? { confirmSimilar: true } : {}),
+        ...(confirmShortRef.current ? { confirmShortFull: true } : {}),
       },
       {
         onSuccess: (res) => {
@@ -1774,6 +1777,23 @@ function DispatchSheet({
     if (cf !== 'PCS' && cf !== 'KGS' && bags <= 0 && pcs <= 0 && gram <= 0 && box <= 0)
       return toast.error('Enter at least one quantity to dispatch');
 
+    // Full while a whole bag or more of the order is still unsent is refused
+    // (server rule, validateQty); an approver may close it when the party cancelled the rest.
+    confirmShortRef.current = false;
+    const shortBags = Math.round(((line.remBags ?? 0) - bags) * 1000) / 1000;
+    if (form.dispatchStatus === 'FULLY DISPATCH' && shortBags >= 1) {
+      if (!can('dispatch:approve'))
+        return toast.error(`${shortBags} bag(s) of this order are still pending — mark it Partially dispatched.`);
+      const ok = await confirm({
+        title: `${shortBags} bag(s) still pending — close as Fully dispatched?`,
+        description: 'Only if the party cancelled the rest. The line will stop showing as pending.',
+        confirmText: 'Close as Fully dispatched',
+        destructive: true,
+      });
+      if (!ok) return;
+      confirmShortRef.current = true;
+    }
+
     // Over-dispatch is allowed (packing/weighing variance is normal) but never
     // silently — flag exactly which unit(s) go past what's left and make the
     // user explicitly confirm before it's saved.
@@ -1826,7 +1846,7 @@ function DispatchSheet({
           confirmText: 'Yes, dispatch this Kgs',
         });
         if (!ok) return;
-      } else if (form.dispatchStatus === 'FULLY DISPATCH') {
+      } else if (form.dispatchStatus === 'FULLY DISPATCH' && !confirmShortRef.current) {
         const ok = await confirm({
           title: 'Fully dispatch this line?',
           description: `${line.productName || line.product} for ${line.customerName} will be closed (no longer pending).`,
@@ -1843,7 +1863,8 @@ function DispatchSheet({
          */
         const ordered = line.kgs ?? 0;
         const left = (line.remKgs ?? 0) - gram;
-        if (left > 1e-6 && ordered > 0 && ordered - left >= ordered * FULL_DISPATCH_SHARE) {
+        // Never auto-close while a whole bag is still unsent (the server would refuse it).
+        if (left > 1e-6 && ordered > 0 && ordered - left >= ordered * FULL_DISPATCH_SHARE && shortBags < 1) {
           status = 'FULLY DISPATCH';
           toast.info(`Marked Full dispatch — ${n(Math.round((ordered - left) * 1000) / 1000)} of ${n(ordered)} kg has gone out.`);
         }
