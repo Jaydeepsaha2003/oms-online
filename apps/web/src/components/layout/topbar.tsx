@@ -1,10 +1,12 @@
 import { useMemo } from 'react';
-import { useLocation, useNavigate } from 'react-router-dom';
+import { Link, useLocation, useNavigate } from 'react-router-dom';
 import { LogOut, Menu, Monitor, Moon, RefreshCw, Sun, UserRound } from 'lucide-react';
 import { useTheme, type ThemePref } from '@/lib/theme';
 import { menuRoutes } from '@oms/shared';
 import { useAuthStore } from '@/stores/auth-store';
 import { useLogout } from '@/hooks/use-auth';
+import { usePermissions } from '@/hooks/use-permissions';
+import { cn } from '@/lib/utils';
 import { getMenuIcon } from '@/lib/icons';
 import { NotificationsBell } from '@/features/crm/notifications-bell';
 import { SystemStatus } from '@/components/common/system-status';
@@ -18,6 +20,53 @@ import {
   DropdownMenuSeparator,
   DropdownMenuTrigger,
 } from '@/components/ui/dropdown-menu';
+
+/** One-tap shortcuts to the screens used all day, in the order of the work:
+ *  order → dispatch → bill → collect. Route, icon and permission come from the
+ *  menu, so a shortcut only shows to someone who could open it anyway. */
+const SHORTCUTS: { to: string; label: string }[] = [
+  { to: '/orders/new', label: 'New Order' },
+  { to: '/challans/pending', label: 'Add Sales' },
+  { to: '/dispatch/new', label: 'Dispatch' },
+  { to: '/dispatch', label: 'Modify Dispatch' },
+  { to: '/account/payment', label: 'Receive Payment' },
+];
+
+function Shortcuts() {
+  const { can } = usePermissions();
+  const { pathname } = useLocation();
+  const routes = useMemo(() => menuRoutes(), []);
+  const items = SHORTCUTS.map((sc) => ({ ...sc, route: routes.find((r) => r.to === sc.to) })).filter(
+    (sc) => sc.route && (!sc.route.permission || can(sc.route.permission)),
+  );
+  if (!items.length) return null;
+  return (
+    <nav aria-label="Shortcuts" className="ml-3 hidden min-w-0 items-center gap-1 overflow-x-auto md:flex">
+      {items.map((sc) => {
+        const Icon = getMenuIcon(sc.route!.icon);
+        const active = pathname === sc.to;
+        return (
+          <Link
+            key={sc.to}
+            to={sc.to}
+            title={sc.label}
+            aria-current={active ? 'page' : undefined}
+            className={cn(
+              'inline-flex h-9 shrink-0 items-center gap-1.5 rounded-lg border px-2.5 text-[13px] font-semibold whitespace-nowrap transition-colors',
+              active
+                ? 'border-transparent bg-primary text-primary-foreground shadow-sm'
+                : 'bg-background hover:bg-accent text-foreground/80 hover:text-foreground',
+            )}
+          >
+            <Icon className="size-4 shrink-0" />
+            {/* Icons only until there is room for the words. */}
+            <span className="hidden xl:inline">{sc.label}</span>
+          </Link>
+        );
+      })}
+    </nav>
+  );
+}
 
 function initials(name: string): string {
   return name
@@ -73,6 +122,8 @@ export function Topbar({
       </button>
 
       <h1 className="truncate text-xl font-bold tracking-tight sm:text-2xl">{title}</h1>
+
+      <Shortcuts />
 
       <div className="ml-auto flex items-center gap-2">
         {/* Manual refresh — reloads the page so the latest data (and, with the
