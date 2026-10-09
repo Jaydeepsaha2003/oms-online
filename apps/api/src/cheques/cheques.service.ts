@@ -109,6 +109,7 @@ export class ChequesService {
         dueDate,
         comments: dto.comments?.trim() || null,
         invoiceNos: dto.invoiceNos?.length ? JSON.stringify(dto.invoiceNos) : null,
+        photoUrl: dto.photoUrl ?? null,
         status: 'PENDING',
         userName: userName ?? null,
       },
@@ -145,6 +146,7 @@ export class ChequesService {
     if (dto.dueDate !== undefined) data.dueDate = parseDate(dto.dueDate, 'Due date');
     if (dto.comments !== undefined) data.comments = dto.comments?.trim() || null;
     if (dto.invoiceNos !== undefined) data.invoiceNos = dto.invoiceNos?.length ? JSON.stringify(dto.invoiceNos) : null;
+    if (dto.photoUrl !== undefined) data.photoUrl = dto.photoUrl;
 
     const row = await this.prisma.cheque.update({ where: { id }, data });
     return this.toDto(row);
@@ -251,6 +253,7 @@ export class ChequesService {
       chargesPaidBy: r.chargesPaidBy,
       isRepresent: r.isRepresent,
       comments: r.comments,
+      photoUrl: r.photoUrl,
       invoiceNos: r.invoiceNos ? (JSON.parse(r.invoiceNos) as string[]) : [],
       status: (r.status as ChequeStatus) ?? 'PENDING',
       createdAt: r.createdAt.toISOString(),

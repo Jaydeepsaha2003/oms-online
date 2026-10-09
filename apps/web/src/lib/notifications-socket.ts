@@ -123,6 +123,14 @@ export function connectNotificationsSocket(): void {
     // The page the alert is about, when it names one (order alerts do).
     const url = n.data?.url;
     const open = () => openNotificationTarget(url);
+    // Someone is waiting at a desk for this photo: on the phone app (installed, touch) go
+    // straight to the camera page — a tap on an iOS banner over an open app was being lost.
+    // Never on a desktop, where it would throw away the very form that asked.
+    if (n.data?.kind === 'cheque-photo' && navigator.maxTouchPoints > 0 && matchMedia('(display-mode: standalone)').matches) {
+      appChime();
+      open();
+      return;
+    }
     if (typeof Notification !== 'undefined' && Notification.permission === 'granted') {
       try {
         const popup = new Notification(n.title, { body: n.body, icon: '/icons/icon-192-v4.png' });

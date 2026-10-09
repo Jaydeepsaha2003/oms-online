@@ -1641,6 +1641,8 @@ model Cheque {
   // original, its bounces, the replacement, the eventual clearance — stays
   // walkable in either direction.
   replacesChequeId Int?
+  // Photo of the cheque (served URL under /api/uploads/cheques/), when one was taken.
+  photoUrl         String?
   // PENDING | DEPOSITED | CLEARED | BOUNCED.
   status           String    @default("PENDING")
   userName         String?

@@ -3,12 +3,13 @@ import { BookingsModule } from '../bookings/bookings.module';
 import { NotificationsModule } from '../notifications/notifications.module';
 import { OrdersController } from './orders.controller';
 import { OrdersService } from './orders.service';
+import { DraftBacklogScheduler } from './draft-backlog.scheduler';
 
 @Module({
   // NotificationsModule → tells the floor a new order landed / an order changed.
   imports: [BookingsModule, NotificationsModule],
   controllers: [OrdersController],
-  providers: [OrdersService],
+  providers: [OrdersService, DraftBacklogScheduler],
   exports: [OrdersService],
 })
 export class OrdersModule {}

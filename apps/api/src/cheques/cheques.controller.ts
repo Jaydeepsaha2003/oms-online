@@ -4,8 +4,9 @@ import { ACTIONS, perm, RESOURCES } from '@oms/shared';
 import { Audit } from '../common/decorators/audit.decorator';
 import { CurrentUser } from '../common/decorators/current-user.decorator';
 import { Permissions } from '../common/decorators/permissions.decorator';
+import { ChequePhotoRequestsService } from './cheque-photo-requests.service';
 import { ChequesService } from './cheques.service';
-import { ChequeQueryDto, CreateChequeDto, DepositChequeDto, SettleChequeDto, UpdateChequeDto } from './dto/cheque.dto';
+import { ChequePhotoRequestDto, ChequeQueryDto, CompleteChequePhotoDto, CreateChequeDto, DepositChequeDto, SettleChequeDto, UpdateChequeDto } from './dto/cheque.dto';
 
 const R = RESOURCES.CHEQUE;
 
@@ -13,7 +14,10 @@ const R = RESOURCES.CHEQUE;
 @ApiBearerAuth()
 @Controller('cheques')
 export class ChequesController {
-  constructor(private readonly cheques: ChequesService) {}
+  constructor(
+    private readonly cheques: ChequesService,
+    private readonly photoRequests: ChequePhotoRequestsService,
+  ) {}
 
   @Get()
   @Permissions(perm(R, ACTIONS.VIEW))
@@ -37,6 +41,25 @@ export class ChequesController {
   @Permissions(perm(R, ACTIONS.VIEW))
   deposited() {
     return this.cheques.deposited();
+  }
+
+  /** "Request photo from phone" — pushes to the system admin; the form polls GET below. */
+  @Post('photo-requests')
+  @Permissions(perm(R, ACTIONS.CREATE))
+  requestPhoto(@Body() dto: ChequePhotoRequestDto, @CurrentUser('name') userName: string) {
+    return this.photoRequests.create(dto, userName ?? null);
+  }
+
+  @Get('photo-requests/:id')
+  @Permissions(perm(R, ACTIONS.VIEW))
+  photoRequest(@Param('id') id: string) {
+    return this.photoRequests.get(id);
+  }
+
+  @Post('photo-requests/:id')
+  @Permissions(perm(R, ACTIONS.CREATE))
+  completePhoto(@Param('id') id: string, @Body() dto: CompleteChequePhotoDto) {
+    return this.photoRequests.complete(id, dto.photoUrl);
   }
 
   @Get(':id')

@@ -29,6 +29,7 @@ const MAX_BYTES = 8 * 1024 * 1024; // 8 MB per image
 const FOLDERS: Record<string, string> = {
   'order-items': ORDER_ITEM_PHOTOS_SUBDIR,
   'design-names': DESIGN_NAME_PHOTOS_SUBDIR,
+  cheques: 'cheques',
 };
 
 /**
