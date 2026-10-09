@@ -2593,7 +2593,9 @@ function CombineWithDesignDialog({ base, onClose }: { base: DesignDto[]; onClose
                 // How many of the target sub-categories actually have this one.
                 const have = targetSubs.filter((sub) => rowsBySub.get(sub)?.has(t)).length;
                 // …and in how many it is already paired with the base design.
-                const done = combinedWith.get(t) ?? 0;
+                // Pairs only matter when making pairs: in "One of all" an
+                // existing CARVING + LOGO says nothing about CARVING + DL + LOGO.
+                const done = mode === 'each' ? (combinedWith.get(t) ?? 0) : 0;
                 const allDone = have > 0 && done === have;
                 return (
                   <label
@@ -2657,6 +2659,17 @@ function CombineWithDesignDialog({ base, onClose }: { base: DesignDto[]; onClose
                   <p className="text-muted-foreground">…and {plan.groups.length - 12} more</p>
                 )}
               </div>
+              {/* Ticking several in "One per design" makes pairs; the usual
+                  intent is one combination of them all — offer it by name. */}
+              {mode === 'each' && picked.size >= 2 && (
+                <button
+                  type="button"
+                  onClick={() => setMode('all')}
+                  className="text-primary block text-left font-semibold underline-offset-2 hover:underline"
+                >
+                  Make one combination instead: {[newType, ...picked].sort((x, y) => x.localeCompare(y)).join(' + ')}
+                </button>
+              )}
               {plan.exists.length > 0 && (
                 <p className="text-emerald-700 dark:text-emerald-400">
                   {plan.exists.length} already combined, so{' '}
