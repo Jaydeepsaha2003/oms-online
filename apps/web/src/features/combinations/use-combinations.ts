@@ -20,6 +20,10 @@ const KEY = ['combinations'] as const;
 
 function invalidateCombinations(qc: ReturnType<typeof useQueryClient>) {
   qc.invalidateQueries({ queryKey: KEY });
+  // Each design row shows the combinations it is in (Combined / Standalone and
+  // their names), and the rate list prices them — both went stale until a reload.
+  qc.invalidateQueries({ queryKey: ['designs'] });
+  qc.invalidateQueries({ queryKey: ['customers', 'rate-list'] });
   qc.invalidateQueries({ queryKey: ['orders', 'lookups'] });
 }
 

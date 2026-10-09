@@ -118,6 +118,7 @@ export class DesignsService {
   }
 
   async create(dto: CreateDesignDto): Promise<DesignDto> {
+    await this.assertValid(dto.category, dto.subCategory, dto.designType, dto.cost, dto.rate);
     try {
       const row = await this.prisma.design.create({ data: this.toData(dto), include: INCLUDE });
       return this.toDto(await this.ensureCode(row));
@@ -147,6 +148,8 @@ export class DesignsService {
       ...new Set((dto.subCategories ?? []).map((s) => uc(s) ?? '').filter(Boolean)),
     ];
     if (!subCategories.length) throw new BadRequestException('Choose at least one sub-category.');
+    // All or nothing: one wrong sub-category refuses the batch before any is written.
+    for (const sub of subCategories) await this.assertValid(category, sub, designType, dto.cost, dto.rate);
 
     const existing = await this.prisma.design.findMany({
       where: { category, designType, subCategory: { in: subCategories } },
@@ -173,6 +176,15 @@ export class DesignsService {
   ): Promise<DesignDto> {
     const before = await this.prisma.design.findUnique({ where: { id } });
     if (!before) throw new NotFoundException('Design not found.');
+    // Checked as the row will stand after the edit: a sub-category moved on its
+    // own must still belong to the category it keeps.
+    await this.assertValid(
+      'category' in dto ? dto.category : before.category,
+      'subCategory' in dto ? dto.subCategory : before.subCategory,
+      'designType' in dto ? dto.designType : before.designType,
+      'cost' in dto ? dto.cost : before.cost,
+      'rate' in dto ? dto.rate : before.rate,
+    );
     try {
       const row = await this.prisma.design.update({
         where: { id },
@@ -290,6 +302,7 @@ export class DesignsService {
           cost: toNum(row['COST']),
           rate: toNum(row['RATE']),
         };
+        await this.assertValid(category, subCategory, designType, data.cost, data.rate);
         // Match an existing design so the update keeps its id — and therefore every
         // combination link (and its code) — intact. Prefer the stable ID/CODE from an
         // exported sheet, then fall back to the category + sub + type identity.
@@ -319,6 +332,40 @@ export class DesignsService {
   }
 
   // ── helpers ────────────────────────────────────────────────────────────────
+
+  /**
+   * A design is sold within a category + sub-category of the PRODUCT master: the
+   * category must exist there, and the sub-category must be one of THAT
+   * category's. A "GLASS" design on a CUP sub-category, or on a sub-category
+   * typed in that no product has, never prices an order line — it only
+   * clutters the pickers. Same rules for create, bulk, edit and import.
+   */
+  private async assertValid(
+    rawCategory: string | null | undefined,
+    rawSubCategory: string | null | undefined,
+    rawDesignType: string | null | undefined,
+    cost?: number | null,
+    rate?: number | null,
+  ): Promise<void> {
+    const category = uc(rawCategory) ?? '';
+    const subCategory = uc(rawSubCategory) ?? '';
+    if (!category) throw new BadRequestException('Choose the category.');
+    if (!subCategory) throw new BadRequestException('Choose the sub-category.');
+    if (!uc(rawDesignType)) throw new BadRequestException('Enter the design type.');
+    if (cost != null && cost < 0) throw new BadRequestException('Cost cannot be negative.');
+    if (rate != null && rate < 0) throw new BadRequestException('Rate cannot be negative.');
+    if (!(await this.prisma.product.count({ where: { category } }))) {
+      throw new BadRequestException(`Category "${category}" is not in the product master — pick a category from the list.`);
+    }
+    if (!(await this.prisma.product.count({ where: { category, subCategory } }))) {
+      const owner = await this.prisma.product.findFirst({ where: { subCategory }, select: { category: true } });
+      throw new BadRequestException(
+        owner
+          ? `Sub-category "${subCategory}" belongs to ${owner.category}, not ${category}.`
+          : `Sub-category "${subCategory}" is not in the ${category} product list — pick one from the list.`,
+      );
+    }
+  }
 
   private toData(dto: CreateDesignDto | UpdateDesignDto): Prisma.DesignUncheckedCreateInput {
     return {

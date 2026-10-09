@@ -1,6 +1,6 @@
 import { OmitType, PartialType } from '@nestjs/swagger';
 import { Type } from 'class-transformer';
-import { ArrayNotEmpty, IsArray, IsBoolean, IsIn, IsNumber, IsOptional, IsString, MaxLength, MinLength } from 'class-validator';
+import { ArrayNotEmpty, IsArray, IsBoolean, IsIn, IsNumber, IsOptional, IsString, MaxLength, Min, MinLength } from 'class-validator';
 import { PaginationDto } from '../../common/dto/pagination.dto';
 
 export class CreateDesignDto {
@@ -22,11 +22,13 @@ export class CreateDesignDto {
   @IsOptional()
   @Type(() => Number)
   @IsNumber()
+  @Min(0, { message: 'Cost cannot be negative.' })
   cost?: number;
 
   @IsOptional()
   @Type(() => Number)
   @IsNumber()
+  @Min(0, { message: 'Rate cannot be negative.' })
   rate?: number;
 
   @IsOptional() @IsBoolean() active?: boolean;

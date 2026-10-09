@@ -29,7 +29,7 @@ import { useColumnOrder } from '@/hooks/use-column-order';
 import { useSaveShortcut } from '@/hooks/use-save-shortcut';
 import { usePageSize } from '@/hooks/use-page-size';
 import { useConfirm } from '@/components/common/confirm';
-import { Combo, NativeSelect } from '@/components/common/combo';
+import { NativeSelect } from '@/components/common/combo';
 import { ColumnSettings } from '@/components/common/column-settings';
 import { InfoTip } from '@/components/common/info-tip';
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip';
@@ -1903,6 +1903,15 @@ function DesignDialog({
     if (bulkMode ? subPicked.size === 0 : !form.subCategory.trim()) {
       return toast.error(bulkMode ? 'Tick at least one sub-category' : 'Sub category is required');
     }
+    if (!(lookups?.categories ?? []).includes(form.category.trim())) {
+      return toast.error('Pick a category from the list');
+    }
+    if (!bulkMode && !subCategoryOptions.includes(form.subCategory.trim())) {
+      return toast.error(`${form.subCategory.trim()} is not a ${form.category.trim()} sub category`);
+    }
+    for (const [label, v] of [['Cost', form.cost], ['Rate', form.rate]] as const) {
+      if (v.trim() && !(Number(v) >= 0)) return toast.error(`${label} must be a number of 0 or more`);
+    }
     const common = {
       category: form.category.trim(),
       designType: form.designType.trim(),
@@ -1997,7 +2006,9 @@ function DesignDialog({
         >
           <div className="grid grid-cols-2 gap-3">
             <Field label="Category" required>
-              <Combo
+              {/* Pick-only: a design lives in a category + sub-category of the
+                  product master (the server refuses anything else). */}
+              <NativeSelect
                 value={form.category}
                 onChange={(v) => {
                   set('category', v);
@@ -2005,16 +2016,19 @@ function DesignDialog({
                   setSubPicked(new Set());
                 }}
                 options={lookups?.categories ?? []}
-                placeholder="Select or add…"
+                placeholder="Select category…"
+                onInvalidEntry={() => toast.error('Pick a category from the list')}
               />
             </Field>
             {!bulkMode && (
               <Field label="Sub category" required>
-                <Combo
+                <NativeSelect
                   value={form.subCategory}
                   onChange={(v) => set('subCategory', v)}
                   options={subCategoryOptions}
-                  placeholder="Select or add…"
+                  placeholder={form.category ? 'Select sub category…' : 'Pick a category first'}
+                  disabled={!form.category}
+                  onInvalidEntry={() => toast.error(`Pick a ${form.category} sub category from the list`)}
                 />
               </Field>
             )}
