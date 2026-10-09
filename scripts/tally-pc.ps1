@@ -577,8 +577,25 @@ function Eway-Restore {
   Write-Host "E-way limit wapas $($m.baseline) par ($($m.which))."
 }
 
+# What this script printed, kept 2 days (print-record.json next to it): bill -> invoice copies, e-way copies, first / last time.
+# One bill gets 2 invoice copies (and 2 e-way copies) at most - never printed again, whatever happens.
+$printFile = Join-Path $PSScriptRoot 'print-record.json'
+function Print-Load {
+  $r = [ordered]@{}
+  try { $o = Get-Content $printFile -Raw -ErrorAction Stop | ConvertFrom-Json; foreach ($pr in $o.PSObject.Properties) { if (((Get-Date) - [datetime]$pr.Value.last).TotalHours -lt 48) { $r[$pr.Name] = $pr.Value } } } catch { }
+  , $r
+}
+function Print-Note($inv, $ewb) {
+  $r = Print-Load; $e = $r[$script:no]
+  $r[$script:no] = [ordered]@{ party = $script:party; inv = $inv + $(if ($e) { [int]$e.inv } else { 0 }); ewb = $ewb + $(if ($e) { [int]$e.ewb } else { 0 }); first = $(if ($e) { $e.first } else { (Get-Date).ToString('s') }); last = (Get-Date).ToString('s') }
+  $r | ConvertTo-Json -Depth 3 | Set-Content $printFile -Encoding UTF8
+}
 # One print from Tally's Print box: F5 sets the copies first, every time (Tally may remember the last ones).
 function Print-Once($invCopies, $ewbCopies) {
+  $done = (Print-Load)[$script:no]
+  if ($done -and (([int]$done.inv + $invCopies) -gt 2 -or ([int]$done.ewb + $ewbCopies) -gt 2)) {
+    Stop-Here "$($script:no) : already printed ($($done.inv) invoice + $($done.ewb) e-way copies, last $($done.last)) - a bill is printed 2 copies only, never again. Nothing printed."
+  }
   Key '{F5}' 'Copies' "the Print box" -Fast
   foreach ($n in 1..8) { $t = Seen 'printer-settings'; if ($t -match 'PrinterSettings') { break }; Start-Sleep -Milliseconds 300 }
   if ($t -notmatch 'PrinterSettings') { Stop-Here 'Printer Settings did not open - stopped, nothing printed.' }
@@ -586,6 +603,7 @@ function Print-Once($invCopies, $ewbCopies) {
   if ($t -match 'copiesfore-?Way') { Key "$invCopies~" -Fast; Key '~' -Fast; Key "$ewbCopies" -Fast; Key '^a' -Fast }
   else { Key "$invCopies" -Fast; Key '^a' -Fast }
   Key 'p' 'Copies' "the Print box" -Fast
+  Print-Note $invCopies $ewbCopies   # written the moment Print was pressed: a failure after this still counts as printed
   # Tally now shows "Printing ... 0%" over the bill. While it is up the bill behind it is dimmed and OCR cannot read it
   # (SSS-796: "Tally is not on SSS-796 any more"), and an Esc would cancel the print. So wait until that box is gone.
   Start-Sleep -Milliseconds 500
@@ -602,6 +620,7 @@ try {
 foreach ($v in $pending | Select-Object -First $Max) {
   if (Test-Path $stopFlag) { Write-Host 'Stop maanga gaya: baaki bills chhodke ruk rahi hoon.'; break }
   $no = Txt $v.VOUCHERNUMBER; $script:no = $no
+  $script:party = Txt $v.PARTYLEDGERNAME
   $script:partyKey = ((Txt $v.PARTYLEDGERNAME) -replace '[^A-Za-z0-9]', '').ToUpper()
   if ($script:partyKey.Length -lt 3) { Stop-Here "$no : no party name from Tally - stopped." }
   if ($no -notmatch '^SSS-\d+/\d\d-\d\d$') { throw "Odd bill number '$no' - stopped before asking Tally anything." }
@@ -737,6 +756,8 @@ foreach ($v in $pending | Select-Object -First $Max) {
   Back-To-Gateway
   $script:st.done = @(@($script:st.done) + [pscustomobject]@{ no = $no; party = (Txt $v.PARTYLEDGERNAME); at = (Get-Date).ToString('hh:mm tt') } | Select-Object -Last 15)
   Set-Status
+  # "Bill ready - please collect": tell OMS, which alerts the people the admin picked in Settings. Never stops the run.
+  try { Invoke-RestMethod -Method Post -Uri "$($cfg.oms)/api/tally/pc-printed" -Headers @{ 'x-tally-key' = $cfg.key } -ContentType 'application/json' -Body (@{ vchNo = $no; party = (Txt $v.PARTYLEDGERNAME); eway = $ewb } | ConvertTo-Json) -TimeoutSec 10 | Out-Null } catch { }
   if ($ewayLowered) { Eway-Restore }
 }
 } finally { Overlay-Off }
@@ -929,9 +950,13 @@ Wake-Check
 Write-Host "Background mein chal rahi hai: Tally ke bills dekh rahi hai (har $EverySeconds second). Rokne ke liye tally-pc-stop.bat."  -ForegroundColor Cyan
 $later = $null; $approved = $false   # $later: when the person said "start later"; $approved: they agreed, so the rest of the bills just go through
 $lastLoop = Get-Date; $loops = 0
+# A new version of this script copied here (OMS does that after every change) is picked up by itself, between bills -
+# a worker left running kept the old code in memory, so "bill ready" alerts never went out until someone restarted it.
+$script:scriptTime = (Get-Item $PSCommandPath).LastWriteTime; $reload = $false
 while ($true) {
   foreach ($sec in 1..$EverySeconds) { Start-Sleep -Seconds 1; if (Test-Path $stopFlag) { break } }
   if (Test-Path $stopFlag) { Write-Host 'Stop maanga gaya (tally-pc-stop.bat): band ho rahi hai.'; break }
+  if ((Get-Item $PSCommandPath).LastWriteTime -ne $script:scriptTime) { Write-Host 'Naya script mila: dobara shuru ho rahi hai.'; $reload = $true; break }
   $script:st.tally = if (-not (Tally-Proc)) { 'Tally band hai' } elseif (Tally-Answers) { 'Tally chalu hai' } else { 'Tally khula hai par jawab nahi de raha' }
   Set-Status
   # Back from sleep (the loop was frozen) or every minute: tell OMS this PC's address again - DHCP may have given it a new one.
@@ -1015,5 +1040,14 @@ while ($true) {
     $approved = $true
   }
 }
-Overlay-Off; Set-Status 'Band ho gayi'
+Overlay-Off
+if ($reload) {
+  Set-Status 'Naya version: dobara shuru ho rahi hai'
+  Start-Sleep -Seconds 3   # let the copy finish writing the file
+  Stop-Transcript | Out-Null
+  $script:mutex.ReleaseMutex(); $script:mutex.Dispose()   # free the one-worker lock for the new run
+  Start-Process powershell -WindowStyle Hidden -ArgumentList '-NoProfile', '-ExecutionPolicy', 'Bypass', '-File', "`"$PSCommandPath`""
+  return
+}
+Set-Status 'Band ho gayi'
 Remove-Item $stopFlag -ErrorAction SilentlyContinue

@@ -185,6 +185,12 @@ export const SETTING_GROUP_META: SettingGroupMeta[] = [
 
 /** Which dispatch events raise an alert to users holding `dispatchalert:notify`.
  *  Every flag ships false — the feature does nothing until switched on. */
+/** "Bill ready — please collect" alerts: who hears when the Tally PC finishes a bill. */
+export interface BillReadyAlertsDto {
+  enabled: boolean;
+  userIds: string[];
+}
+
 export interface DispatchAlertSettingsDto {
   /** Master switch. When false nothing fires, whatever the individual flags say. */
   enabled: boolean;
