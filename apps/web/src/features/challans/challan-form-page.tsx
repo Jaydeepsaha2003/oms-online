@@ -184,7 +184,11 @@ export function ChallanFormPage() {
   const [customer, setCustomer] = useState(navCustomer);
   const { data: customers = [], isLoading: custLoading } = useAllChallanCustomers();
   const { data: prefixSettings } = useChallanPrefixSettings();
-  const createDraftQ = useChallanDraft(!isEdit && customer ? { customerName: customer } : null);
+  // Which transporter this challan ships by. '' = the party's own default. A party can
+  // ship via several, each with its own freight/packing rates, so changing this re-prices
+  // the draft server-side (Create only — an edit stays on the transporter it was saved with).
+  const [pickedTrans, setPickedTrans] = useState('');
+  const createDraftQ = useChallanDraft(!isEdit && customer ? { customerName: customer, transName: pickedTrans || null } : null);
   const editQ = useChallanEdit(isEdit ? editId : null);
 
   const createChallan = useCreateChallan();
@@ -283,6 +287,18 @@ export function ChallanFormPage() {
   // overrides the auto-assigned one; clearing it reverts to auto.
   const effectiveCode = manualCode.trim() || previewCode;
 
+  // The transporter actually pricing this challan, for the unpriced banner.
+  const shownTrans = isEdit ? (savedChallan?.transName ?? '') : pickedTrans || (draft?.transName ?? '');
+  /** Categories on the grid with no freight/packing row for the transporter in use. */
+  const unpricedCats = useMemo(() => {
+    const by = new Map<string, string[]>();
+    for (const r of rows) {
+      const miss = missingRatesFor(r).filter((m) => m !== 'GST'); // GST isn't per-transporter
+      if (miss.length) by.set(r.pCategory || 'this item', miss);
+    }
+    return [...by.entries()];
+  }, [rows]);
+
   const recalc = (rs: Row[], d = draft) => {
     if (!d) return;
     setFreight(String(round5(rs.reduce((a, r) => a + n(r.bags) * n(r.freightRate), 0))));
@@ -308,6 +324,9 @@ export function ChallanFormPage() {
     if (d && d.customer && Array.isArray(d.rows) && d.rows.length) {
       restoreRef.current = d;
       setRestoredDraft(true);
+      // Before the customer, so the very first draft fetch already prices on the
+      // transporter that was picked — not the party's default, then a re-price.
+      setPickedTrans(d.pickedTrans ?? '');
       setCustomer(d.customer); // fetches the pool → init effect restores the rest
     } else {
       draftReady.current = true;
@@ -402,14 +421,14 @@ export function ChallanFormPage() {
     if (!draftEnabled || !draftReady.current || savedId) return;
     const t = setTimeout(() => {
       if (customer && rows.length) {
-        saveChallanDraft({ customer, invDate, prefix, manualCode, status, freight, packing, pouch, billingRate, gstPct, noBill, noBillRemoveGst, manualTax, manualB, manualC, shippingAddress, remarks, rows });
+        saveChallanDraft({ customer, invDate, prefix, manualCode, status, freight, packing, pouch, billingRate, gstPct, noBill, noBillRemoveGst, manualTax, manualB, manualC, shippingAddress, remarks, pickedTrans, rows });
       } else {
         clearChallanDraft();
       }
     }, 800);
     return () => clearTimeout(t);
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [draftEnabled, savedId, customer, invDate, prefix, manualCode, status, freight, packing, pouch, billingRate, gstPct, noBill, noBillRemoveGst, manualTax, manualB, manualC, shippingAddress, remarks, rows]);
+  }, [draftEnabled, savedId, customer, invDate, prefix, manualCode, status, freight, packing, pouch, billingRate, gstPct, noBill, noBillRemoveGst, manualTax, manualB, manualC, shippingAddress, remarks, pickedTrans, rows]);
 
   // Throw away the restored draft and start blank.
   const discardDraft = () => {
@@ -846,6 +865,40 @@ export function ChallanFormPage() {
   };
 
   /**
+   * Re-price the rows already on screen when the transporter changes.
+   *
+   * Freight/packing are per (category, transporter), so picking a different one makes
+   * the server hand back a differently-priced draft. The rows the user has built up
+   * must survive that — only their rates are swapped, by category so manual/SCRAP
+   * lines (which have no dispatch behind them) are re-priced too. Unlike
+   * `applyFreshRates`, this OVERWRITES: a null coming back means the new transporter
+   * genuinely has no rate, and that has to show rather than keep the old one's figure.
+   */
+  const pricedOnRef = useRef<string | null>(null);
+  useEffect(() => {
+    if (isEdit || !draft || draftSettling) return;
+    const key = `${draft.customerName}|${draft.transName ?? ''}`;
+    // First draft for a party is the baseline — the init effect has already priced it.
+    if (pricedOnRef.current === null || pricedOnRef.current.split('|')[0] !== draft.customerName) {
+      pricedOnRef.current = key;
+      return;
+    }
+    if (pricedOnRef.current === key) return;
+    pricedOnRef.current = key;
+    const byCat = new Map<string, { g: number | null; f: number | null; p: number | null }>();
+    for (const it of draft.items) {
+      const c = (it.pCategory ?? '').toUpperCase();
+      if (!byCat.has(c)) byCat.set(c, { g: it.gstRate, f: it.freightRate, p: it.packingRate });
+    }
+    const next = rows.map((r) => {
+      const m = byCat.get((r.pCategory ?? '').toUpperCase());
+      return m ? { ...r, gstRate: m.g, freightRate: m.f, packingRate: m.p } : r;
+    });
+    setRows(next);
+    recalc(next, draft);
+  }, [draft, draftSettling, isEdit]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  /**
    * Saving is blocked while any line is unpriced.
    *
    * Returns true only when the operator may proceed anyway — which is the
@@ -1028,7 +1081,10 @@ export function ChallanFormPage() {
           <div className="order-last w-full min-w-0 sm:order-none sm:w-auto sm:max-w-md sm:flex-1">
             <NativeSelect
               value={customer}
-              onChange={setCustomer}
+              onChange={(v) => {
+                setPickedTrans(''); // the next party has its own transporters — fall back to its default
+                setCustomer(v);
+              }}
               options={customers}
               placeholder={custLoading ? 'Loading…' : 'Select a customer…'}
               className="bg-background h-9 w-full rounded-md text-base font-semibold"
@@ -1044,6 +1100,28 @@ export function ChallanFormPage() {
           <History className="size-4 shrink-0" /> Restored your unsaved challan from last time — keep editing or discard it.
           <Button type="button" variant="ghost" size="sm" className="ml-auto h-7 text-amber-800 hover:bg-amber-100 hover:text-amber-900" onClick={discardDraft}>
             Discard
+          </Button>
+        </div>
+      )}
+
+      {/* Unset freight/packing for the transporter in use. Freight and packing are
+          per (category, transporter), so switching transporter can land on one nobody
+          has priced yet. Blocking here beats billing ₹0 quietly — and the button goes
+          straight to the grid that fixes it, then comes back with the rows intact. */}
+      {!isEdit && unpricedCats.length > 0 && (
+        <div className="flex shrink-0 flex-wrap items-center gap-2 rounded-md border border-amber-300 bg-amber-50 px-3 py-2 text-sm text-amber-900 dark:border-amber-400/50 dark:bg-amber-400/10 dark:text-amber-200">
+          <AlertTriangle className="size-4 shrink-0" />
+          <span>
+            <b>{shownTrans || 'This transporter'}</b> ke rates set nahi hain —{' '}
+            {unpricedCats.map(([cat, miss]) => `${cat} (${miss.join('/')})`).join(', ')}
+          </span>
+          <Button
+            type="button"
+            size="sm"
+            className="ml-auto h-7"
+            onClick={() => navigate('/trans-rates', { state: { customerName: customer, transportName: shownTrans, returnTo: '/challans/new' } })}
+          >
+            Rates set karo
           </Button>
         </div>
       )}
@@ -1482,7 +1560,22 @@ export function ChallanFormPage() {
                 </button>
                 <div className={cn(showDetails ? 'block' : 'hidden', 'sm:block space-y-2.5')}>
                   <div className="grid grid-cols-2 gap-2 sm:grid-cols-3 lg:grid-cols-[minmax(12rem,1.5fr)_repeat(4,minmax(6.5rem,1fr))]">
-                    <div className="space-y-1 xl:col-span-1"><Label className="text-[11px] font-bold tracking-wide text-muted-foreground uppercase">Transporter</Label><Input value={(isEdit ? savedChallan?.transName : draft.transName) || '—'} readOnly className="h-8 rounded-[4px] border-amber-500 bg-amber-50 text-[13px] dark:border-amber-400/70 dark:bg-amber-400/10" /></div>
+                    <div className="space-y-1 xl:col-span-1">
+                      <Label className="text-[11px] font-bold tracking-wide text-muted-foreground uppercase">Transporter</Label>
+                      {/* Editable only while creating. An edit keeps the transporter the
+                          challan was saved with, so re-opening an old bill can never
+                          silently re-rate it on whatever the party's default is today. */}
+                      {isEdit || draft.transporters.length < 2 ? (
+                        <Input value={(isEdit ? savedChallan?.transName : draft.transName) || '—'} readOnly className="h-8 rounded-[4px] border-amber-500 bg-amber-50 text-[13px] dark:border-amber-400/70 dark:bg-amber-400/10" />
+                      ) : (
+                        <NativeSelect
+                          value={pickedTrans || draft.transName || ''}
+                          onChange={setPickedTrans}
+                          options={draft.transporters}
+                          className="h-8 w-full rounded-[4px] border-amber-500 bg-amber-50 text-[13px] dark:border-amber-400/70 dark:bg-amber-400/10"
+                        />
+                      )}
+                    </div>
                     <LockField label="Freight" value={freight} locked={locked.freight} onUnlock={() => unlock('freight')} onChange={setFreight} onBlur={() => setLocked((l) => ({ ...l, freight: true }))} />
                     <LockField label="Packing" value={packing} locked={locked.packing} onUnlock={() => unlock('packing')} onChange={setPacking} onBlur={() => setLocked((l) => ({ ...l, packing: true }))} />
                     <LockField label="Box / Pouch" value={pouch} locked={locked.pouch} onUnlock={() => unlock('pouch')} onChange={setPouch} onBlur={() => setLocked((l) => ({ ...l, pouch: true }))} />

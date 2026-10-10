@@ -64,6 +64,9 @@ export class DraftChallanDto {
   @IsString() customerName!: string;
   /** Specific lines to price; omit to price the customer's entire un-challaned pool. */
   @IsOptional() @IsArray() @IsInt({ each: true }) dispatchIds?: number[];
+  /** Transporter the user picked on the form; omit to price on the customer's default.
+   *  Freight/packing are per (category, transporter), so this re-prices the draft. */
+  @IsOptional() @IsString() transName?: string | null;
 }
 
 export class CreateChallanItemDto {

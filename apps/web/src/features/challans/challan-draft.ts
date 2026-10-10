@@ -25,6 +25,9 @@ export interface ChallanDraftData {
   manualC: string;
   shippingAddress: string;
   remarks: string;
+  /** Transporter picked on the form ('' = the party's default). Kept so a trip out
+   *  to Transport Rates and back doesn't silently drop back to the default. */
+  pickedTrans?: string;
   /** Added grid rows (the form's Row shape). */
   rows: unknown[];
   savedAt: number;

@@ -40,6 +40,24 @@ const startOfToday = (): Date => {
   return d;
 };
 const n = (v: number | null | undefined) => (Number.isFinite(v as number) ? (v as number) : 0);
+
+/**
+ * Freight/packing rate for one (category, type), for the transporter actually being used.
+ *
+ * Strict on purpose: when a transporter is named and it has no row of its own, this
+ * returns null — "nobody set a rate for this transporter" — instead of quietly billing
+ * at some OTHER transporter's rate, which is what the old `?? matches[0]` fallback did.
+ * A party shipping via two transporters at different rates was mis-billed by it.
+ *
+ * "Unconfigured" means no row OR a row nobody typed a number into. Both are the same
+ * thing to whoever is billing: a figure has to be there, even if that figure is 0.
+ * A stored 0 is NOT unconfigured — packing 0 + freight 150 is a real, deliberate
+ * setup and must price as 0. Only a blank (null) rate flags.
+ */
+const pickTransRate = (matches: { transportName: string | null; rate: number | null }[], transName: string | null): number | null => {
+  const row = transName ? matches.find((t) => t.transportName === transName) : matches[0];
+  return row && row.rate != null ? n(row.rate) : null;
+};
 /** SCRAP parties are TCS-only — this guards against a stale client ever
  *  persisting a TDS deduction alongside it. */
 const isScrapCategory = (category: string | null | undefined) => (category ?? '').toUpperCase() === 'SCRAP';
@@ -247,9 +265,22 @@ export class ChallansService {
     const byId = new Map(dispatches.map((d) => [d.id, d]));
     const ordered = ids.map((id) => byId.get(id)).filter((d): d is (typeof dispatches)[number] => !!d);
 
-    // The transporter shown on the challan is the one Tally will get (the party's e-way transporter if it has one); rates stay tied to its own transporter.
-    const transName = customer?.ewayTransporter || customer?.transportName || null;
-    const { gstFor, rateFor } = await this.rateMaps(customerName, customer?.transportName ?? null);
+    // Which transporter prices this draft: the one picked on the form, else the party's
+    // default. A party can ship via several, each with its own freight/packing rates.
+    const ratedTrans = dto.transName?.trim() || customer?.transportName || null;
+    // The party's shippable transporters: its default, plus every transporter it already
+    // has freight/packing rates under. Derived, so adding a rate row IS adding the option.
+    const rated = await this.prisma.transRate.findMany({
+      where: { customerName, type: { in: ['FREIGHT', 'PACKING'] }, transportName: { not: null } },
+      select: { transportName: true },
+      distinct: ['transportName'],
+    });
+    const transporters = [...new Set([customer?.transportName, ...rated.map((t) => t.transportName)].filter((x): x is string => !!x?.trim()))];
+    // The transporter shown on the challan is the one Tally will get (the party's e-way
+    // transporter if it has one) — but only while the default is in play. Once the user
+    // picks a transporter, that IS the shipment, so it must be the one shown too.
+    const transName = dto.transName?.trim() || customer?.ewayTransporter || customer?.transportName || null;
+    const { gstFor, rateFor } = await this.rateMaps(customerName, ratedTrans);
 
     const items = ordered.map((d) => {
       const cat = (d.pCategory ?? '').toUpperCase();
@@ -334,6 +365,7 @@ export class ChallansService {
       category: customer?.category ?? null,
       paymentTerm: customer?.creditPeriod ?? null,
       transName,
+      transporters,
       billingRate: customer?.billingRate ?? null,
       boxRate: customer?.boxRate ?? null,
       gst,
@@ -1138,10 +1170,8 @@ export class ChallansService {
         return m?.has(cat) ? m.get(cat)! : null;
       },
       rateFor: (cust: string, cat: string, type: string): number | null => {
-        const transName = transNameBy.get(cust);
         const matches = (transByCust.get(cust) ?? []).filter((t) => (t.category ?? '').toUpperCase() === cat && t.type === type);
-        const preferred = matches.find((t) => transName && t.transportName === transName) ?? matches[0];
-        return preferred ? n(preferred.rate) : null;
+        return pickTransRate(matches, transNameBy.get(cust) ?? null);
       },
     };
   }
@@ -1157,8 +1187,7 @@ export class ChallansService {
     const gstFor = (cat: string): number | null => (gstByCat.has(cat) ? gstByCat.get(cat)! : null);
     const rateFor = (cat: string, type: string): number | null => {
       const matches = transRates.filter((t) => (t.category ?? '').toUpperCase() === cat && t.type === type);
-      const preferred = matches.find((t) => transName && t.transportName === transName) ?? matches[0];
-      return preferred ? n(preferred.rate) : null;
+      return pickTransRate(matches, transName);
     };
     return { gstByCat, gstFor, rateFor };
   }
@@ -1168,9 +1197,12 @@ export class ChallansService {
    *  with per-line rates (Form14 SearchBtn load). */
   async editContext(id: number): Promise<ChallanEditContext> {
     const challan = await this.findOne(id);
-    const draft = await this.draft({ customerName: challan.customerName });
+    // Re-price on the transporter this challan was SAVED with, not the party's current
+    // default — otherwise changing a party's default silently re-rates its old bills.
+    const savedTrans = challan.transName?.trim() || null;
+    const draft = await this.draft({ customerName: challan.customerName, transName: savedTrans });
     const customer = await this.prisma.customer.findFirst({ where: { partyName: challan.customerName } });
-    const { gstFor, rateFor } = await this.rateMaps(challan.customerName, customer?.transportName ?? null);
+    const { gstFor, rateFor } = await this.rateMaps(challan.customerName, savedTrans ?? customer?.transportName ?? null);
 
     const dispIds = challan.items.map((i) => i.dispatchId).filter((x): x is number => x != null);
     const disp = dispIds.length ? await this.prisma.dispatch.findMany({ where: { id: { in: dispIds } }, select: { id: true, pCategory: true, orderItemId: true } }) : [];

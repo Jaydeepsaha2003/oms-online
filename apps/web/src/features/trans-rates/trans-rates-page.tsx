@@ -1,4 +1,5 @@
 import { useMemo, useRef, useState } from 'react';
+import { useLocation, useNavigate } from 'react-router-dom';
 import {
   ChevronLeft,
   ChevronRight,
@@ -56,7 +57,10 @@ const CONTROL_ON = 'border-amber-500 bg-amber-50 text-amber-900 font-semibold da
 
 export function TransRatesPage() {
   const { can } = usePermissions();
-  const [mode, setMode] = useState<'list' | 'bulk'>('list');
+  // Create Challan sends the party (and where to go back to) when it hits a
+  // transporter with no rates — land straight on that party's grid.
+  const { state } = useLocation() as { state?: { customerName?: string; returnTo?: string } };
+  const [mode, setMode] = useState<'list' | 'bulk'>(state?.returnTo ? 'bulk' : 'list');
   const importMut = useImportTransRates();
 
   const handleImport = async (file: File) => {
@@ -111,7 +115,7 @@ export function TransRatesPage() {
         </div>
       </div>
 
-      {mode === 'list' ? <RatesList /> : <BulkByCustomer />}
+      {mode === 'list' ? <RatesList /> : <BulkByCustomer preset={state?.customerName} returnTo={state?.returnTo} />}
     </div>
   );
 }
@@ -674,13 +678,25 @@ function TransRateDialog({ rate, onClose }: { rate: TransRateDto | null; onClose
 }
 
 /** Secondary mode: pick a customer, then fill their rates via the shared grid. */
-function BulkByCustomer() {
+function BulkByCustomer({ preset, returnTo }: { preset?: string; returnTo?: string }) {
+  const navigate = useNavigate();
   const { data: lookups } = useTransLookups();
-  const [customer, setCustomer] = useState('');
+  const [customer, setCustomer] = useState(preset ?? '');
 
   return (
     <Card className="rounded-[4px]">
       <CardContent className="space-y-3 pt-5">
+        {/* Sent here by Create Challan because the transporter it is billing on has no
+            rates. The challan is held as an unsaved draft, so going back picks it up
+            with its rows intact — and re-fetches, so the rates just set are applied. */}
+        {returnTo && (
+          <div className="flex flex-wrap items-center gap-2 rounded-md border border-amber-300 bg-amber-50 px-3 py-2 text-sm text-amber-900 dark:border-amber-400/50 dark:bg-amber-400/10 dark:text-amber-200">
+            <span>Rates daalkar Save karo, phir wapas jao — naye rate challan pe lag jayenge.</span>
+            <Button type="button" size="sm" className="ml-auto h-7" onClick={() => navigate(returnTo)}>
+              Back to Create Challan
+            </Button>
+          </div>
+        )}
         <div className="grid gap-1 sm:max-w-64">
           <Label className="text-[10.5px] font-bold tracking-wide text-muted-foreground uppercase">Customer</Label>
           <NativeSelect
