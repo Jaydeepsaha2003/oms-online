@@ -19,10 +19,11 @@ const PIN_KEY = 'oms:sidebar-pinned';
  *  (13" laptops, tablets) it always behaves as the hover expand/collapse rail. */
 const PIN_MQ = '(min-width: 1600px)';
 
-/** New Order and Create/Edit Challan are full-bleed invoice-style editors with
+/** Edit Order and Create/Edit Challan are full-bleed invoice-style editors with
  *  their own compact in-page header (back arrow + title) — the global topbar
- *  above it is a redundant second header, so it's hidden on these routes. */
-const HEADERLESS_ROUTES = [/^\/orders\/new$/, /^\/orders\/[^/]+\/edit$/, /^\/challans\/new$/, /^\/challans\/[^/]+\/edit$/];
+ *  above it is a redundant second header, so it's hidden on these routes.
+ *  New Order keeps it: its shortcuts and notifications are wanted there. */
+const HEADERLESS_ROUTES = [/^\/orders\/[^/]+\/edit$/, /^\/challans\/new$/, /^\/challans\/[^/]+\/edit$/];
 const isHeaderless = (pathname: string) => HEADERLESS_ROUTES.some((re) => re.test(pathname));
 
 /** Full-height worksheet screens that manage their own insets and scrolling: the
