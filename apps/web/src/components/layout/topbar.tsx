@@ -12,6 +12,7 @@ import { NotificationsBell } from '@/features/crm/notifications-bell';
 import { SystemStatus } from '@/components/common/system-status';
 import { Button } from '@/components/ui/button';
 import { Avatar, AvatarFallback } from '@/components/ui/avatar';
+import { AppSwitcher } from './app-switcher';
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -70,7 +71,7 @@ function Shortcuts() {
   );
 }
 
-function initials(name: string): string {
+export function initials(name: string): string {
   return name
     .split(' ')
     .map((p) => p[0])
@@ -183,6 +184,7 @@ export function Topbar({
             </DropdownMenuContent>
           </DropdownMenu>
         )}
+        <AppSwitcher />
       </div>
     </header>
   );
@@ -190,7 +192,7 @@ export function Topbar({
 
 /** Cycles Light → Dark → System, showing the icon of the *current* choice. The
  *  three-way cycle keeps "follow the OS" reachable without a dropdown. */
-function ThemeToggle() {
+export function ThemeToggle() {
   const { theme, setTheme } = useTheme();
   const order: ThemePref[] = ['light', 'dark', 'system'];
   const next = order[(order.indexOf(theme) + 1) % order.length];

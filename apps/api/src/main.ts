@@ -187,6 +187,12 @@ async function bootstrap(): Promise<void> {
         if (/\.[a-z0-9]+$/i.test(req.path)) return next();
         res.sendFile(webIndex);
       })
+      // WMS is the same build under /wms/ (main.tsx picks the app from the path).
+      .get(/^\/wms(\/.*)?$/, (req: { path: string }, res: { redirect: (u: string) => void; sendFile: (p: string) => void }, next: () => void) => {
+        if (req.path === '/wms') return res.redirect('/wms/');
+        if (/\.[a-z0-9]+$/i.test(req.path)) return next();
+        res.sendFile(webIndex);
+      })
       // Everything else at the root — same rules as rootRouting in vite.config.ts:
       // the retired root service worker gets its kill-switch, files redirect to
       // their /oms/ copy, and page paths get root/index.html, which forwards old

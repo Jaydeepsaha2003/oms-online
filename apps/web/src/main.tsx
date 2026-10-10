@@ -25,6 +25,8 @@ import '@fontsource/poppins/700.css';
 import '@fontsource/carlito/400.css';
 import '@fontsource/carlito/700.css';
 import App from '@/App';
+import { WmsApp } from '@/wms/wms-app';
+import { isWms } from '@/components/layout/app-switcher';
 import { AppProviders } from '@/app/providers';
 import { watchForAppUpdates } from '@/lib/pwa-update';
 import { reportWorkerFailure } from '@/lib/service-worker';
@@ -47,16 +49,16 @@ window.setTimeout(() => sessionStorage.removeItem('oms:chunk-reloaded'), 10_000)
 createRoot(document.getElementById('root')!).render(
   <StrictMode>
     <AppProviders>
-      <BrowserRouter basename={import.meta.env.BASE_URL}>
-        <App />
-      </BrowserRouter>
+      {/* One build, two apps: /wms/ gets the warehouse shell, everything else OMS. */}
+      <BrowserRouter basename={isWms() ? '/wms' : import.meta.env.BASE_URL}>{isWms() ? <WmsApp /> : <App />}</BrowserRouter>
     </AppProviders>
   </StrictMode>,
 );
 
 // PWA: register the service worker so the app is installable (desktop/Android)
 // and keeps a light offline cache. /api is never cached — data stays live.
-if ('serviceWorker' in navigator) {
+// The worker's scope is /oms/ — a WMS page is outside it.
+if ('serviceWorker' in navigator && !isWms()) {
   // Was this page already controlled? If not, the very first install claiming
   // this client fires controllerchange too — reloading then is pointless churn
   // (nothing changed), so only reload when we're swapped OFF an older worker.

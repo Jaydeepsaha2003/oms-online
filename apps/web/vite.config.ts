@@ -160,9 +160,29 @@ const routeRoot = (req: { method?: string; url?: string }, res: { statusCode: nu
   res.setHeader('Content-Type', 'text/html; charset=utf-8');
   res.end(readFileSync(path.join(rootDir, 'index.html')));
 };
+// WMS is the same build under /wms/ (main.tsx picks the app from the path), so
+// its page paths get the same index.html; /wms itself gains its slash.
+const routeWms = (sendIndex: (url: string) => Promise<string | Buffer>) =>
+  (req: { url?: string }, res: { statusCode: number; setHeader: (k: string, v: string) => void; end: (body?: string | Buffer) => void }, next: () => void) => {
+    const url = req.url ?? '/';
+    const p = url.split('?')[0];
+    if (!/^\/wms(\/|$)/.test(p) || /\.[a-z0-9]+$/i.test(p)) return next();
+    if (p === '/wms') {
+      res.statusCode = 302;
+      res.setHeader('Location', '/wms/');
+      return res.end();
+    }
+    res.setHeader('Content-Type', 'text/html; charset=utf-8');
+    sendIndex(url).then((html) => res.end(html), next);
+  };
 const rootRouting: Plugin = {
   name: 'oms-root-routing',
+  configureServer(server) {
+    server.middlewares.use(routeWms((url) => server.transformIndexHtml(url, readFileSync(path.join(server.config.root, 'index.html'), 'utf8'))));
+  },
   configurePreviewServer(server) {
+    const index = path.resolve(server.config.root, server.config.build.outDir, 'index.html');
+    server.middlewares.use(routeWms(async () => readFileSync(index)));
     server.middlewares.use(routeRoot);
   },
 };

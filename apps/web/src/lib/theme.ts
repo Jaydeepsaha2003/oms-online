@@ -37,7 +37,7 @@ const listeners = new Set<() => void>();
 /** The login screen is always light, whatever the saved theme — it is the one
  *  screen people see before choosing anything, and it is designed for light.
  *  Mirrored in the boot script in index.html. */
-const isLoginRoute = () => typeof location !== 'undefined' && location.pathname === `${import.meta.env.BASE_URL}login`;
+const isLoginRoute = () => typeof location !== 'undefined' && /^\/(oms|wms)\/login$/.test(location.pathname);
 
 /** Add/remove `.dark` on <html> to match the resolved preference. */
 function apply(pref: ThemePref): void {
