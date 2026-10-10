@@ -99,6 +99,18 @@ if (-not $syncStamp -or $syncStamp -ne $syncNewest.Ticks.ToString()) { Write-Out
 # current, dist is current, only the responses are stale, and no rebuild will
 # ever dislodge it. So compare the RUNNING process against the build it is
 # meant to be serving, not just source against output.
+#
+# The web server drifts the same way, but through its CONFIG rather than dist:
+# vite.config.ts (the /oms/ base path, the root forwarding, the /api proxy) is
+# read once, at launch. A server started before a config change keeps serving
+# the new dist under the old rules — after the move to /oms/ that was a blank
+# page at the root with "Could not load .../oms/assets/index-*.js". Only a full
+# relaunch picks the config up.
+$webPid = (Get-NetTCPConnection -State Listen -LocalPort 6173 -EA SilentlyContinue | Select-Object -First 1).OwningProcess
+if ($webPid) {
+  $started = (Get-CimInstance Win32_Process -Filter "ProcessId=$webPid" -EA SilentlyContinue).CreationDate
+  if ($started -and $started.ToUniversalTime() -lt (Get-Item 'apps\web\vite.config.ts').LastWriteTimeUtc) { Write-Output 'full'; exit 0 }
+}
 $apiPid = (Get-NetTCPConnection -State Listen -LocalPort 4000 -EA SilentlyContinue | Select-Object -First 1).OwningProcess
 if ($apiPid) {
   # Get-Process's own .StartTime is unreliable here: on this machine it silently
