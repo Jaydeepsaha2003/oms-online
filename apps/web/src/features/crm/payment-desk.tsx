@@ -28,6 +28,7 @@ import { formatDate } from '@/lib/date-format';
 import { inrCompact, inrFull } from '@/features/dashboard/format';
 import { Input } from '@/components/ui/input';
 import { Button } from '@/components/ui/button';
+import { NativeSelect } from '@/components/common/combo';
 import { RowCheckbox } from '@/components/common/row-checkbox';
 import { Chip, initials, urgencyMeta } from './crm-shared';
 import { useFollowupList, usePartyBalance, usePartyBalances } from './use-crm';
@@ -269,11 +270,15 @@ const LEDGER_VIEWS: { v: LedgerView; label: string; on: string; off: string }[] 
 export function OwingPartiesWorklist({ onCollect, view = 'ALL', onViewChange }: { onCollect: (p: CollectPrefill) => void; view?: LedgerView; onViewChange?: (v: LedgerView) => void }) {
   const [search, setSearch] = useState('');
   const [priority, setPriority] = useState<Priority | ''>('');
+  const [agent, setAgent] = useState('');
   const [picked, setPicked] = useState('');
   const [sheet, setSheet] = useState<string | null>(null);
   const asideRef = useRef<HTMLElement>(null);
   const { data: fetched = [], isLoading, isFetching } = usePartyBalances(search);
-  const raw = useMemo(() => balancesInView(fetched, view), [fetched, view]);
+  const inView = useMemo(() => balancesInView(fetched, view), [fetched, view]);
+  const agentOf = (p: PartyBalanceSummary) => p.agent || 'No agent';
+  const agentOptions = useMemo(() => [...new Set(inView.map(agentOf))].sort((a, b) => a.localeCompare(b)), [inView]);
+  const raw = useMemo(() => (agent ? inView.filter((p) => agentOf(p) === agent) : inView), [inView, agent]);
 
   const counts = useMemo(() => {
     const c: Record<Priority, number> = { critical: 0, watch: 0, soon: 0, clear: 0 };
@@ -334,6 +339,7 @@ export function OwingPartiesWorklist({ onCollect, view = 'ALL', onViewChange }: 
             </>
           )}
           <span className="mr-auto" aria-hidden />
+          <NativeSelect value={agent} onChange={setAgent} options={['', ...agentOptions]} placeholder="All agents" className="h-9 w-full sm:w-40 sm:rounded-[10px] sm:bg-white dark:sm:bg-white/5" />
           <div className="relative w-full sm:w-60">
             <Search className="text-muted-foreground pointer-events-none absolute top-1/2 left-3 size-4 -translate-y-1/2" />
             <Input placeholder="Search party or agent…" className="h-9 pl-9 sm:rounded-[10px] sm:bg-white dark:sm:bg-white/5" value={search} onChange={(e) => setSearch(e.target.value)} />
@@ -375,7 +381,7 @@ export function OwingPartiesWorklist({ onCollect, view = 'ALL', onViewChange }: 
         ) : balances.length === 0 ? (
           <div className="text-muted-foreground flex flex-col items-center gap-2 py-14 text-center text-sm">
             <CheckCircle2 className="text-emerald-600 dark:text-emerald-400 size-9" />
-            {search || priority ? 'No matching party.' : 'No outstanding balances — everyone has paid.'}
+            {search || priority || agent ? 'No matching party.' : 'No outstanding balances — everyone has paid.'}
           </div>
         ) : (
           <>
