@@ -47,6 +47,8 @@ import {
   type LedgerView,
 } from './payment-desk';
 import { useOrderLookups } from '@/features/orders/use-orders';
+import { useAgents } from '@/features/agents/use-agents';
+import { NativeSelect } from '@/components/common/combo';
 import { inrCompact, inrFull } from '@/features/dashboard/format';
 import { usePartyBalances } from './use-crm';
 import type { PartyBalanceSummary } from '@oms/shared';
@@ -1156,6 +1158,10 @@ function FollowupForm({ kind, editing, prefill, onClose }: { kind: FollowupKind;
   const [stage, setStage] = useState(editing?.stage ?? '');
   const [priority, setPriority] = useState(editing?.priority ?? 'NORMAL');
   const [promisedAt, setPromisedAt] = useState(editing?.promisedAt?.slice(0, 10) ?? '');
+  // §8 — who gave their word: the party itself (empty) or one of its agents.
+  const [agentName, setAgentName] = useState(editing?.agentName ?? '');
+  const { data: agentData } = useAgents({ page: 1, pageSize: 500 });
+  const agents = agentData?.items ?? [];
   const [promisedAmount, setPromisedAmount] = useState(editing?.promisedAmount != null ? String(editing.promisedAmount) : prefill?.amount ? String(prefill.amount) : '');
   const [interval, setIntervalMins] = useState(editing?.reminderIntervalMins ? String(editing.reminderIntervalMins) : '');
   const [maxPerDay, setMaxPerDay] = useState(editing?.maxRemindersPerDay != null ? String(editing.maxRemindersPerDay) : '');
@@ -1281,6 +1287,7 @@ function FollowupForm({ kind, editing, prefill, onClose }: { kind: FollowupKind;
       title: autoTitle, detail: description.trim() || null, stage: stage.trim() || null, priority: priority as 'NORMAL' | 'URGENT',
       promisedAt: promisedAt || null,
       promisedAmount: isPay && promisedAmount.trim() ? Number(promisedAmount) : null,
+      ...(isPay ? { agentName: agentName || null, agentId: agentName ? (agents.find((a) => a.name === agentName)?.id ?? editing?.agentId ?? null) : null } : {}),
       reminderIntervalMins: interval.trim() ? Number(interval) : null,
       maxRemindersPerDay: maxPerDay.trim() ? Number(maxPerDay) : null,
       items,
@@ -1432,9 +1439,14 @@ function FollowupForm({ kind, editing, prefill, onClose }: { kind: FollowupKind;
                     </Field>
                     <Field label="Promised by">{dateChipRow}</Field>
                   </div>
-                  <Field label="Against" note="(optional)">
-                    <Input className={BIG_FIELD} value={itemText} onChange={(e) => setItemText(e.target.value)} placeholder="e.g. balance for challan 210" />
-                  </Field>
+                  <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
+                    <Field label="Against" note="(optional)">
+                      <Input className={BIG_FIELD} value={itemText} onChange={(e) => setItemText(e.target.value)} placeholder="e.g. balance for challan 210" />
+                    </Field>
+                    <Field label="Promise made by">
+                      <NativeSelect value={agentName} onChange={setAgentName} options={['', ...agents.map((a) => a.name).sort((a, b) => a.localeCompare(b))]} placeholder="The party itself" className={BIG_FIELD} />
+                    </Field>
+                  </div>
                 </div>
               </Section>
 
