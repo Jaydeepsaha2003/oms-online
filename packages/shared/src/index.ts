@@ -39,6 +39,7 @@ export * from './types/customer-rate-list';
 export * from './types/rate-list-config';
 export * from './types/payment';
 export * from './types/followup';
+export * from './types/task';
 export * from './types/setting';
 export * from './types/analytics';
 export * from './types/report';

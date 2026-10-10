@@ -1,6 +1,6 @@
 import { lazy, Suspense, useState } from 'react';
 import { NavLink, Navigate, Outlet, Route, Routes, useLocation } from 'react-router-dom';
-import { LayoutDashboard, LogOut, Menu, Settings, Warehouse, type LucideIcon } from 'lucide-react';
+import { Bug, LayoutDashboard, LogOut, Menu, Settings, Warehouse, type LucideIcon } from 'lucide-react';
 import { useBootstrapAuth, useLogout } from '@/hooks/use-auth';
 import { useAuthStore } from '@/stores/auth-store';
 import { cn } from '@/lib/utils';
@@ -15,9 +15,15 @@ import { useCompany } from '@/features/settings/use-settings';
 import kavishLogo from '@/assets/kavish-logo.png';
 
 const LoginPage = lazy(() => import('@/features/auth/login-page').then((m) => ({ default: m.LoginPage })));
+const TasksPage = lazy(() => import('@/features/tasks/tasks-page').then((m) => ({ default: m.TasksPage })));
 
 /** WMS menu — add a line per screen as the warehouse side is built. */
-const MENU: { to: string; label: string; icon: LucideIcon }[] = [{ to: '/', label: 'Dashboard', icon: LayoutDashboard }];
+const MENU: { to: string; label: string; icon: LucideIcon }[] = [
+  { to: '/', label: 'Dashboard', icon: LayoutDashboard },
+  { to: '/tasks', label: 'Tasks & Bugs', icon: Bug },
+];
+/** What a WMS task can be about: its screens, and anything else. */
+const TASK_AREAS = [...MENU.map((m) => m.label).filter((l) => l !== 'Tasks & Bugs'), 'Other'];
 
 /** Warehouse Management: its own shell and pages, served at /wms/ by the same
  *  build as OMS, so the sign-in, API and database are shared. */
@@ -30,6 +36,7 @@ export function WmsApp() {
         <Route element={<ProtectedRoute />}>
           <Route element={<WmsShell />}>
             <Route path="/" element={<BlankPage />} />
+            <Route path="/tasks/:id?" element={<TasksPage app="WMS" areas={TASK_AREAS} />} />
             <Route path="*" element={<Navigate to="/" replace />} />
           </Route>
         </Route>
@@ -41,7 +48,7 @@ export function WmsApp() {
 function WmsShell() {
   const [mobileOpen, setMobileOpen] = useState(false);
   const { pathname } = useLocation();
-  const page = MENU.find((m) => m.to === pathname) ?? MENU[0];
+  const page = MENU.find((m) => (m.to === '/' ? pathname === '/' : pathname.startsWith(m.to))) ?? MENU[0];
   return (
     <div className="bg-background flex h-screen overflow-hidden">
       <aside className="hidden w-64 shrink-0 border-r md:block">
@@ -96,7 +103,7 @@ function WmsSidebar({ onNavigate }: { onNavigate?: () => void }) {
           <NavLink
             key={m.to}
             to={m.to}
-            end
+            end={m.to === '/'}
             onClick={onNavigate}
             className={({ isActive }) =>
               cn(

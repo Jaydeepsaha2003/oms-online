@@ -116,6 +116,9 @@ export const RESOURCES = {
   /** The universal Approvals inbox — every request that needs a sign-off before
    *  it takes effect lands here (first one: back-dated dispatch entries). */
   APPROVAL: 'approval',
+  /** Tasks & Bugs (OMS and WMS). Anyone signed in reports and discusses;
+   *  `approve` is the developer's right to mark one complete. */
+  TASK: 'task',
 } as const;
 
 export type Resource = (typeof RESOURCES)[keyof typeof RESOURCES];
@@ -155,6 +158,7 @@ export interface ResourceDef {
 
 export const RESOURCE_DEFINITIONS: ResourceDef[] = [
   { resource: RESOURCES.DASHBOARD, label: 'Dashboard', group: 'General', actions: [ACTIONS.VIEW] },
+  { resource: RESOURCES.TASK, label: 'Tasks & Bugs', group: 'General', actions: [ACTIONS.APPROVE] },
 
   { resource: RESOURCES.ORDER, label: 'Orders', group: 'Sales', actions: STANDARD_PRINTABLE },
   {

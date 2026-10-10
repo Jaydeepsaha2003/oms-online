@@ -2673,3 +2673,77 @@ model BankStatementColumnPreset {
   @@index([columnsKey])
   @@map("bank_statement_column_preset")
 }
+
+/// Tasks & Bugs, shared by OMS and WMS: anyone reports one, someone with
+/// `task:approve` closes it. Shown as BUG-12 / TSK-12 off one counter.
+model Task {
+  id          Int       @id @default(autoincrement())
+  /// Which app it is about: 'OMS' | 'WMS'.
+  app         String    @default("OMS")
+  /// 'bug' | 'task'
+  type        String
+  title       String
+  description String    @default("")
+  /// Steps to reproduce (bugs), a JSON array of strings.
+  steps       String    @default("[]")
+  area        String
+  /// 'critical' | 'high' | 'medium' | 'low'
+  priority    String    @default("medium")
+  /// 'open' | 'in_progress' | 'in_review' | 'done'
+  status      String    @default("open")
+  reporterId  String
+  /// Everyone it is assigned to, a JSON array of user ids in the order added.
+  assigneeIds String    @default("[]")
+  doneById    String?
+  doneAt      DateTime?
+  resolution  String?
+  createdAt   DateTime  @default(now())
+  updatedAt   DateTime  @updatedAt
+
+  events TaskEvent[]
+  files  TaskFile[]
+
+  @@index([status])
+  @@map("tasks")
+}
+
+/// The thread: comments, and a line for every change (kind + JSON data).
+model TaskEvent {
+  id        Int      @id @default(autoincrement())
+  taskId    Int
+  /// Null for an event the system wrote itself.
+  userId    String?
+  /// 'comment' | created | status | priority | assigned | unassigned | area | file_added | file_removed | completed | reopened
+  kind      String
+  text      String   @default("")
+  data      String   @default("{}")
+  createdAt DateTime @default(now())
+
+  task  Task       @relation(fields: [taskId], references: [id], onDelete: Cascade)
+  files TaskFile[]
+
+  @@index([taskId, createdAt])
+  @@map("task_events")
+}
+
+/// An attachment, stored under the uploads folder's private .task-files (never
+/// served statically) and handed out only through the signed-in download route.
+model TaskFile {
+  id           Int        @id @default(autoincrement())
+  taskId       Int
+  /// Set when it came with a comment; null for the task's own attachments.
+  eventId      Int?
+  name         String
+  mimeType     String
+  size         Int
+  /// Path under the uploads folder.
+  path         String
+  uploadedById String
+  createdAt    DateTime   @default(now())
+
+  task  Task       @relation(fields: [taskId], references: [id], onDelete: Cascade)
+  event TaskEvent? @relation(fields: [eventId], references: [id], onDelete: Cascade)
+
+  @@index([taskId])
+  @@map("task_files")
+}

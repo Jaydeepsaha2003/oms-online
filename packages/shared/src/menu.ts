@@ -629,6 +629,13 @@ export const MENU: MenuNode[] = [
     ],
   },
   {
+    // Everyone signed in may report a bug or raise a task.
+    id: 'tasks',
+    label: 'Tasks & Bugs',
+    to: '/tasks',
+    icon: 'Bug',
+  },
+  {
     id: 'settings',
     shortcut: 'G',
     label: 'Settings',

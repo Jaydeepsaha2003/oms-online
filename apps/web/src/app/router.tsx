@@ -1,6 +1,6 @@
 import { lazy, Suspense, useEffect } from 'react';
 import { Route, Routes, useLocation, useParams } from 'react-router-dom';
-import { ACTIONS, perm, RESOURCES } from '@oms/shared';
+import { ACTIONS, MENU, perm, RESOURCES } from '@oms/shared';
 import { HomeRoute } from '@/components/auth/home-route';
 import { ProtectedRoute } from '@/components/auth/protected-route';
 import { RequirePermission } from '@/components/auth/require-permission';
@@ -78,6 +78,9 @@ const UserFormPage = lazy(() => import('@/features/admin/user-form-page').then((
 const RolesPage = lazy(() => import('@/features/admin/roles-page').then((m) => ({ default: m.RolesPage })));
 const RoleFormPage = lazy(() => import('@/features/admin/role-form-page').then((m) => ({ default: m.RoleFormPage })));
 const AuditLogPage = lazy(() => import('@/features/audit-log/audit-log-page').then((m) => ({ default: m.AuditLogPage })));
+const TasksPage = lazy(() => import('@/features/tasks/tasks-page').then((m) => ({ default: m.TasksPage })));
+/** What a task can be about in OMS: the menu's own sections. */
+const OMS_TASK_AREAS = [...MENU.map((m) => m.label).filter((l) => l !== 'Tasks & Bugs'), 'Other'];
 const ApprovalsPage = lazy(() => import('@/features/approvals/approvals-page').then((m) => ({ default: m.ApprovalsPage })));
 const BusinessOverviewPage = lazy(() => import('@/features/reports/business-overview-page').then((m) => ({ default: m.BusinessOverviewPage })));
 const SummaryAnalysisPage = lazy(() => import('@/features/reports/summary-analysis-page').then((m) => ({ default: m.SummaryAnalysisPage })));
@@ -728,6 +731,10 @@ export function AppRoutes() {
                 <AuditLogPage />
               </RequirePermission>
             }
+          />
+          <Route
+            path="/tasks/:id?"
+            element={<TasksPage app="OMS" areas={OMS_TASK_AREAS} />}
           />
           <Route
             path="/approvals"
