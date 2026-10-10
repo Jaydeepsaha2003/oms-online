@@ -10,7 +10,7 @@ cd /d "%~dp0"
 echo.
 echo   Open ONE of these on your phone (same network as this PC):
 echo.
-powershell -NoProfile -Command "Get-NetIPAddress -AddressFamily IPv4 | Where-Object { $_.IPAddress -ne '127.0.0.1' -and $_.IPAddress -notlike '169.254.*' } | ForEach-Object { '     https://' + $_.IPAddress + ':6173   (' + $_.InterfaceAlias + ')' }"
+powershell -NoProfile -Command "Get-NetIPAddress -AddressFamily IPv4 | Where-Object { $_.IPAddress -ne '127.0.0.1' -and $_.IPAddress -notlike '169.254.*' } | ForEach-Object { '     https://' + $_.IPAddress + ':6173/oms/   (' + $_.InterfaceAlias + ')' }"
 echo.
 echo   Server status:
 powershell -NoProfile -Command "if(Get-NetTCPConnection -State Listen -LocalPort 6173 -EA SilentlyContinue){ '     Web  6173: RUNNING' } else { '     Web  6173: NOT RUNNING - run start.bat' }; if(Get-NetTCPConnection -State Listen -LocalPort 4000 -EA SilentlyContinue){ '     API  4000: RUNNING' } else { '     API  4000: NOT RUNNING - run start.bat' }"

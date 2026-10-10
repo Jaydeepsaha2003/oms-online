@@ -1,0 +1,33 @@
+<!doctype html>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>OMS</title>
+<!--
+  Served for every extensionless path at the site root (see rootRouting in
+  vite.config.ts and the same handler in apps/api/src/main.ts). The apps live
+  under their own prefixes (/oms/, later /wms/), so this page forwards old
+  bookmarks and installed home-screen apps (start_url "/") to /oms/<same path>.
+
+  It also retires the service worker the app used to register at scope "/".
+  That worker answers every navigation on the origin — /oms/ included — with
+  whatever "/" returns, i.e. with THIS page. So: unregister it first, then
+  either reload (already on /oms/…, and now uncontrolled) or move to /oms/….
+-->
+<script>
+  (function () {
+    var go = function () {
+      var p = location.pathname;
+      if (p.indexOf('/oms/') === 0) location.reload();
+      else location.replace('/oms' + (p === '/' ? '/' : p) + location.search + location.hash);
+    };
+    if (!('serviceWorker' in navigator)) return go();
+    navigator.serviceWorker
+      .getRegistrations()
+      .then(function (regs) {
+        return Promise.all(
+          regs.filter(function (r) { return r.scope === location.origin + '/'; }).map(function (r) { return r.unregister(); }),
+        );
+      })
+      .then(go, go);
+  })();
+</script>

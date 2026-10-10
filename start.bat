@@ -79,7 +79,7 @@ if "%_P4%%_P6%"=="11" (
     REM from ever healing or auto-starting the servers again.
     if exist ".oms-stopped" del ".oms-stopped" >nul 2>&1
     wscript.exe "%~dp0oms-watchdog.vbs"
-    echo Servers already appear to be running on http://localhost:6173.
+    echo Servers already appear to be running on https://localhost:6173/oms/.
     echo To apply code changes or new migrations, run restart.bat instead.
     echo.
     pause
@@ -415,8 +415,8 @@ if defined READY (
     echo   OMS production servers are RUNNING in the background.
     echo ============================================================
     echo.
-    echo   On this PC     :  https://localhost:6173
-    if defined LANIP echo   On your phone  :  https://%LANIP%:6173
+    echo   On this PC     :  https://localhost:6173/oms/
+    if defined LANIP echo   On your phone  :  https://%LANIP%:6173/oms/
     echo.
     echo   API: http://localhost:4000/api     Docs: http://localhost:4000/api/docs
 ) else (

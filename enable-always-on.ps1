@@ -129,9 +129,9 @@ Write-Host '  Reboot once so the adapter + Fast Startup changes take effect.'
 Write-Host '  After that the servers come up at power-on WITHOUT anyone logging in.'
 Write-Host ''
 Write-Host '  Reach the app:'
-Write-Host "     On this PC        :  https://localhost:6173"
-Write-Host "     Phone, anywhere   :  https://192.168.0.236:6173      <- use this one"
-Write-Host "     Phone, shop Wi-Fi :  https://$($env:COMPUTERNAME):6173   (LAN only)"
+Write-Host "     On this PC        :  https://localhost:6173/oms/"
+Write-Host "     Phone, anywhere   :  https://192.168.0.236:6173/oms/     <- use this one"
+Write-Host "     Phone, shop Wi-Fi :  https://$($env:COMPUTERNAME):6173/oms/   (LAN only)"
 Write-Host ''
 Write-Host '  Use the IP, not the PC name, as the everyday phone URL. The name is'
 Write-Host '  resolved by NetBIOS/mDNS, which are LAN-only and do NOT travel through'

@@ -167,7 +167,9 @@ async function bootstrap(): Promise<void> {
         });
     }
 
-    app.useStaticAssets(webDist, { index: false });
+    // The app lives under /oms/ (other apps share this origin later, e.g. /wms/).
+    app.useStaticAssets(webDist, { index: false, prefix: '/oms' });
+    const webRoot = join(webDist, '..', 'root');
     app
       .getHttpAdapter()
       .getInstance()
@@ -181,9 +183,19 @@ async function bootstrap(): Promise<void> {
       // Same rule the service worker already uses for navigations, so the two
       // agree on what counts as a file. Anything with an extension falls
       // through to Nest's 404.
-      .get(/^\/(?!api\/).*/, (req: { path: string }, res: { sendFile: (p: string) => void }, next: () => void) => {
+      .get(/^\/oms\/.*/, (req: { path: string }, res: { sendFile: (p: string) => void }, next: () => void) => {
         if (/\.[a-z0-9]+$/i.test(req.path)) return next();
         res.sendFile(webIndex);
+      })
+      // Everything else at the root — same rules as rootRouting in vite.config.ts:
+      // the retired root service worker gets its kill-switch, files redirect to
+      // their /oms/ copy, and page paths get root/index.html, which forwards old
+      // bookmarks and installed apps to /oms/<same path>.
+      .get(/^\/(?!api\/|oms\/|wms\/|socket\.io\/).*/, (req: { path: string; url: string }, res: { redirect: (u: string) => void; set: (k: string, v: string) => void; sendFile: (p: string) => void }) => {
+        res.set('Cache-Control', 'no-store');
+        if (req.path === '/sw.js') return res.sendFile(join(webRoot, 'sw.js'));
+        if (req.path === '/oms' || /\.[a-z0-9]+$/i.test(req.path)) return res.redirect(req.path === '/oms' ? '/oms/' : `/oms${req.url}`);
+        res.sendFile(join(webRoot, 'index.html'));
       });
     Logger.log(`Web app served from ${webDist}`, 'Bootstrap');
   }
@@ -196,7 +208,7 @@ async function bootstrap(): Promise<void> {
   const httpServer = app.getHttpServer() as { keepAliveTimeout: number; headersTimeout: number };
   httpServer.keepAliveTimeout = 65_000;
   httpServer.headersTimeout = 66_000;
-  const webNote = isPackagedBuild ? ` · Web app at http://localhost:${port}/` : '';
+  const webNote = isPackagedBuild ? ` · Web app at http://localhost:${port}/oms/` : '';
   Logger.log(`API ready on http://localhost:${port}/${apiPrefix} (and this machine's LAN IP)${webNote}`, 'Bootstrap');
   if (!isProduction && !isPackagedBuild) Logger.log(`Swagger docs at http://localhost:${port}/${apiPrefix}/docs`, 'Bootstrap');
 }

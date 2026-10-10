@@ -35,9 +35,10 @@ function purgeAndReload(): void {
   const done = () => window.location.reload();
   if (!('serviceWorker' in navigator)) return done();
   navigator.serviceWorker
-    .getRegistrations()
-    .then((regs) => Promise.all(regs.map((r) => r.unregister())))
-    .then(() => ('caches' in window ? caches.keys().then((n) => Promise.all(n.map((k) => caches.delete(k)))) : undefined))
+    .getRegistration()
+    .then((reg) => reg?.unregister())
+    // Only OMS's caches — other apps share this origin (/wms/).
+    .then(() => ('caches' in window ? caches.keys().then((n) => Promise.all(n.filter((k) => k.startsWith('oms-')).map((k) => caches.delete(k)))) : undefined))
     .finally(done);
 }
 

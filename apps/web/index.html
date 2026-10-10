@@ -13,7 +13,7 @@
           var p = localStorage.getItem('oms:theme') || 'system';
           var dark = p === 'dark' || (p === 'system' && matchMedia('(prefers-color-scheme: dark)').matches);
           // The login screen is always light (see lib/theme.ts).
-          if (location.pathname === '/login') dark = false;
+          if (location.pathname === '/oms/login') dark = false;
           document.documentElement.classList.toggle('dark', dark);
         } catch (e) {}
       })();
@@ -106,8 +106,8 @@
         if (!('serviceWorker' in navigator) || !navigator.serviceWorker.controller) return;
         if (sessionStorage.getItem('oms-sw-recovery-done')) return;
         sessionStorage.setItem('oms-sw-recovery-done', '1');
-        navigator.serviceWorker.getRegistrations().then(function (regs) {
-          return Promise.all(regs.map(function (r) { return r.unregister(); }));
+        navigator.serviceWorker.getRegistration().then(function (r) {
+          return r && r.unregister();
         }).finally(function () {
           location.reload();
         });
@@ -169,11 +169,10 @@
             location.reload();
           };
           var jobs = [];
-          if (window.caches) jobs.push(caches.keys().then(function (k) { return Promise.all(k.map(function (n) { return caches.delete(n); })); }));
+          // Only OMS's own caches and worker — other apps share this origin (/wms/).
+          if (window.caches) jobs.push(caches.keys().then(function (k) { return Promise.all(k.filter(function (n) { return n.indexOf('oms-') === 0; }).map(function (n) { return caches.delete(n); })); }));
           if ('serviceWorker' in navigator) {
-            jobs.push(navigator.serviceWorker.getRegistrations().then(function (rs) {
-              return Promise.all(rs.map(function (r) { return r.unregister(); }));
-            }));
+            jobs.push(navigator.serviceWorker.getRegistration().then(function (r) { return r && r.unregister(); }));
           }
           Promise.all(jobs).then(done, done);
         };

@@ -24,7 +24,7 @@ function showNativeNotification(payload: TestNotificationPayload): void {
   try {
     new Notification('OMS test notification', {
       body: `Triggered by ${payload.triggeredBy}`,
-      icon: '/icons/icon-192-v4.png',
+      icon: `${import.meta.env.BASE_URL}icons/icon-192-v4.png`,
     });
   } catch {
     /* ignore — some platforms restrict constructing Notification directly */
@@ -133,7 +133,7 @@ export function connectNotificationsSocket(): void {
     }
     if (typeof Notification !== 'undefined' && Notification.permission === 'granted') {
       try {
-        const popup = new Notification(n.title, { body: n.body, icon: '/icons/icon-192-v4.png' });
+        const popup = new Notification(n.title, { body: n.body, icon: `${import.meta.env.BASE_URL}icons/icon-192-v4.png` });
         popup.onclick = () => {
           window.focus();
           open();

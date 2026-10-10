@@ -293,7 +293,7 @@ export function NotesPage() {
         // ?from=tab tells the bill page it was popped into a tab of its own, so
         // its Back control closes the tab instead of trying a browser-back that
         // has no history to move through.
-        if (tab && !tab.closed) tab.location.href = `/challans/${challan.id}/bill?from=tab`;
+        if (tab && !tab.closed) tab.location.href = `${import.meta.env.BASE_URL}challans/${challan.id}/bill?from=tab`;
       })
       .catch((e) => {
         tab?.close();

@@ -47,7 +47,7 @@ window.setTimeout(() => sessionStorage.removeItem('oms:chunk-reloaded'), 10_000)
 createRoot(document.getElementById('root')!).render(
   <StrictMode>
     <AppProviders>
-      <BrowserRouter>
+      <BrowserRouter basename={import.meta.env.BASE_URL}>
         <App />
       </BrowserRouter>
     </AppProviders>
@@ -66,7 +66,7 @@ if ('serviceWorker' in navigator) {
   // cache. Without it an iPhone can keep re-validating against a cached copy
   // of the worker and never notice a new build.
   const registerWorker = () =>
-    navigator.serviceWorker.register('/sw.js', { updateViaCache: 'none' }).catch((err) => {
+    navigator.serviceWorker.register(`${import.meta.env.BASE_URL}sw.js`, { updateViaCache: 'none' }).catch((err) => {
       // e.g. plain-HTTP LAN access, or a TLS certificate the device does not
       // trust. Still non-fatal — install works via Add to Home Screen — but it
       // is LOGGED now rather than silently dropped: without a worker there are

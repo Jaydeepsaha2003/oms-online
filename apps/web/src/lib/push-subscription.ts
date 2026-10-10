@@ -75,7 +75,7 @@ async function permissionFailureReason(permission: NotificationPermission): Prom
 
   if ('serviceWorker' in navigator) {
     try {
-      await navigator.serviceWorker.register('/sw.js', { updateViaCache: 'none' });
+      await navigator.serviceWorker.register(`${import.meta.env.BASE_URL}sw.js`, { updateViaCache: 'none' });
     } catch (err) {
       // Registration failing here means the device could never have shown the
       // prompt — the certificate, not the person, is what said no.
@@ -141,7 +141,7 @@ export async function subscribeToPush(): Promise<SubscribeResult> {
     // Registering on the tap both repairs that and, crucially, surfaces the real
     // reason when it genuinely can't work.
     try {
-      registration = await navigator.serviceWorker.register('/sw.js', { updateViaCache: 'none' });
+      registration = await navigator.serviceWorker.register(`${import.meta.env.BASE_URL}sw.js`, { updateViaCache: 'none' });
       // register() resolves as soon as the worker is installing; push needs it
       // active, which `.ready` waits for.
       registration = (await currentRegistration(10000)) ?? registration;

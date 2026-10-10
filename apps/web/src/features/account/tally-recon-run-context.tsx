@@ -135,7 +135,7 @@ export function TallyReconRunProvider({ children }: { children: ReactNode }) {
 
         const problems = problemsOf(result);
         // Already on the report, it opens by itself — a "View report" button there is noise.
-        const goto = window.location.pathname.startsWith('/account/tally-recon')
+        const goto = window.location.pathname.startsWith(`${import.meta.env.BASE_URL}account/tally-recon`)
           ? undefined
           : { label: 'View report', onClick: () => navigate('/account/tally-recon') };
         if (problems) {

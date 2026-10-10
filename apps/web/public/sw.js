@@ -25,6 +25,11 @@
 // In dev the placeholder is left as-is, which is a fine stable key.
 const CACHE = 'oms-__BUILD_ID__';
 
+/** Where the app lives (`/oms/`) and its shell URL. Other apps share this
+ *  origin, so every path and cache below stays inside it. */
+const BASE = new URL(self.registration.scope).pathname;
+const SHELL = BASE;
+
 /** Retry pauses (ms) before a navigation with no cached shell gives up.
  *  Sized against a real restart: restart.bat bounces the API in about 3s, and
  *  stop/start takes a few seconds more. Anything inside that window should look
@@ -68,15 +73,15 @@ self.addEventListener('install', (event) => {
 
 self.addEventListener('activate', (event) => {
   event.waitUntil(
-    caches.keys().then((keys) => Promise.all(keys.filter((k) => k !== CACHE).map((k) => caches.delete(k)))).then(() => self.clients.claim()),
+    caches.keys().then((keys) => Promise.all(keys.filter((k) => k.startsWith('oms-') && k !== CACHE).map((k) => caches.delete(k)))).then(() => self.clients.claim()),
   );
 });
 
-const NEVER_CACHE = [/^\/api\//, /\/@vite/, /\/@react-refresh/, /\/node_modules\//, /^\/src\//, /hot-update/];
+const NEVER_CACHE = [/^\/api\//, /\/@vite/, /\/@react-refresh/, /\/node_modules\//, new RegExp(`^${BASE}src/`), /hot-update/];
 // Vite's build output is content-hashed (a new build always gets new
 // filenames), so these are safe to serve straight from cache forever —
 // no need to hit the network first on every single app open.
-const IMMUTABLE = [/^\/assets\//];
+const IMMUTABLE = [new RegExp(`^${BASE}assets/`)];
 
 
 /**
@@ -103,7 +108,7 @@ async function healDeletedBuild() {
   healingDeletedBuild = true;
   try {
     const cache = await caches.open(CACHE);
-    await cache.delete('/');
+    await cache.delete(SHELL);
     const windows = await self.clients.matchAll({ type: 'window' });
     for (const client of windows) {
       if ('navigate' in client) client.navigate(client.url).catch(() => {});
@@ -152,15 +157,15 @@ self.addEventListener('fetch', (event) => {
         // load — can be older than what the server has. Paired with the
         // cache-first rule for /assets/ below, one stale snapshot pins the app to
         // a build whose chunks the next deploy deletes, and it stops booting.
-        const network = fetch('/', { cache: 'no-store' }).then((res) => {
-          if (res && res.ok) cache.put('/', res.clone()).catch(() => {});
+        const network = fetch(SHELL, { cache: 'no-store' }).then((res) => {
+          if (res && res.ok) cache.put(SHELL, res.clone()).catch(() => {});
           return res;
         });
         // Keeps this worker alive until the fetch lands, even though the
         // response below may already have been served from cache.
         event.waitUntil(network.catch(() => {}));
 
-        const cached = await cache.match('/');
+        const cached = await cache.match(SHELL);
         if (cached) {
           // Prefer the live shell, but don't hang on it — a slow link gets the
           // cached one now and the fresh one on the next open.
@@ -187,9 +192,9 @@ self.addEventListener('fetch', (event) => {
         if (res && res.ok) return res;
         for (const wait of SHELL_RETRIES) {
           await new Promise((r) => setTimeout(r, wait));
-          res = await fetch('/', { cache: 'no-store' }).catch(() => null);
+          res = await fetch(SHELL, { cache: 'no-store' }).catch(() => null);
           if (res && res.ok) {
-            cache.put('/', res.clone()).catch(() => {});
+            cache.put(SHELL, res.clone()).catch(() => {});
             return res;
           }
         }
@@ -235,7 +240,7 @@ self.addEventListener('fetch', (event) => {
         // Response.error() surfaces as ERR_FAILED, which for a navigation is a
         // dead end; for sub-resources it stays the honest answer.
         if (req.mode === 'navigate') {
-          const shell = await caches.match('/');
+          const shell = await caches.match(SHELL);
           return shell || retryingShell();
         }
         return Response.error();
@@ -258,8 +263,8 @@ self.addEventListener('message', (event) => {
   const reply = () => event.ports && event.ports[0] && event.ports[0].postMessage({ ok: true });
   const work =
     type === 'CLEAR_ALL'
-      ? caches.keys().then((keys) => Promise.all(keys.map((k) => caches.delete(k))))
-      : caches.open(CACHE).then((c) => c.delete('/'));
+      ? caches.keys().then((keys) => Promise.all(keys.filter((k) => k.startsWith('oms-')).map((k) => caches.delete(k))))
+      : caches.open(CACHE).then((c) => c.delete(SHELL));
   event.waitUntil(work.then(reply).catch(reply));
 });
 
@@ -280,8 +285,8 @@ self.addEventListener('push', (event) => {
   event.waitUntil(
     self.registration.showNotification(data.title, {
       body: data.body,
-      icon: '/icons/icon-192-v4.png',
-      badge: '/icons/icon-192-v4.png',
+      icon: `${BASE}icons/icon-192-v4.png`,
+      badge: `${BASE}icons/icon-192-v4.png`,
       data: d,
       vibrate: [200, 100, 200],
       timestamp: Date.now(),
@@ -332,14 +337,15 @@ self.addEventListener('notificationclick', (event) => {
       )
       .catch(() => {})
       .then(() => self.clients.matchAll({ type: 'window', includeUncontrolled: true }))
-      .then((clients) => {
+      .then((all) => {
+        const clients = all.filter((c) => new URL(c.url).pathname.startsWith(BASE));
         // An already-running client routes itself from this message. That is the
         // mechanism, not client.navigate() — navigate() is the half iOS ignores,
         // and it would cost a full reload everywhere else.
         for (const client of clients) client.postMessage({ type: 'NOTIFICATION_NAVIGATE', url });
         const focusable = clients.find((c) => 'focus' in c);
         if (focusable) return focusable.focus();
-        if (self.clients.openWindow) return self.clients.openWindow(url);
+        if (self.clients.openWindow) return self.clients.openWindow(BASE + url.slice(1));
       }),
   );
 });

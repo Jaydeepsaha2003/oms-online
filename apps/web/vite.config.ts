@@ -137,6 +137,36 @@ const serveRootCa: Plugin = {
   },
 };
 
+// The app lives under /oms/ (the base below) so other apps can share this
+// origin later (/wms/). Everything else at the root is answered here: the
+// retired root service worker gets its kill-switch, files redirect to their
+// /oms/ copy, and page paths get root/index.html, which forwards old bookmarks
+// and installed apps to /oms/<same path>. Mirrored in apps/api/src/main.ts.
+const rootDir = path.resolve(import.meta.dirname, 'root');
+const routeRoot = (req: { method?: string; url?: string }, res: { statusCode: number; setHeader: (k: string, v: string) => void; end: (body?: string | Buffer) => void }, next: () => void) => {
+  const url = req.url ?? '/';
+  const p = url.split('?')[0];
+  if ((req.method !== 'GET' && req.method !== 'HEAD') || /^\/(oms|wms|api|socket\.io)\/|^\/oms-rootCA\.crt$/.test(p)) return next();
+  res.setHeader('Cache-Control', 'no-store');
+  if (p === '/sw.js') {
+    res.setHeader('Content-Type', 'text/javascript');
+    return res.end(readFileSync(path.join(rootDir, 'sw.js')));
+  }
+  if (p === '/oms' || /\.[a-z0-9]+$/i.test(p)) {
+    res.statusCode = 302;
+    res.setHeader('Location', p === '/oms' ? '/oms/' : `/oms${url}`);
+    return res.end();
+  }
+  res.setHeader('Content-Type', 'text/html; charset=utf-8');
+  res.end(readFileSync(path.join(rootDir, 'index.html')));
+};
+const rootRouting: Plugin = {
+  name: 'oms-root-routing',
+  configurePreviewServer(server) {
+    server.middlewares.use(routeRoot);
+  },
+};
+
 // Gzip the preview server's responses (the built JS/CSS chunks are 50-570 KB
 // each uncompressed). Registered in configurePreviewServer so it wraps the
 // static file serving; /api responses proxied from Nest arrive already
@@ -264,6 +294,7 @@ function swBuildId(): Plugin {
 }
 
 export default defineConfig({
+  base: '/oms/',
   // mkcert generates a *locally-trusted* certificate (backed by a real local CA)
   // instead of a random self-signed one — required for microphone access from
   // phones/other devices on the LAN (browsers block the mic on plain HTTP, and
@@ -280,6 +311,7 @@ export default defineConfig({
     // Hosts list is auto-detected from all active network interfaces (LAN, VPN, etc.)
     ...(runningAsSystem ? [] : [mkcert({ hosts: getAllLocalIPs() })]),
     serveRootCa,
+    rootRouting,
     gzipPreview,
     keepAlive,
     swBuildId(),

@@ -71,7 +71,7 @@ npm run dev
 ```
 
 - API → http://localhost:4000/api (Swagger docs at `/api/docs`)
-- Web → http://localhost:6173
+- Web → https://localhost:6173/oms/
 
 > First time without a database yet? You can still run `npm install` and
 > `npm run build` — only `db:migrate`/`db:seed`/`db:studio` need a live MySQL.
@@ -100,7 +100,7 @@ npm run dev
 pick whichever is most convenient:
 
 1. **Double-click** `dev.bat` (repo root). It installs deps on first run, starts
-   everything, and opens http://localhost:6173 in your browser. Keep the window
+   everything, and opens https://localhost:6173/oms/ in your browser. Keep the window
    open; press `Ctrl+C` to stop.
 
 2. **Auto-start when you open the project** in VS Code / Cursor. `.vscode/tasks.json`

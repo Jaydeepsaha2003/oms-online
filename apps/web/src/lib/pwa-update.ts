@@ -63,7 +63,7 @@ async function reloadIfNewBuildDeployed(): Promise<void> {
   const current = runningBundle();
   if (!current) return; // dev server (unhashed /src/main.tsx) — nothing to compare
   try {
-    const res = await fetch(`/?_v=${Date.now()}`, { cache: 'no-store' });
+    const res = await fetch(`${import.meta.env.BASE_URL}?_v=${Date.now()}`, { cache: 'no-store' });
     if (!res.ok) return;
     const html = await res.text();
     const latest = /src="([^"]*\/assets\/index-[^"]*\.js)"/.exec(html)?.[1];
