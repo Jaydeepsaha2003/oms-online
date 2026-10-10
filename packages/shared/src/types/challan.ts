@@ -372,6 +372,8 @@ export interface DraftChallanInput {
   customerName: string;
   /** Omit to price the customer's entire un-challaned pool (Form14 dropdown flow). */
   dispatchIds?: number[];
+  /** Transporter picked on the form; omit to price on the party's default. */
+  transName?: string | null;
 }
 
 export interface ChallanDraftItem {
@@ -413,6 +415,10 @@ export interface ChallanDraft {
   category: string | null;
   paymentTerm: number | null;
   transName: string | null;
+  /** Every transporter this party can ship by — its default first, then any other
+   *  transporter it has freight/packing rates under. Picking one re-prices the draft,
+   *  since those rates are per (category, transporter). */
+  transporters: string[];
   billingRate: number | null;
   boxRate: number | null;
   /** Whole-challan GST% = max per-line GST rate. */

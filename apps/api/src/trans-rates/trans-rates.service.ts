@@ -290,7 +290,15 @@ export class TransRatesService {
       where: { customerName, category, type },
       orderBy: { id: 'asc' },
     });
-    return matches.find((m) => transporterId != null && m.transporterId === transporterId) ?? matches[0] ?? null;
+    // A party can hold one rate per (category, type) PER TRANSPORTER. So a save naming
+    // a transporter may only ever land on that transporter's own row — never on
+    // another's. The old `?? matches[0]` fallback did exactly that: adding BHOOMI's
+    // CUP/PACKING overwrote BEST ROADWAYS' row, re-labelling it and destroying its
+    // rate instead of adding a second row beside it.
+    if (transporterId != null) return matches.find((m) => m.transporterId === transporterId) ?? null;
+    // No transporter named: target the untagged row if there is one, else keep the
+    // long-standing behaviour of editing the single row already on file.
+    return matches.find((m) => m.transporterId == null) ?? matches[0] ?? null;
   }
 
   private async resolveTransporter(name?: string | null): Promise<{ id: number; name: string } | null> {

@@ -1,1 +1,13 @@
 graphify-out/graph.json merge=graphify
+
+# Windows scripts MUST keep CRLF in the working tree.
+#
+# This repo's core.autocrlf is `input`: CRLF is stripped on commit and NOTHING is
+# put back on checkout. So every .bat here lands on disk LF-only, and cmd.exe
+# cannot resolve `goto` labels in an LF-only batch file — start.bat died with
+# "cannot find the batch label specified - dbsync_done" the first time git
+# re-checked it out. These rules make the checkout write CRLF, whatever autocrlf says.
+*.bat text eol=crlf
+*.cmd text eol=crlf
+*.ps1 text eol=crlf
+*.vbs text eol=crlf

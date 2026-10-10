@@ -177,7 +177,7 @@ export function useAllChallanCustomers(search = '') {
  */
 export function useChallanDraft(input: DraftChallanInput | null) {
   return useQuery({
-    queryKey: [...KEY, 'draft', input?.customerName, input?.dispatchIds],
+    queryKey: [...KEY, 'draft', input?.customerName, input?.dispatchIds, input?.transName],
     queryFn: () => http.post<ChallanDraft>('/challans/draft', input),
     enabled: !!input?.customerName,
     staleTime: Infinity,

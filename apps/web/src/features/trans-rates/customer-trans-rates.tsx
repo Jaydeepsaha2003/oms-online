@@ -30,7 +30,17 @@ interface Line {
  * The fillable "transport rate per category × type" grid for ONE customer. Reused
  * by the Transport Rates page ("Fill by customer") and the customer edit page.
  */
-export function CustomerTransRates({ customerName }: { customerName: string }) {
+export function CustomerTransRates({
+  customerName,
+  prefillTransporter,
+  onPrefilled,
+}: {
+  customerName: string;
+  /** Transporter just linked to this party on the Details tab — seed a blank row for
+   *  every category × type so the only thing left to do is type the figures. */
+  prefillTransporter?: string | null;
+  onPrefilled?: () => void;
+}) {
   const { can } = usePermissions();
   const confirm = useConfirm();
   const { data: lookups } = useTransLookups();
@@ -41,22 +51,38 @@ export function CustomerTransRates({ customerName }: { customerName: string }) {
   const [lines, setLines] = useState<Line[]>([]);
 
   useEffect(() => {
-    const byKey = new Map((rates ?? []).map((r) => [`${r.category.toUpperCase()}|${r.type.toUpperCase()}`, r]));
+    // A party can ship by several transporters, each at its own rate — so one
+    // category×type can legitimately hold MORE THAN ONE row. Grouping by
+    // category|type alone (as this once did) kept only the last of them, which
+    // hid every transporter but one and made the extra rates uneditable.
+    const byKey = new Map<string, NonNullable<typeof rates>>();
+    for (const r of rates ?? []) {
+      const k = `${r.category.toUpperCase()}|${r.type.toUpperCase()}`;
+      const arr = byKey.get(k);
+      if (arr) arr.push(r);
+      else byKey.set(k, [r]);
+    }
     const seen = new Set<string>();
     const rows: Line[] = [];
     for (const cat of lookups?.categories ?? []) {
       for (const tp of lookups?.types ?? []) {
         const k = `${cat.toUpperCase()}|${tp.toUpperCase()}`;
         seen.add(k);
-        const ex = byKey.get(k);
-        rows.push({
-          key: ex ? `e${ex.id}` : `c-${k}`,
-          id: ex?.id,
-          category: cat,
-          type: tp,
-          transportName: ex?.transportName ?? '',
-          rate: ex?.rate?.toString() ?? '',
-        });
+        const ex = byKey.get(k) ?? [];
+        if (!ex.length) {
+          rows.push({ key: `c-${k}`, category: cat, type: tp, transportName: '', rate: '' });
+          continue;
+        }
+        for (const r of ex) {
+          rows.push({
+            key: `e${r.id}`,
+            id: r.id,
+            category: cat,
+            type: tp,
+            transportName: r.transportName ?? '',
+            rate: r.rate?.toString() ?? '',
+          });
+        }
       }
     }
     for (const r of rates ?? []) {
@@ -74,6 +100,26 @@ export function CustomerTransRates({ customerName }: { customerName: string }) {
     }
     setLines(rows);
   }, [rates, lookups]);
+
+  // A transporter linked from the Details tab: lay out its blank rows so the party
+  // is one Save away from shipping by it. Nothing is written until that Save — a row
+  // with no figure in it prices as "not set", never as ₹0.
+  useEffect(() => {
+    const t = prefillTransporter?.trim();
+    if (!t) return;
+    setLines((ls) => {
+      const has = new Set(ls.filter((l) => l.transportName.trim().toUpperCase() === t.toUpperCase()).map((l) => `${l.category.toUpperCase()}|${l.type.toUpperCase()}`));
+      const add: Line[] = [];
+      for (const cat of lookups?.categories ?? []) {
+        for (const tp of lookups?.types ?? []) {
+          if (has.has(`${cat.toUpperCase()}|${tp.toUpperCase()}`)) continue;
+          add.push({ key: `n${keyer.current++}`, isNew: true, category: cat, type: tp, transportName: t, rate: '' });
+        }
+      }
+      return add.length ? [...ls, ...add] : ls;
+    });
+    onPrefilled?.();
+  }, [prefillTransporter, lookups]); // eslint-disable-line react-hooks/exhaustive-deps
 
   const setField = (key: string, patch: Partial<Line>) =>
     setLines((ls) => ls.map((l) => (l.key === key ? { ...l, ...patch } : l)));

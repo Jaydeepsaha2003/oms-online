@@ -410,14 +410,10 @@ export class PartyLedgerService {
     }
     for (const l of ledger) {
       let particulars = l.particulars ?? '';
-      // DEBIT NOTE particulars → "PARTY NAME (AGST SSS/XX)".
-      if ((l.voucherType ?? '').trim().toUpperCase() === 'DEBIT NOTE' && l.customerName) {
-        const up = particulars.toUpperCase();
-        if (up.startsWith('DEBIT NOTE')) {
-          const after = particulars.slice('DEBIT NOTE'.length).trim();
-          particulars = after ? `${l.customerName} (${after})` : l.customerName;
-        }
-      }
+      // Notes and discounts say what they are — "DEBIT NOTE", not the party's own
+      // name, and no "AGST SSS/…" (the bill number is noise on a statement).
+      const vt = (l.voucherType ?? '').trim().toUpperCase();
+      if (vt === 'DEBIT NOTE' || vt === 'CREDIT NOTE' || vt === 'SALES DISCOUNT') particulars = vt;
       // "CASH RECEIPT BY . / ." (who took it / where) reads as noise on a statement.
       if (particulars.toUpperCase().startsWith('CASH RECEIPT BY')) particulars = 'CASH RECEIPT';
       // Receipts imported with no particulars (374 bank ones) still say what they are.

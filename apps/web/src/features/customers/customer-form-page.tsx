@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState, type ReactNode } from 'react';
+import { useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
 import { useNavigate, useParams, useSearchParams } from 'react-router-dom';
 import {
   ArrowLeft,
@@ -8,6 +8,7 @@ import {
   Loader2,
   MapPin,
   Percent,
+  Plus,
   Receipt,
   Save,
   Tags,
@@ -27,6 +28,7 @@ import { Combo, NativeSelect } from '@/components/common/combo';
 import { Switch } from '@/components/ui/switch';
 import { CustomerGstRates } from '@/features/gst-rates/customer-gst-rates';
 import { CustomerTransRates } from '@/features/trans-rates/customer-trans-rates';
+import { useTransRatesByCustomer } from '@/features/trans-rates/use-trans-rates';
 import {
   useCreateCustomer,
   useCustomer,
@@ -103,6 +105,8 @@ export function CustomerFormPage() {
   // Snapshot of the form as it was loaded — Save stays disabled until `form` differs.
   const [baseline, setBaseline] = useState<FormState>(EMPTY);
   const [tab, setTab] = useState<'details' | 'gst' | 'trans'>('details');
+  // Transporter just linked on the Details tab, handed to the rates grid to seed rows.
+  const [prefillTrans, setPrefillTrans] = useState<string | null>(null);
   const set = <K extends keyof FormState>(key: K, value: string) =>
     setForm((f) => ({ ...f, [key]: value }));
 
@@ -391,7 +395,11 @@ export function CustomerFormPage() {
             </div>
           </CardHeader>
           <CardContent className="py-4">
-            <CustomerTransRates customerName={existing.partyName} />
+            <CustomerTransRates
+              customerName={existing.partyName}
+              prefillTransporter={prefillTrans}
+              onPrefilled={() => setPrefillTrans(null)}
+            />
           </CardContent>
         </Card>
       )}
@@ -456,6 +464,21 @@ export function CustomerFormPage() {
               onChange={onTransportName}
               options={(lookups?.transporters ?? []).map((t) => t.name)}
             />
+            {/* The party's DEFAULT carrier is the box above. A party can ship by more
+                than one, each at its own freight/packing — linking one here lays out
+                its rate rows on the Transport Rates tab, and once saved it appears in
+                the transporter dropdown on Create Challan. */}
+            {isEdit && existing?.partyName && (
+              <LinkedTransporters
+                customerName={existing.partyName}
+                defaultName={form.transportName}
+                options={(lookups?.transporters ?? []).map((t) => t.name)}
+                onAdd={(name) => {
+                  setPrefillTrans(name);
+                  setTab('trans');
+                }}
+              />
+            )}
           </Field>
           <Field label="Packing">
             <Input type="number" step="any" value={form.packing} onChange={(e) => set('packing', e.target.value)} />
@@ -634,6 +657,76 @@ function Field({
         {required && <span className="text-destructive"> *</span>}
       </Label>
       {children}
+    </div>
+  );
+}
+
+/**
+ * The transporters this party can actually ship by, and the control that links another.
+ *
+ * A party is tied to a transporter by HAVING FREIGHT/PACKING RATES under it — there is
+ * no separate link table, so the rates ARE the link. That keeps one source of truth,
+ * but it hides the relationship behind a rates grid, which is why this spells it out
+ * next to the default: here is who this party ships by, and here is how to add one.
+ *
+ * "Add" only lays the blank rate rows out on the Transport Rates tab. The link exists
+ * once those are saved with figures in them — a transporter with no rate can't price a
+ * challan, so letting it look linked before then would only mislead.
+ */
+function LinkedTransporters({
+  customerName,
+  defaultName,
+  options,
+  onAdd,
+}: {
+  customerName: string;
+  defaultName: string;
+  options: string[];
+  onAdd: (name: string) => void;
+}) {
+  const { data: rates } = useTransRatesByCustomer(customerName);
+  const [picking, setPicking] = useState(false);
+
+  const linked = useMemo(() => {
+    const names = new Set<string>();
+    if (defaultName.trim()) names.add(defaultName.trim().toUpperCase());
+    for (const r of rates ?? []) if (r.transportName?.trim()) names.add(r.transportName.trim().toUpperCase());
+    return [...names];
+  }, [rates, defaultName]);
+
+  return (
+    <div className="mt-1.5 space-y-1.5">
+      <div className="flex flex-wrap items-center gap-1">
+        {linked.map((t) => (
+          <span
+            key={t}
+            className="inline-flex items-center gap-1 rounded bg-muted px-1.5 py-px text-[10.5px] font-bold text-muted-foreground"
+            title={t === defaultName.trim().toUpperCase() ? 'Default — used unless changed on the challan' : 'Ships by this too'}
+          >
+            {t}
+            {t === defaultName.trim().toUpperCase() && <span className="text-primary">· default</span>}
+          </span>
+        ))}
+      </div>
+      {picking ? (
+        <Combo
+          value=""
+          onChange={(v) => {
+            const name = v.trim();
+            setPicking(false);
+            if (name) onAdd(name);
+          }}
+          options={options.filter((o) => !linked.includes(o.trim().toUpperCase()))}
+        />
+      ) : (
+        <button
+          type="button"
+          onClick={() => setPicking(true)}
+          className="text-primary hover:underline inline-flex items-center gap-1 text-[11px] font-bold"
+        >
+          <Plus className="size-3" /> Add transporter
+        </button>
+      )}
     </div>
   );
 }
