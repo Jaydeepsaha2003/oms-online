@@ -116,7 +116,11 @@ export async function hasActivePushSubscription(): Promise<boolean> {
   if (json?.endpoint && json.keys) {
     void http.post('/notifications/push-subscribe', { endpoint: json.endpoint, keys: json.keys } satisfies PushSubscriptionRequest).catch(() => {});
   }
-  return !!existing;
+  if (existing) return true;
+  // Allowed, yet no subscription: it died with its worker (the move to /oms/
+  // retired the old one). There is no in-app opt-out, so this is never a choice —
+  // re-subscribe quietly; with permission already granted nothing is shown.
+  return (await subscribeToPush().catch(() => null))?.ok ?? false;
 }
 
 /** Requests permission, subscribes to push, and registers the subscription with the server. */
